@@ -1,0 +1,160 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  OWNER
+  DISPATCHER
+  TECHNICIAN
+}
+
+enum JobStatus {
+  NEW
+  DISPATCHED
+  EN_ROUTE
+  ON_SITE
+  IN_PROGRESS
+  ABANDONED_TRAVEL_FEE
+  INVOICED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  INTERAC
+  STRIPE_CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum SettlementStatus {
+  UNSETTLED
+  SETTLED
+}
+
+model User {
+  id              String       @id @default(uuid())
+  name            String
+  phone           String       @unique
+  email           String?      @unique
+  role            Role         @default(TECHNICIAN)
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+
+  dispatchedJobs  Job[]        @relation("DispatcherJobs")
+  assignedJobs    Job[]        @relation("TechnicianJobs")
+  settlements     Settlement[] @relation("TechnicianSettlements")
+}
+
+model Customer {
+  id              String       @id @default(uuid())
+  name            String
+  phone           String
+  extension       String?
+  address         String
+  unit            String?
+  postalCode      String?
+  notes           String?
+  createdAt       DateTime     @default(now())
+
+  jobs            Job[]
+}
+
+model Job {
+  id                 String       @id @default(uuid())
+  jobNumber          Int          @unique
+  customerId         String
+  customer           Customer     @relation(fields: [customerId], references: [id])
+  dispatcherId       String
+  dispatcher         User         @relation("DispatcherJobs", fields: [dispatcherId], references: [id])
+  technicianId       String?
+  technician         User?        @relation("TechnicianJobs", fields: [technicianId], references: [id])
+  
+  status             JobStatus    @default(NEW)
+  serviceType        String       // e.g., "Commercial Lock Change", "Lockout"
+  problemDescription String
+  serviceAddress     String
+  
+  // Commission set by person initiating the job
+  workerCommission   Float        @default(0.0)
+  
+  // Abandoned job flag & travel fee
+  isAbandoned        Boolean      @default(false)
+  travelFeeAmount    Float?       // 20.0, 25.0
+  
+  // Locksmith-Specific Fields
+  keyBitting         String?      // e.g., "SC1: 3-5-2-1-4" or "KW1"
+  doorDetails        String?      // e.g., "Adams Rite mortise, 1-1/8 backset"
+  proofPhotoUrl      String?      // Proof of work photo
+  customerSignature  String?      // Customer digital signature on site
+
+  createdAt          DateTime     @default(now())
+  dispatchedAt       DateTime?
+  completedAt        DateTime?
+
+  items              JobItem[]
+  invoice            Invoice?
+}
+
+model JobItem {
+  id          String   @id @default(uuid())
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  description String   // e.g. "HS mortise cylinder"
+  quantity    Int      @default(1)
+  unitCost    Float    @default(0.0)
+  unitPrice   Float    @default(0.0)
+  isPart      Boolean  @default(true)
+}
+
+model Invoice {
+  id                  String           @id @default(uuid())
+  jobId               String           @unique
+  job                 Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  calculationMode     String           @default("FORWARD") // "FORWARD" or "REVERSE"
+  subtotal            Float            // Labor + Parts
+  partsTotal          Float            @default(0.0)
+  laborTotal          Float            @default(0.0)
+  taxRate             Float            @default(0.13) // Ontario HST
+  taxAmount           Float            @default(0.0)
+  cardSurchargeRate   Float            @default(0.04) // Fixed 4%
+  cardSurchargeAmount Float            @default(0.0)
+  grandTotal          Float            // Final amount billed
+  
+  paymentStatus       PaymentStatus    @default(PENDING)
+  paymentMethod       PaymentMethod?
+  
+  // Cash Reconciliation & Settlement
+  cashOwedToCompany   Float            @default(0.0)
+  settlementStatus    SettlementStatus @default(UNSETTLED)
+  
+  // Twilio & Stripe tracking
+  smsSent             Boolean          @default(false)
+  stripeSessionId     String?
+  stripePaymentUrl    String?
+  
+  paidAt              DateTime?
+  createdAt           DateTime         @default(now())
+}
+
+model Settlement {
+  id             String    @id @default(uuid())
+  technicianId   String
+  technician     User      @relation("TechnicianSettlements", fields: [technicianId], references: [id])
+  amountSettled  Float
+  paymentMethod  String    // e.g., "CASH_HANDOVER", "BANK_TRANSFER"
+  notes          String?
+  settledBy      String    // Owner User ID
+  settledAt      DateTime  @default(now())
+}

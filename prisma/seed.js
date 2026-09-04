@@ -7,6 +7,17 @@ async function main() {
   console.log('Seeding Locksmith Operations database...');
 
   // 1. Create Users
+  const superAdmin = await prisma.user.upsert({
+    where: { phone: '0000000000' },
+    update: { role: 'SUPER_ADMIN' },
+    create: {
+      name: 'Super Admin',
+      phone: '0000000000',
+      email: 'admin@locksmithops.com',
+      role: 'SUPER_ADMIN',
+    },
+  });
+
   const owner = await prisma.user.upsert({
     where: { phone: '4165550100' },
     update: {},

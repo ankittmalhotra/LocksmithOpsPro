@@ -8,7 +8,7 @@ interface UserItem {
   id: string;
   name: string;
   phone: string;
-  role: 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
+  role: 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
   email: string | null;
 }
 
@@ -16,6 +16,12 @@ export default function LoginPage() {
   const router = useRouter();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [phone, setPhone] = useState('');
+  
+  // Super Admin form state
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminUser, setAdminUser] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -52,13 +58,41 @@ export default function LoginPage() {
       }
 
       // Redirect based on role
-      if (user.role === 'OWNER') {
+      if (user.role === 'SUPER_ADMIN' || user.role === 'OWNER') {
         router.push('/owner');
       } else if (user.role === 'DISPATCHER') {
         router.push('/dispatch');
       } else {
         router.push('/tech');
       }
+      router.refresh();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSuperAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminUser || !adminPassword) return;
+
+    try {
+      setLoading(true);
+      setErrorMsg('');
+
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: adminUser, password: adminPassword }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Invalid credentials');
+      }
+
+      router.push('/owner');
       router.refresh();
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -219,7 +253,7 @@ export default function LoginPage() {
         </div>
 
         {/* 2. Direct Phone Login */}
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm mb-6">
           <h2 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-1">
             Sign In with Any Phone Number
           </h2>
@@ -246,9 +280,87 @@ export default function LoginPage() {
           </form>
         </div>
 
+        {/* 3. Super Admin Credentials Access */}
+        <div className="bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-3xl p-6 shadow-md border border-slate-800">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🛡️</span>
+              <h2 className="text-xs font-black uppercase tracking-wider text-amber-400">
+                Super Admin Portal
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAdminLogin(!showAdminLogin);
+                if (!adminUser) setAdminUser('admin');
+                if (!adminPassword) setAdminPassword('admin123');
+              }}
+              className="text-[11px] font-bold text-slate-400 hover:text-white underline"
+            >
+              {showAdminLogin ? 'Hide Form' : 'Login as Admin'}
+            </button>
+          </div>
+
+          <p className="text-[11px] text-slate-400 mb-4">
+            Master control: Add/manage owners, contractors, and access all financial hubs.
+          </p>
+
+          {showAdminLogin && (
+            <form onSubmit={handleSuperAdminLogin} className="space-y-3 pt-2 border-t border-slate-800">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={adminUser}
+                  onChange={(e) => setAdminUser(e.target.value)}
+                  placeholder="admin"
+                  className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="admin123"
+                  className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminUser('admin');
+                    setAdminPassword('admin123');
+                  }}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-amber-300 rounded-xl transition"
+                >
+                  Fill (admin / admin123)
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow transition disabled:opacity-50"
+                >
+                  {loading ? 'Authenticating...' : 'Sign In as Super Admin 🛡️'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
         <div className="text-center mt-6">
           <Link href="/" className="text-xs font-bold text-slate-500 hover:text-slate-800">
             &larr; Return to Home & Open Jobs
+
           </Link>
         </div>
 

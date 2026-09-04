@@ -74,7 +74,7 @@ export async function POST(request: Request) {
     if (!activeDispatcherId) {
       const defaultUser = await prisma.user.findFirst({
         where: {
-          role: { in: ['OWNER', 'DISPATCHER'] },
+          role: { in: ['SUPER_ADMIN', 'OWNER', 'DISPATCHER'] },
           active: true,
         },
       });

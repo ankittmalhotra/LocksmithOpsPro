@@ -8,7 +8,7 @@ interface UserSession {
   id: string;
   name: string;
   phone: string;
-  role: 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
+  role: 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
 }
 
 export default function NavigationHeader() {
@@ -60,8 +60,7 @@ export default function NavigationHeader() {
 
         {/* Navigation Links based on Role */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm font-semibold">
-          {/* Universal Workspaces */}
-          {(!user || user.role === 'OWNER' || user.role === 'DISPATCHER') && (
+          {(!user || user.role === 'SUPER_ADMIN' || user.role === 'OWNER' || user.role === 'DISPATCHER') && (
             <Link
               href="/dispatch"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -75,7 +74,7 @@ export default function NavigationHeader() {
             </Link>
           )}
 
-          {(!user || user.role === 'TECHNICIAN' || (user.role as any) === 'CONTRACTOR') && (
+          {(!user || user.role === 'SUPER_ADMIN' || user.role === 'TECHNICIAN' || (user.role as any) === 'CONTRACTOR') && (
             <Link
               href="/tech"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -89,7 +88,7 @@ export default function NavigationHeader() {
             </Link>
           )}
 
-          {(!user || user.role === 'OWNER') && (
+          {(!user || user.role === 'SUPER_ADMIN' || user.role === 'OWNER') && (
             <Link
               href="/owner"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -98,8 +97,8 @@ export default function NavigationHeader() {
                   : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
               }`}
             >
-              <span>👑</span>
-              <span>Owner Hub</span>
+              <span>{user?.role === 'SUPER_ADMIN' ? '🛡️' : '👑'}</span>
+              <span>{user?.role === 'SUPER_ADMIN' ? 'Admin Hub' : 'Owner Hub'}</span>
             </Link>
           )}
 
@@ -109,9 +108,14 @@ export default function NavigationHeader() {
               <span className="text-xs text-slate-300 font-bold hidden md:inline">
                 {user.name.split(' ')[0]} (
                 <span className="text-amber-400 text-[11px]">
-                  {user.role === 'TECHNICIAN' ? 'Contractor' : user.role === 'OWNER' ? 'Owner' : user.role}
+                  {user.role === 'SUPER_ADMIN'
+                    ? 'Super Admin'
+                    : user.role === 'TECHNICIAN'
+                    ? 'Contractor'
+                    : 'Owner'}
                 </span>)
               </span>
+
 
               <button
                 onClick={handleLogout}

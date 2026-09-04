@@ -27,7 +27,7 @@ interface AuthUser {
   id: string;
   name: string;
   phone: string;
-  role: 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
+  role: 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
 }
 
 export default function HomePage() {
@@ -96,10 +96,10 @@ export default function HomePage() {
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <Link
-              href={currentUser.role === 'OWNER' ? '/owner' : '/tech'}
+              href={currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'OWNER' ? '/owner' : '/tech'}
               className="flex-1 sm:flex-none text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
             >
-              Go to {currentUser.role === 'TECHNICIAN' ? 'Contractor' : 'Owner'} Workspace &rarr;
+              Go to {currentUser.role === 'SUPER_ADMIN' ? 'Super Admin' : currentUser.role === 'TECHNICIAN' ? 'Contractor' : 'Owner'} Workspace &rarr;
             </Link>
             <button
               onClick={handleLogout}

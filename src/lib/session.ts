@@ -2,7 +2,7 @@ export interface AuthSession {
   id: string;
   name: string;
   phone: string;
-  role: 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
+  role: 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
 }
 
 export function serializeSession(user: AuthSession): string {

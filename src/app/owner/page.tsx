@@ -22,6 +22,13 @@ export default function OwnerDashboardPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Team Member Management State (Super Admin can add Owners + Contractors, Owners can add Contractors)
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberPhone, setNewMemberPhone] = useState('');
+  const [newMemberRole, setNewMemberRole] = useState<'OWNER' | 'TECHNICIAN'>('TECHNICIAN');
+  const [addingMember, setAddingMember] = useState(false);
+
   // Settlement Modal State
   const [selectedTech, setSelectedTech] = useState<TechLedgerItem | null>(null);
   const [settleAmount, setSettleAmount] = useState('');
@@ -33,6 +40,42 @@ export default function OwnerDashboardPage() {
     const interval = setInterval(fetchAuthAndAnalytics, 6000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMemberName || !newMemberPhone) return;
+
+    try {
+      setAddingMember(true);
+      setErrorMsg('');
+      setSuccessMsg('');
+
+      const res = await fetch('/api/auth/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newMemberName,
+          phone: newMemberPhone,
+          role: newMemberRole,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to add team member');
+      }
+
+      setSuccessMsg(`Successfully added ${data.user.name} as ${data.user.role === 'OWNER' ? 'Owner' : 'Contractor'}!`);
+      setNewMemberName('');
+      setNewMemberPhone('');
+      setShowAddMember(false);
+      fetchAuthAndAnalytics();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setAddingMember(false);
+    }
+  };
 
   const fetchAuthAndAnalytics = async () => {
     try {
@@ -170,6 +213,12 @@ export default function OwnerDashboardPage() {
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowAddMember(true)}
+            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition shadow flex items-center gap-1.5"
+          >
+            <span>➕</span> {currentUser?.role === 'SUPER_ADMIN' ? 'Add Owner / Contractor' : 'Add Contractor'}
+          </button>
+          <button
             onClick={fetchAuthAndAnalytics}
             className="px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-xs"
           >
@@ -184,19 +233,20 @@ export default function OwnerDashboardPage() {
         </div>
       </div>
 
-      {currentUser && currentUser.role !== 'OWNER' && (
+
+      {currentUser && currentUser.role !== 'OWNER' && currentUser.role !== 'SUPER_ADMIN' && (
         <div className="mb-6 p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
             <span className="text-lg">⚠️</span>
             <span>
-              Role Notice: You are authenticated as <strong>{currentUser.name} ({currentUser.role})</strong>. The Owner Hub is restricted to Owners.
+              Role Notice: You are authenticated as <strong>{currentUser.name} ({currentUser.role})</strong>. This console is restricted to Owners & Super Admins.
             </span>
           </div>
           <Link
             href="/login"
             className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 shadow-xs"
           >
-            Switch to Owner Account &rarr;
+            Switch Account &rarr;
           </Link>
         </div>
       )}
@@ -452,6 +502,98 @@ export default function OwnerDashboardPage() {
         </div>
       </div>
 
+      {/* Add Team Member Modal */}
+      {showAddMember && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <span>➕</span> {currentUser?.role === 'SUPER_ADMIN' ? 'Add Owner or Contractor' : 'Add Contractor'}
+              </h3>
+              <button
+                onClick={() => setShowAddMember(false)}
+                className="text-slate-400 hover:text-slate-600 text-lg font-black"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              {currentUser?.role === 'SUPER_ADMIN'
+                ? 'Super Admin can register new Owners or Field Contractors.'
+                : 'Owners can register new Field Contractors.'}
+            </p>
+
+            <form onSubmit={handleAddMember} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newMemberName}
+                  onChange={(e) => setNewMemberName(e.target.value)}
+                  placeholder="e.g. John Smith"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Phone Number *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newMemberPhone}
+                  onChange={(e) => setNewMemberPhone(e.target.value)}
+                  placeholder="e.g. 647-555-0303"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Role Permission *
+                </label>
+                {currentUser?.role === 'SUPER_ADMIN' ? (
+                  <select
+                    value={newMemberRole}
+                    onChange={(e: any) => setNewMemberRole(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="TECHNICIAN">🛠️ Contractor (Field Tech & Invoicing)</option>
+                    <option value="OWNER">👑 Owner (Full Hub & Dispatch Access)</option>
+                  </select>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
+                    <span>🛠️</span> Contractor (Field Technician)
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddMember(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingMember}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow transition disabled:opacity-50"
+                >
+                  {addingMember ? 'Saving...' : 'Add Team Member'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Settle Cash Handover Modal */}
       {selectedTech && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -524,3 +666,4 @@ export default function OwnerDashboardPage() {
     </div>
   );
 }
+

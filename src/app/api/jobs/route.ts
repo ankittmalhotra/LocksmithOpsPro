@@ -27,9 +27,19 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {
     console.error('Error fetching jobs:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        error: err.message,
+        code: err.code,
+        meta: err.meta,
+        clientVersion: err.clientVersion,
+      },
+      { status: 500 }
+    );
   }
 }
+
 
 export async function POST(request: Request) {
   try {

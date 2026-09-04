@@ -96,16 +96,10 @@ export default function HomePage() {
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <Link
-              href={
-                currentUser.role === 'OWNER'
-                  ? '/owner'
-                  : currentUser.role === 'DISPATCHER'
-                  ? '/dispatch'
-                  : '/tech'
-              }
+              href={currentUser.role === 'OWNER' ? '/owner' : '/tech'}
               className="flex-1 sm:flex-none text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
             >
-              Go to {currentUser.role} Workspace &rarr;
+              Go to {currentUser.role === 'TECHNICIAN' ? 'Contractor' : 'Owner'} Workspace &rarr;
             </Link>
             <button
               onClick={handleLogout}
@@ -218,65 +212,57 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Role Navigation Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* 1. Dispatcher Portal */}
-        <Link
-          href="/dispatch"
-          className="group block bg-white rounded-2xl border border-slate-200 p-6 shadow-sm hover:shadow-md hover:border-blue-500 transition relative overflow-hidden"
-        >
-          <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-2xl mb-4 group-hover:scale-105 transition">
-            📞
-          </div>
-          <h3 className="text-lg font-bold text-slate-900 mb-2 group-hover:text-blue-600 transition">
-            Call Intake & Dispatch
-          </h3>
-          <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-            Rapid job logging from client calls. Enter customer details, extension, location, problem notes, and assign worker commission with auto-dispatch via Twilio SMS.
-          </p>
-          <div className="text-xs font-semibold text-blue-600 flex items-center gap-1">
-            Open Dispatch Desk &rarr;
-          </div>
-        </Link>
-
-        {/* 2. Field Technician Mobile Portal */}
-        <Link
-          href="/tech"
-          className="group block bg-white rounded-2xl border border-slate-200 p-6 shadow-sm hover:shadow-md hover:border-emerald-500 transition relative overflow-hidden"
-        >
-          <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-2xl mb-4 group-hover:scale-105 transition">
-            📱
-          </div>
-          <h3 className="text-lg font-bold text-slate-900 mb-2 group-hover:text-emerald-600 transition">
-            Technician Mobile App
-          </h3>
-          <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-            Mobile-optimized for workers on site. 1-tap navigation, reverse/forward 13% HST billing, $20/$25 abandoned travel charge, cash collection, and Stripe SMS toggle.
-          </p>
-          <div className="text-xs font-semibold text-emerald-600 flex items-center gap-1">
-            Open Field Technician View &rarr;
-          </div>
-        </Link>
-
-        {/* 3. Owner Dashboard */}
+      {/* Clean 2-Role Workspace Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+        {/* 1. Owner Workspace (Dispatch + Cash Settlements + KPIs) */}
         <Link
           href="/owner"
-          className="group block bg-white rounded-2xl border border-slate-200 p-6 shadow-sm hover:shadow-md hover:border-purple-500 transition relative overflow-hidden"
+          className="group block bg-white rounded-3xl border border-purple-200/80 p-6 shadow-xs hover:shadow-md hover:border-purple-500 transition relative overflow-hidden"
         >
-          <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center text-2xl mb-4 group-hover:scale-105 transition">
-            📊
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-12 h-12 rounded-2xl bg-purple-100 text-purple-700 flex items-center justify-center text-2xl group-hover:scale-105 transition">
+              👑
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 px-2.5 py-1 rounded-full border border-purple-200/60">
+              Owner Workspace
+            </span>
           </div>
-          <h3 className="text-lg font-bold text-slate-900 mb-2 group-hover:text-purple-600 transition">
-            Owner Hub & Settlements
+          <h3 className="text-lg font-extrabold text-slate-900 mb-1.5 group-hover:text-purple-700 transition">
+            Owner Hub & Dispatch
           </h3>
           <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-            Real-time business performance. Track revenue (Cash vs Stripe vs Interac), Ontario HST for CRA, and live worker cash-in-hand reconciliation with 1-click handover settlements.
+            Dispatch customer calls, manage contractors, track Ontario 13% HST, and reconcile live cash-in-hand ledger with 1-click settlements.
           </p>
-          <div className="text-xs font-semibold text-purple-600 flex items-center gap-1">
-            Open Executive Dashboard &rarr;
+          <div className="text-xs font-black text-purple-700 flex items-center gap-1">
+            Open Owner Console &rarr;
+          </div>
+        </Link>
+
+        {/* 2. Contractor Workspace (Mobile Field Execution & Invoicing) */}
+        <Link
+          href="/tech"
+          className="group block bg-white rounded-3xl border border-emerald-200/80 p-6 shadow-xs hover:shadow-md hover:border-emerald-500 transition relative overflow-hidden"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-2xl group-hover:scale-105 transition">
+              🛠️
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200/60">
+              Contractor Workspace
+            </span>
+          </div>
+          <h3 className="text-lg font-extrabold text-slate-900 mb-1.5 group-hover:text-emerald-700 transition">
+            Contractor Mobile Portal
+          </h3>
+          <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+            Fast mobile job execution: 1-tap navigation, reverse 13% HST calculation, $20/$25 abandoned travel fees, client signature, and cash/Stripe collection.
+          </p>
+          <div className="text-xs font-black text-emerald-700 flex items-center gap-1">
+            Open Contractor App &rarr;
           </div>
         </Link>
       </div>
+
     </div>
   );
 }

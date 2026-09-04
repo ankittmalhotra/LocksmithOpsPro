@@ -57,11 +57,16 @@ export default function TechJobsPage() {
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs);
-        const techs = data.jobs
-          .map((j: any) => j.technician)
-          .filter((t: any) => t !== null && t !== undefined);
-        const uniqueTechs = Array.from(new Map(techs.map((t: any) => [t.id, t])).values());
-        setTechList(uniqueTechs);
+      }
+
+      // Fetch all registered contractors
+      const usersRes = await fetch('/api/auth/users?role=TECHNICIAN');
+      const usersData = await usersRes.json();
+      if (usersData.success && usersData.users.length > 0) {
+        setTechList(usersData.users);
+        if (!authData.user || authData.user.role !== 'TECHNICIAN') {
+          setSelectedTech(usersData.users[0].name);
+        }
       }
     } catch (err) {
       console.error('Error fetching jobs:', err);
@@ -71,7 +76,7 @@ export default function TechJobsPage() {
   };
 
   // Filter jobs for selected tech
-  const techJobs = jobs.filter((j) => (j.technician?.name || 'Dave Miller') === selectedTech);
+  const techJobs = jobs.filter((j) => (j.technician?.name || '') === selectedTech);
   const activeJobs = techJobs.filter((j) =>
     ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status)
   );
@@ -88,18 +93,22 @@ export default function TechJobsPage() {
             🛠️
           </div>
           <div>
-            <div className="text-xs text-slate-400 font-medium">Technician Portal</div>
+            <div className="text-xs text-slate-400 font-medium">Contractor Portal</div>
             <select
               value={selectedTech}
               onChange={(e) => setSelectedTech(e.target.value)}
               className="bg-transparent text-white font-bold text-base focus:outline-none cursor-pointer border-b border-dashed border-slate-600"
             >
-              <option value="Dave Miller" className="text-slate-900">
-                Dave Miller (Tech 1)
-              </option>
-              <option value="Sam Chen" className="text-slate-900">
-                Sam Chen (Tech 2)
-              </option>
+              {techList.map((t) => (
+                <option key={t.id} value={t.name} className="text-slate-900">
+                  {t.name}
+                </option>
+              ))}
+              {techList.length === 0 && (
+                <option value={selectedTech} className="text-slate-900">
+                  {selectedTech}
+                </option>
+              )}
             </select>
           </div>
         </div>
@@ -110,6 +119,7 @@ export default function TechJobsPage() {
           </span>
         </div>
       </div>
+
 
       {/* Active Jobs Section */}
       <div className="mb-6">

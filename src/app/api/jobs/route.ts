@@ -69,13 +69,16 @@ export async function POST(request: Request) {
       });
     }
 
-    // 2. Determine default dispatcher if not passed
+    // 2. Determine default dispatcher / creator (Owner or Dispatcher)
     let activeDispatcherId = dispatcherId;
     if (!activeDispatcherId) {
-      const defaultDispatcher = await prisma.user.findFirst({
-        where: { role: 'DISPATCHER' },
+      const defaultUser = await prisma.user.findFirst({
+        where: {
+          role: { in: ['OWNER', 'DISPATCHER'] },
+          active: true,
+        },
       });
-      activeDispatcherId = defaultDispatcher?.id;
+      activeDispatcherId = defaultUser?.id;
     }
 
     // 3. Generate sequential Job Number

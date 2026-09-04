@@ -75,7 +75,7 @@ export default function NavigationHeader() {
             </Link>
           )}
 
-          {(!user || user.role === 'OWNER' || user.role === 'DISPATCHER' || user.role === 'TECHNICIAN') && (
+          {(!user || user.role === 'TECHNICIAN' || (user.role as any) === 'CONTRACTOR') && (
             <Link
               href="/tech"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -84,8 +84,8 @@ export default function NavigationHeader() {
                   : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
               }`}
             >
-              <span>📱</span>
-              <span>Tech Mobile</span>
+              <span>🛠️</span>
+              <span>Contractor Jobs</span>
             </Link>
           )}
 
@@ -98,7 +98,7 @@ export default function NavigationHeader() {
                   : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
               }`}
             >
-              <span>📊</span>
+              <span>👑</span>
               <span>Owner Hub</span>
             </Link>
           )}
@@ -108,8 +108,11 @@ export default function NavigationHeader() {
             <div className="flex items-center gap-2 pl-2 border-l border-slate-700">
               <span className="text-xs text-slate-300 font-bold hidden md:inline">
                 {user.name.split(' ')[0]} (
-                <span className="text-amber-400 text-[11px]">{user.role}</span>)
+                <span className="text-amber-400 text-[11px]">
+                  {user.role === 'TECHNICIAN' ? 'Contractor' : user.role === 'OWNER' ? 'Owner' : user.role}
+                </span>)
               </span>
+
               <button
                 onClick={handleLogout}
                 className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-400 text-xs font-bold transition border border-slate-700"

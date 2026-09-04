@@ -71,13 +71,15 @@ export default function DispatchPage() {
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs);
-        const techs = data.jobs
-          .map((j: any) => j.technician)
-          .filter((t: any) => t !== null && t !== undefined);
-        const uniqueTechs = Array.from(new Map(techs.map((t: any) => [t.id, t])).values());
-        setTechnicians(uniqueTechs);
-        if (uniqueTechs.length > 0 && !technicianId) {
-          setTechnicianId((uniqueTechs[0] as any).id);
+      }
+
+      // Fetch all available registered contractors
+      const usersRes = await fetch('/api/auth/users?role=TECHNICIAN');
+      const usersData = await usersRes.json();
+      if (usersData.success && usersData.users.length > 0) {
+        setTechnicians(usersData.users);
+        if (!technicianId) {
+          setTechnicianId(usersData.users[0].id);
         }
       }
     } catch (err) {

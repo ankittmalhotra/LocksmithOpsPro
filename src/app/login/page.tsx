@@ -123,84 +123,135 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Fast 1-Tap Team Login */}
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm mb-6">
-          <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3">
-            Select Team Member (1-Tap Login)
-          </h2>
+        {/* 1. Fast Team Sign-In (Categorized by 2 Roles: Owner & Contractor) */}
+        <div className="space-y-4 mb-6">
+          {/* Owners Section */}
+          <div className="bg-white rounded-3xl border border-purple-200/80 p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-black uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
+                <span>👑</span> Owner Login ({users.filter(u => u.role === 'OWNER').length})
+              </h2>
+              <span className="text-[10px] text-purple-600 font-bold bg-purple-50 px-2 py-0.5 rounded-full">
+                Full Business Hub & Settlements
+              </span>
+            </div>
 
-          <div className="space-y-2">
-            {users.map((u) => {
-              const roleBadgeColor =
-                u.role === 'OWNER'
-                  ? 'bg-purple-100 text-purple-800 border-purple-200'
-                  : u.role === 'DISPATCHER'
-                  ? 'bg-blue-100 text-blue-800 border-blue-200'
-                  : 'bg-emerald-100 text-emerald-800 border-emerald-200';
-
-              const roleEmoji =
-                u.role === 'OWNER' ? '👑' : u.role === 'DISPATCHER' ? '📞' : '🛠️';
-
-              return (
-                <button
-                  key={u.id}
-                  disabled={loading}
-                  onClick={() => handleLoginUser(u)}
-                  className="w-full text-left p-3 rounded-2xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 transition flex items-center justify-between group active:scale-[0.99]"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl">{roleEmoji}</span>
-                    <div>
-                      <div className="font-bold text-xs text-slate-900 group-hover:text-blue-600 transition">
-                        {u.name}
-                      </div>
-                      <div className="text-[10px] text-slate-400">{u.phone}</div>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border ${roleBadgeColor}`}
+            <div className="space-y-2">
+              {users
+                .filter((u) => u.role === 'OWNER')
+                .map((u) => (
+                  <button
+                    key={u.id}
+                    disabled={loading}
+                    onClick={() => handleLoginUser(u)}
+                    className="w-full text-left p-3 rounded-2xl border border-purple-100 hover:border-purple-300 hover:bg-purple-50/60 transition flex items-center justify-between group active:scale-[0.99]"
                   >
-                    {u.role}
-                  </span>
-                </button>
-              );
-            })}
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center text-sm font-black">
+                        👑
+                      </span>
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 group-hover:text-purple-700 transition">
+                          {u.name}
+                        </div>
+                        <div className="text-[10px] text-slate-400">{u.phone}</div>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-bold text-purple-700 bg-white px-2.5 py-1 rounded-lg border border-purple-200 shadow-xs">
+                      Sign In &rarr;
+                    </span>
+                  </button>
+                ))}
+
+              {users.filter((u) => u.role === 'OWNER').length === 0 && (
+                <div className="text-xs text-slate-400 italic py-2 text-center">
+                  Loading owners...
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Contractors Section */}
+          <div className="bg-white rounded-3xl border border-emerald-200/80 p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                <span>🛠️</span> Contractor Login ({users.filter(u => u.role === 'TECHNICIAN' || (u.role as any) === 'CONTRACTOR').length})
+              </h2>
+              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full">
+                Mobile Field & Invoicing
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {users
+                .filter((u) => u.role === 'TECHNICIAN' || (u.role as any) === 'CONTRACTOR')
+                .map((u) => (
+                  <button
+                    key={u.id}
+                    disabled={loading}
+                    onClick={() => handleLoginUser(u)}
+                    className="w-full text-left p-3 rounded-2xl border border-emerald-100 hover:border-emerald-300 hover:bg-emerald-50/60 transition flex items-center justify-between group active:scale-[0.99]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-sm font-black">
+                        🛠️
+                      </span>
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 group-hover:text-emerald-700 transition">
+                          {u.name}
+                        </div>
+                        <div className="text-[10px] text-slate-400">{u.phone}</div>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-1 rounded-lg border border-emerald-200 shadow-xs">
+                      Sign In &rarr;
+                    </span>
+                  </button>
+                ))}
+
+              {users.filter((u) => u.role === 'TECHNICIAN' || (u.role as any) === 'CONTRACTOR').length === 0 && (
+                <div className="text-xs text-slate-400 italic py-2 text-center">
+                  Loading contractors...
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Manual Phone Number Login Form */}
+        {/* 2. Direct Phone Login */}
         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
-          <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3">
-            Or Login with Phone Number
+          <h2 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-1">
+            Sign In with Any Phone Number
           </h2>
+          <p className="text-[11px] text-slate-400 mb-3">
+            Enter your registered owner or contractor mobile number.
+          </p>
 
           <form onSubmit={handlePhoneLogin} className="space-y-3">
-            <div>
-              <input
-                type="text"
-                placeholder="(647) 555-0301"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none"
-              />
-            </div>
+            <input
+              type="text"
+              placeholder="(647) 555-0301"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
 
             <button
               type="submit"
               disabled={loading || !phone}
               className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow transition disabled:opacity-50"
             >
-              {loading ? 'Authenticating...' : 'Sign In & Enter'}
+              {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
         </div>
 
         <div className="text-center mt-6">
           <Link href="/" className="text-xs font-bold text-slate-500 hover:text-slate-800">
-            &larr; Return to Home & Open Jobs Board
+            &larr; Return to Home & Open Jobs
           </Link>
         </div>
+
       </div>
     </div>
   );

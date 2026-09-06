@@ -98,7 +98,20 @@ model Job {
   keyBitting         String?      // e.g., "SC1: 3-5-2-1-4" or "KW1"
   doorDetails        String?      // e.g., "Adams Rite mortise, 1-1/8 backset"
   proofPhotoUrl      String?      // Proof of work photo
+  preWorkSignature   String?      // Pre-work estimate & authorization to drill/service
   customerSignature  String?      // Customer digital signature on site
+
+  // Automotive Specs
+  vehicleYear        String?
+  vehicleMake        String?
+  vehicleModel       String?
+  vehicleVin         String?
+  keyType            String?      // e.g. "Transponder Chip", "Proximity Smart Fob", "Laser Cut High-Security"
+  fccId              String?      // Fob FCC-ID / Part code
+
+  // Scheduled / Appointment Booking
+  isScheduled        Boolean      @default(false)
+  scheduledFor       DateTime?
 
   createdAt          DateTime     @default(now())
   dispatchedAt       DateTime?
@@ -130,7 +143,7 @@ model Invoice {
   laborTotal          Float            @default(0.0)
   taxRate             Float            @default(0.13) // Ontario HST
   taxAmount           Float            @default(0.0)
-  cardSurchargeRate   Float            @default(0.04) // Fixed 4%
+  cardSurchargeRate   Float            @default(0.024) // Compliant 2.4% Canadian card cost-of-acceptance
   cardSurchargeAmount Float            @default(0.0)
   grandTotal          Float            // Final amount billed
   

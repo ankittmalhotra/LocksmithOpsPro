@@ -23,8 +23,8 @@ function runTests() {
   console.assert(result1.partsTotal === 30.0, 'Parts total should be 30.00');
   console.log('✅ Test 1 Passed: Subtotal $1,470.59 + 13% HST $191.18 = $1,661.77');
 
-  // Test 2: Forward Calculation with Stripe 4% Surcharge
-  console.log('\nTest 2: Forward Calculation with 4% Stripe Surcharge');
+  // Test 2: Forward Calculation with Compliant 2.4% Stripe Surcharge
+  console.log('\nTest 2: Forward Calculation with 2.4% Stripe Surcharge');
   const result2 = calculateForwardInvoice({
     laborAmount: 100.0,
     partsTotal: 30.0,
@@ -32,12 +32,12 @@ function runTests() {
   });
   console.log('Result 2:', result2);
   // Subtotal = $130.00. Tax = 130 * 0.13 = $16.90. Base+Tax = $146.90.
-  // Card surcharge = 146.90 * 0.04 = $5.88. Grand total = $152.78.
+  // Card surcharge = 146.90 * 0.024 = $3.53. Grand total = $150.43.
   console.assert(result2.subtotal === 130.0, 'Subtotal should be 130.00');
   console.assert(result2.taxAmount === 16.9, 'Tax should be 16.90');
-  console.assert(result2.cardSurchargeAmount === 5.88, 'Card surcharge should be 5.88');
-  console.assert(result2.grandTotal === 152.78, 'Grand total should be 152.78');
-  console.log('✅ Test 2 Passed: Forward with 4% Surcharge is accurate');
+  console.assert(result2.cardSurchargeAmount === 3.53, 'Card surcharge should be 3.53');
+  console.assert(result2.grandTotal === 150.43, 'Grand total should be 150.43');
+  console.log('✅ Test 2 Passed: Forward with 2.4% Surcharge is accurate');
 
   // Test 3: Abandoned Job Travel Fee ($20 and $25)
   console.log('\nTest 3: Abandoned Job Travel Fee ($25)');
@@ -73,6 +73,30 @@ function runTests() {
   console.assert(settlement2.companyOwesWorker === 150.0, 'Company owes worker $150');
   console.assert(settlement2.netWorkerBalanceChange === -150.0, 'Net change should be -150');
   console.log('✅ Test 4 Passed: Cash Ledger calculations accurate');
+
+  // Test 5: Credit Card, Debit Card, and Interac Modes
+  console.log('\nTest 5: Credit Card, Debit Card, and Interac Modes');
+  const creditCardCalc = calculateForwardInvoice({
+    laborAmount: 200.0,
+    partsTotal: 50.0,
+    paymentMethod: 'CREDIT_CARD',
+  });
+  console.assert(creditCardCalc.cardSurchargeAmount > 0, 'Credit Card must calculate compliant card surcharge');
+
+  const debitCardCalc = calculateForwardInvoice({
+    laborAmount: 200.0,
+    partsTotal: 50.0,
+    paymentMethod: 'DEBIT_CARD',
+  });
+  console.assert(debitCardCalc.cardSurchargeAmount > 0, 'Debit Card must calculate card surcharge');
+
+  const interacCalc = calculateForwardInvoice({
+    laborAmount: 200.0,
+    partsTotal: 50.0,
+    paymentMethod: 'INTERAC',
+  });
+  console.assert(interacCalc.cardSurchargeAmount === 0, 'Interac must not have card surcharge');
+  console.log('✅ Test 5 Passed: Credit Card, Debit Card, and Interac calculations accurate');
 
   console.log('\n🎉 ALL CALCULATION TESTS PASSED!');
 }

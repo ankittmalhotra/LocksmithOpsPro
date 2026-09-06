@@ -47,34 +47,47 @@ export default function NavigationHeader() {
   return (
     <header className="sticky top-0 z-50 bg-slate-900 text-white shadow-md border-b border-slate-800">
       <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        {/* Brand & Tax Badge */}
+        {/* Brand */}
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🔐</span>
             <span className="font-extrabold text-lg tracking-tight">LockOps Pro</span>
           </Link>
-          <span className="text-[11px] bg-amber-500/20 text-amber-300 font-bold px-2.5 py-0.5 rounded-full border border-amber-500/30">
-            Ontario (13% HST)
+          <span className="text-[11px] bg-slate-800 text-slate-300 font-semibold px-2.5 py-0.5 rounded-full border border-slate-700">
+            Operations
           </span>
         </div>
 
-        {/* Navigation Links based on Role */}
+        {/* Navigation Links based on 2 Profiles */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm font-semibold">
           {(!user || user.role === 'SUPER_ADMIN' || user.role === 'OWNER' || user.role === 'DISPATCHER') && (
-            <Link
-              href="/dispatch"
-              className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
-                pathname === '/dispatch'
-                  ? 'bg-blue-600 text-white font-bold'
-                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
-              }`}
-            >
-              <span>📞</span>
-              <span>Dispatch</span>
-            </Link>
+            <>
+              <Link
+                href="/dispatch"
+                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
+                  pathname === '/dispatch'
+                    ? 'bg-blue-600 text-white font-bold'
+                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
+                }`}
+              >
+                <span>📞</span>
+                <span>Dispatch Desk</span>
+              </Link>
+              <Link
+                href="/owner"
+                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
+                  pathname === '/owner'
+                    ? 'bg-purple-600 text-white font-bold'
+                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
+                }`}
+              >
+                <span>👑</span>
+                <span>Owner Hub</span>
+              </Link>
+            </>
           )}
 
-          {(!user || user.role === 'SUPER_ADMIN' || user.role === 'TECHNICIAN' || (user.role as any) === 'CONTRACTOR') && (
+          {(!user || user.role === 'TECHNICIAN') && (
             <Link
               href="/tech"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -84,21 +97,7 @@ export default function NavigationHeader() {
               }`}
             >
               <span>🛠️</span>
-              <span>Contractor Jobs</span>
-            </Link>
-          )}
-
-          {(!user || user.role === 'SUPER_ADMIN' || user.role === 'OWNER') && (
-            <Link
-              href="/owner"
-              className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
-                pathname === '/owner'
-                  ? 'bg-purple-600 text-white font-bold'
-                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
-              }`}
-            >
-              <span>{user?.role === 'SUPER_ADMIN' ? '🛡️' : '👑'}</span>
-              <span>{user?.role === 'SUPER_ADMIN' ? 'Admin Hub' : 'Owner Hub'}</span>
+              <span>My Jobs</span>
             </Link>
           )}
 
@@ -108,14 +107,9 @@ export default function NavigationHeader() {
               <span className="text-xs text-slate-300 font-bold hidden md:inline">
                 {user.name.split(' ')[0]} (
                 <span className="text-amber-400 text-[11px]">
-                  {user.role === 'SUPER_ADMIN'
-                    ? 'Super Admin'
-                    : user.role === 'TECHNICIAN'
-                    ? 'Contractor'
-                    : 'Owner'}
+                  {user.role === 'TECHNICIAN' ? 'Technician' : 'Owner/Dispatch'}
                 </span>)
               </span>
-
 
               <button
                 onClick={handleLogout}

@@ -1,8 +1,17 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user || (user.role !== 'SUPER_ADMIN' && user.role !== 'OWNER')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Owner or Super Admin access required' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { technicianId, amountSettled, paymentMethod = 'CASH_HANDOVER', notes = '' } = body;
 
@@ -13,18 +22,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // Default owner user
-    const owner = await prisma.user.findFirst({
-      where: { role: 'OWNER' },
-    });
-
     const settlement = await prisma.settlement.create({
       data: {
         technicianId,
         amountSettled: parseFloat(amountSettled),
         paymentMethod,
         notes,
-        settledBy: owner?.id || 'SYSTEM_OWNER',
+        settledBy: user.id,
       },
       include: {
         technician: true,

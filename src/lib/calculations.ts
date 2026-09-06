@@ -8,7 +8,8 @@
  */
 
 export const ONTARIO_HST_RATE = 0.13;
-export const STRIPE_CARD_SURCHARGE_RATE = 0.04;
+export const STRIPE_CARD_SURCHARGE_RATE = 0.024; // 2.4% Canadian Code of Conduct compliant merchant acceptance cap
+export const CRA_HST_BUSINESS_NUMBER = '83921 4092 RT0001';
 
 export interface CalculationBreakdown {
   subtotal: number;
@@ -21,6 +22,12 @@ export interface CalculationBreakdown {
   grandTotal: number;
 }
 
+export type SupportedPaymentMethod = 'CASH' | 'INTERAC' | 'STRIPE_CARD' | 'CREDIT_CARD' | 'DEBIT_CARD';
+
+export function isCardPaymentMethod(method?: string): boolean {
+  return method === 'STRIPE_CARD' || method === 'CREDIT_CARD' || method === 'DEBIT_CARD';
+}
+
 export function roundToTwo(num: number): number {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 }
@@ -28,20 +35,21 @@ export function roundToTwo(num: number): number {
 /**
  * Forward Mode:
  * Given labor amount and parts items, calculates subtotal, 13% HST,
- * and optional 4% Stripe card surcharge.
+ * and optional Stripe card surcharge.
  */
 export function calculateForwardInvoice(params: {
   laborAmount: number;
   partsTotal?: number;
-  paymentMethod: 'CASH' | 'INTERAC' | 'STRIPE_CARD';
+  paymentMethod: SupportedPaymentMethod;
 }): CalculationBreakdown {
   const partsTotal = roundToTwo(params.partsTotal || 0);
   const laborTotal = roundToTwo(params.laborAmount || 0);
   const subtotal = roundToTwo(laborTotal + partsTotal);
   const taxAmount = roundToTwo(subtotal * ONTARIO_HST_RATE);
 
+  const isCard = isCardPaymentMethod(params.paymentMethod);
   let cardSurchargeAmount = 0;
-  if (params.paymentMethod === 'STRIPE_CARD') {
+  if (isCard) {
     cardSurchargeAmount = roundToTwo((subtotal + taxAmount) * STRIPE_CARD_SURCHARGE_RATE);
   }
 
@@ -53,7 +61,7 @@ export function calculateForwardInvoice(params: {
     laborTotal,
     taxRate: ONTARIO_HST_RATE,
     taxAmount,
-    cardSurchargeRate: params.paymentMethod === 'STRIPE_CARD' ? STRIPE_CARD_SURCHARGE_RATE : 0,
+    cardSurchargeRate: isCard ? STRIPE_CARD_SURCHARGE_RATE : 0,
     cardSurchargeAmount,
     grandTotal,
   };
@@ -68,16 +76,16 @@ export function calculateForwardInvoice(params: {
 export function calculateReverseInvoice(params: {
   amountReceived: number;
   partsTotal?: number;
-  paymentMethod?: 'CASH' | 'INTERAC' | 'STRIPE_CARD';
+  paymentMethod?: SupportedPaymentMethod;
 }): CalculationBreakdown {
   const grandTotal = roundToTwo(params.amountReceived);
   const partsTotal = roundToTwo(params.partsTotal || 0);
 
-  // If card payment in reverse mode: Total = (Subtotal + Tax) * 1.04
+  const isCard = isCardPaymentMethod(params.paymentMethod);
   let basePlusTax = grandTotal;
   let cardSurchargeAmount = 0;
 
-  if (params.paymentMethod === 'STRIPE_CARD') {
+  if (isCard) {
     basePlusTax = roundToTwo(grandTotal / (1 + STRIPE_CARD_SURCHARGE_RATE));
     cardSurchargeAmount = roundToTwo(grandTotal - basePlusTax);
   }
@@ -93,7 +101,7 @@ export function calculateReverseInvoice(params: {
     laborTotal,
     taxRate: ONTARIO_HST_RATE,
     taxAmount,
-    cardSurchargeRate: params.paymentMethod === 'STRIPE_CARD' ? STRIPE_CARD_SURCHARGE_RATE : 0,
+    cardSurchargeRate: isCard ? STRIPE_CARD_SURCHARGE_RATE : 0,
     cardSurchargeAmount,
     grandTotal,
   };
@@ -101,11 +109,11 @@ export function calculateReverseInvoice(params: {
 
 /**
  * Abandoned Job Travel Fee Calculator:
- * Standard $20 or $25 travel fee + 13% HST (+ optional 4% Stripe card fee)
+ * Standard $20 or $25 travel fee + 13% HST (+ optional Stripe card fee)
  */
 export function calculateTravelFee(params: {
   travelFeeAmount: number; // e.g. 20 or 25
-  paymentMethod: 'CASH' | 'INTERAC' | 'STRIPE_CARD';
+  paymentMethod: SupportedPaymentMethod;
 }): CalculationBreakdown {
   return calculateForwardInvoice({
     laborAmount: params.travelFeeAmount,
@@ -123,7 +131,7 @@ export function calculateTravelFee(params: {
  *   Company owes worker = Worker's Commission (net position: -commission).
  */
 export function calculateJobSettlementPosition(params: {
-  paymentMethod: 'CASH' | 'INTERAC' | 'STRIPE_CARD';
+  paymentMethod: SupportedPaymentMethod;
   grandTotal: number;
   workerCommission: number;
 }): {
@@ -142,7 +150,7 @@ export function calculateJobSettlementPosition(params: {
       netWorkerBalanceChange: cashOwed,
     };
   } else {
-    // Interac or Stripe
+    // Interac, Debit or Credit Card
     return {
       cashOwedToCompany: 0,
       companyOwesWorker: commission,

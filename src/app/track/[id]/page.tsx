@@ -101,6 +101,32 @@ export default function CustomerTrackPage({
           </div>
 
           <div className="p-5">
+            {/* Scheduled Appointment Banner */}
+            {job.isScheduled && job.scheduledFor && (
+              <div className="bg-purple-50 border border-purple-200 rounded-2xl p-3 mb-4 flex items-center gap-2.5 text-xs text-purple-900">
+                <span className="text-lg">📅</span>
+                <div>
+                  <div className="font-extrabold">Scheduled Service Appointment</div>
+                  <div className="text-[11px] text-purple-700">
+                    Confirmed for {new Date(job.scheduledFor).toLocaleDateString()} at {new Date(job.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Automotive Vehicle Details */}
+            {job.vehicleMake && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-4 flex items-center gap-2.5 text-xs text-amber-950">
+                <span className="text-lg">🚗</span>
+                <div>
+                  <div className="font-extrabold">Vehicle Serviced</div>
+                  <div className="text-[11px] text-amber-800">
+                    {job.vehicleYear || ''} {job.vehicleMake} {job.vehicleModel || ''} {job.keyType ? `• ${job.keyType}` : ''}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Technician Contact Card */}
             {job.technician && (
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 mb-5 flex items-center justify-between">
@@ -139,18 +165,18 @@ export default function CustomerTrackPage({
                     <div
                       className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 transition ${
                         isPast
-                          ? 'bg-emerald-600 text-white'
+                          ? 'bg-emerald-500 text-white'
                           : isCurrent
-                          ? 'bg-blue-600 text-white ring-4 ring-blue-100'
-                          : 'bg-slate-200 text-slate-500'
+                          ? 'bg-blue-600 text-white ring-4 ring-blue-100 animate-pulse'
+                          : 'bg-slate-200 text-slate-400'
                       }`}
                     >
                       {isPast ? '✓' : idx + 1}
                     </div>
 
-                    <div>
+                    <div className="flex-1 min-w-0 pt-0.5">
                       <div
-                        className={`text-xs font-bold ${
+                        className={`text-xs font-extrabold ${
                           isCurrent ? 'text-blue-600' : isPast ? 'text-slate-900' : 'text-slate-400'
                         }`}
                       >
@@ -199,8 +225,11 @@ export default function CustomerTrackPage({
           </div>
         </div>
 
-        <div className="text-center text-[11px] text-slate-400">
-          Auto-refreshing every 5 seconds • LockOps Real-time Tracking
+        <div className="text-center text-[11px] text-slate-400 space-y-1">
+          <div>Auto-refreshing every 5 seconds • LockOps Real-time Tracking</div>
+          <div className="text-[10px] text-slate-400">
+            LockOps Ontario Services • CRA Business / HST Reg: 83921 4092 RT0001
+          </div>
         </div>
       </div>
     </div>

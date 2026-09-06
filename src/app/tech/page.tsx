@@ -93,7 +93,7 @@ export default function TechJobsPage() {
             🛠️
           </div>
           <div>
-            <div className="text-xs text-slate-400 font-medium">Contractor Portal</div>
+            <div className="text-xs text-slate-400 font-medium">Technician Portal</div>
             <select
               value={selectedTech}
               onChange={(e) => setSelectedTech(e.target.value)}
@@ -152,8 +152,14 @@ export default function TechJobsPage() {
                       {job.serviceType}
                     </h3>
                   </div>
-                  <span className="text-xs font-bold uppercase px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-                    {job.status.replace('_', ' ')}
+                  <span
+                    className={`text-xs font-bold uppercase px-2.5 py-1 rounded-full border ${
+                      job.status === 'NEW'
+                        ? 'bg-amber-100 text-amber-900 border-amber-400 animate-pulse'
+                        : 'bg-blue-100 text-blue-900 border-blue-300'
+                    }`}
+                  >
+                    {job.status === 'NEW' ? '⚡ Acknowledge Call' : job.status.replace('_', ' ')}
                   </span>
                 </div>
 

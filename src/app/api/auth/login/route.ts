@@ -81,6 +81,17 @@ export async function POST(request: Request) {
       );
     }
 
+    if (user.role === 'TECHNICIAN' && user.active === false) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Your contractor account is pending admin approval. You will be able to log in once approved.',
+          pendingApproval: true,
+        },
+        { status: 403 }
+      );
+    }
+
     const sessionData = {
       id: user.id,
       name: user.name,

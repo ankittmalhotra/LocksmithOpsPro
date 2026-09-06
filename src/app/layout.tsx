@@ -27,7 +27,7 @@ export default function RootLayout({
         <main className="flex-1 flex flex-col">{children}</main>
 
         <footer className="bg-white border-t border-slate-200 py-3 text-center text-xs text-slate-500">
-          Locksmith Operations Platform • Ontario HST 13% • Stripe 4% Surcharge • Twilio SMS Integration
+          LockOps Pro © 2026 • Field Service Operations Platform
         </footer>
       </body>
     </html>

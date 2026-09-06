@@ -7,6 +7,8 @@ interface TechLedgerItem {
   id: string;
   name: string;
   phone: string;
+  active?: boolean;
+  fixedCommission?: number;
   cashCollected: number;
   commissionsEarned: number;
   totalSettled: number;
@@ -21,11 +23,15 @@ export default function OwnerDashboardPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
+  const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
 
   // Team Member Management State (Super Admin can add Owners + Contractors, Owners can add Contractors)
   const [showAddMember, setShowAddMember] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'OWNER' | 'TECHNICIAN'>('TECHNICIAN');
   const [addingMember, setAddingMember] = useState(false);
 
@@ -56,6 +62,7 @@ export default function OwnerDashboardPage() {
         body: JSON.stringify({
           name: newMemberName,
           phone: newMemberPhone,
+          email: newMemberEmail.trim() || undefined,
           role: newMemberRole,
         }),
       });
@@ -68,6 +75,7 @@ export default function OwnerDashboardPage() {
       setSuccessMsg(`Successfully added ${data.user.name} as ${data.user.role === 'OWNER' ? 'Owner' : 'Contractor'}!`);
       setNewMemberName('');
       setNewMemberPhone('');
+      setNewMemberEmail('');
       setShowAddMember(false);
       fetchAuthAndAnalytics();
     } catch (err: any) {
@@ -140,6 +148,60 @@ export default function OwnerDashboardPage() {
     }
   };
 
+  const handleToggleApproval = async (techId: string, currentActive: boolean) => {
+    try {
+      setApprovingId(techId);
+      setErrorMsg('');
+      setSuccessMsg('');
+
+      const res = await fetch('/api/auth/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: techId, active: !currentActive }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update contractor status');
+      }
+
+      setSuccessMsg(data.message);
+      fetchAuthAndAnalytics();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleUpdateCommission = async (techId: string) => {
+    const val = commissionInputs[techId];
+    if (val === undefined || isNaN(Number(val))) return;
+    try {
+      setEditingCommissionId(techId);
+      setErrorMsg('');
+      setSuccessMsg('');
+
+      const res = await fetch('/api/auth/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: techId, fixedCommission: parseFloat(val) }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update commission');
+      }
+
+      setSuccessMsg(data.message || 'Fixed commission updated successfully');
+      fetchAuthAndAnalytics();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setEditingCommissionId(null);
+    }
+  };
+
   const handleExportCSV = () => {
     if (!analytics?.recentJobs) return;
     const headers = [
@@ -207,7 +269,7 @@ export default function OwnerDashboardPage() {
             </span>
           </h1>
           <p className="text-sm text-slate-600">
-            Real-time business performance, CRA Ontario HST tracking, and worker cash-in-hand reconciliation.
+            Real-time business performance, tax reporting, and contractor reconciliation.
           </p>
         </div>
 
@@ -228,7 +290,7 @@ export default function OwnerDashboardPage() {
             onClick={handleExportCSV}
             className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition shadow flex items-center gap-1.5"
           >
-            <span>📥</span> Export CSV for Accountant
+            <span>📥</span> Export CSV
           </button>
         </div>
       </div>
@@ -264,7 +326,7 @@ export default function OwnerDashboardPage() {
       )}
 
       {/* Primary KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 mb-6">
         {/* Gross Revenue */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
@@ -295,10 +357,10 @@ export default function OwnerDashboardPage() {
           </div>
         </div>
 
-        {/* Ontario HST Collected */}
+        {/* Sales Tax Collected */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
           <div className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1 flex items-center justify-between">
-            <span>Ontario HST (13%)</span>
+            <span>Sales Tax (13%)</span>
             <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
               CRA Remittance
             </span>
@@ -307,7 +369,23 @@ export default function OwnerDashboardPage() {
             ${(s.totalTaxHST || 0).toFixed(2)}
           </div>
           <p className="mt-2 text-[11px] text-slate-500 leading-tight">
-            Taxes collected from all invoices ready for quarterly CRA tax filing.
+            Taxes collected from all invoices ready for CRA filing (Reg #83921 4092 RT0001).
+          </p>
+        </div>
+
+        {/* Wholesale Hardware COGS */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+          <div className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-1 flex items-center justify-between">
+            <span>Hardware COGS</span>
+            <span className="text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-bold">
+              Parts Cost
+            </span>
+          </div>
+          <div className="text-2xl font-black text-rose-700">
+            ${(s.totalPartsCost || 0).toFixed(2)}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500 leading-tight">
+            Wholesale locks, cylinders & hardware costs deducted from company net margin.
           </p>
         </div>
 
@@ -325,15 +403,15 @@ export default function OwnerDashboardPage() {
         </div>
 
         {/* Net Company Profit */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm col-span-2 lg:col-span-1">
           <div className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">
-            Net Company Revenue
+            Net Company Profit
           </div>
           <div className="text-2xl font-black text-emerald-700">
             ${(s.netCompanyProfit || 0).toFixed(2)}
           </div>
           <p className="mt-2 text-[11px] text-slate-500 leading-tight">
-            Gross revenue after deducting Ontario HST and technician commissions.
+            True net profit after deducting Ontario HST, contractor payouts, and wholesale parts.
           </p>
         </div>
       </div>
@@ -357,6 +435,8 @@ export default function OwnerDashboardPage() {
             <thead>
               <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
                 <th className="py-2.5 px-3">Contractor</th>
+                <th className="py-2.5 px-3">Account Status</th>
+                <th className="py-2.5 px-3">Fixed Commission</th>
                 <th className="py-2.5 px-3">Total Cash Collected</th>
                 <th className="py-2.5 px-3">Earned Commissions</th>
                 <th className="py-2.5 px-3">Previously Settled</th>
@@ -368,12 +448,50 @@ export default function OwnerDashboardPage() {
               {analytics?.technicianLedger?.map((tech: TechLedgerItem) => {
                 const owesCompany = tech.netCashOwedToCompany > 0;
                 const companyOwes = tech.netCashOwedToCompany < 0;
+                const isApproved = tech.active !== false;
 
                 return (
                   <tr key={tech.id} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-3">
                       <div className="font-extrabold text-slate-900 text-sm">{tech.name}</div>
                       <div className="text-[11px] text-slate-500">{tech.phone}</div>
+                    </td>
+                    <td className="py-3 px-3">
+                      {isApproved ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          <span>✓</span> Active
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full animate-pulse">
+                          <span>⏳</span> Pending Approval
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-400 font-bold">$</span>
+                        <input
+                          type="number"
+                          step="5"
+                          value={
+                            commissionInputs[tech.id] !== undefined
+                              ? commissionInputs[tech.id]
+                              : (tech.fixedCommission ?? 150).toString()
+                          }
+                          onChange={(e) =>
+                            setCommissionInputs({ ...commissionInputs, [tech.id]: e.target.value })
+                          }
+                          className="w-20 px-2 py-1 text-xs font-bold text-slate-900 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateCommission(tech.id)}
+                          disabled={editingCommissionId === tech.id}
+                          className="px-2 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] transition disabled:opacity-50"
+                        >
+                          {editingCommissionId === tech.id ? '...' : 'Set'}
+                        </button>
+                      </div>
                     </td>
                     <td className="py-3 px-3 text-slate-700 font-bold">
                       ${tech.cashCollected.toFixed(2)}
@@ -400,21 +518,42 @@ export default function OwnerDashboardPage() {
                       )}
                     </td>
                     <td className="py-3 px-3 text-right">
-                      {owesCompany ? (
-                        <button
-                          onClick={() => handleOpenSettlement(tech)}
-                          className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition"
-                        >
-                          Settle Cash Handover &rarr;
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleOpenSettlement(tech)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition"
-                        >
-                          Record Handover
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-1.5">
+                        {!isApproved ? (
+                          <button
+                            onClick={() => handleToggleApproval(tech.id, false)}
+                            disabled={approvingId === tech.id}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-sm transition disabled:opacity-50"
+                          >
+                            {approvingId === tech.id ? 'Approving...' : '✓ Approve Contractor'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleToggleApproval(tech.id, true)}
+                            disabled={approvingId === tech.id}
+                            title="Deactivate contractor access"
+                            className="px-2 py-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 text-[11px] font-semibold transition"
+                          >
+                            Deactivate
+                          </button>
+                        )}
+
+                        {owesCompany ? (
+                          <button
+                            onClick={() => handleOpenSettlement(tech)}
+                            className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition"
+                          >
+                            Settle &rarr;
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleOpenSettlement(tech)}
+                            className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition"
+                          >
+                            Handover
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -549,6 +688,19 @@ export default function OwnerDashboardPage() {
                   value={newMemberPhone}
                   onChange={(e) => setNewMemberPhone(e.target.value)}
                   placeholder="e.g. 647-555-0303"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Email Address <span className="text-slate-400 font-normal">(For Resend dispatch & notifications)</span>
+                </label>
+                <input
+                  type="email"
+                  value={newMemberEmail}
+                  onChange={(e) => setNewMemberEmail(e.target.value)}
+                  placeholder="e.g. member@example.com"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 />
               </div>

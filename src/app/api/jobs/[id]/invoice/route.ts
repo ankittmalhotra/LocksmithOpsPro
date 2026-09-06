@@ -4,9 +4,12 @@ import {
   calculateForwardInvoice,
   calculateReverseInvoice,
   calculateJobSettlementPosition,
+  isCardPaymentMethod,
+  SupportedPaymentMethod,
 } from '@/lib/calculations';
 import { createStripePaymentLink } from '@/lib/stripe';
 import { sendSMS } from '@/lib/twilio';
+import { sendEmail, buildInvoiceReceiptEmail } from '@/lib/resend';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 
 export async function POST(
@@ -26,8 +29,10 @@ export async function POST(
       sendSms = false,
       keyBitting,
       doorDetails,
+      preWorkSignature,
       customerSignature,
       proofPhotoUrl,
+      customerEmail,
     } = body;
 
     const job = await findJobByIdOrNumber(id);
@@ -35,6 +40,9 @@ export async function POST(
     if (!job) {
       return NextResponse.json({ success: false, error: 'Job not found' }, { status: 404 });
     }
+
+    const isCard = isCardPaymentMethod(paymentMethod);
+    const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
 
     // 1. Calculate parts total
     const partsTotal = parts.reduce((sum: number, p: any) => {
@@ -49,30 +57,30 @@ export async function POST(
       calcBreakdown = calculateReverseInvoice({
         amountReceived: received,
         partsTotal,
-        paymentMethod,
+        paymentMethod: paymentMethod as SupportedPaymentMethod,
       });
     } else {
       const labor = parseFloat(laborAmount || '0');
       calcBreakdown = calculateForwardInvoice({
         laborAmount: labor,
         partsTotal,
-        paymentMethod,
+        paymentMethod: paymentMethod as SupportedPaymentMethod,
       });
     }
 
     // 3. Compute cash ledger settlement position
     const settlement = calculateJobSettlementPosition({
-      paymentMethod,
+      paymentMethod: paymentMethod as SupportedPaymentMethod,
       grandTotal: calcBreakdown.grandTotal,
       workerCommission: job.workerCommission,
     });
 
-    // 4. Handle Stripe Payment Link generation if Card
+    // 4. Handle Stripe Payment Link generation if Card (Credit or Debit)
     let stripeLink = null;
     let stripeSessionId = null;
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-    if (paymentMethod === 'STRIPE_CARD') {
+    if (isCard) {
       const stripeRes = await createStripePaymentLink({
         jobId: job.id,
         jobNumber: job.jobNumber,
@@ -88,24 +96,69 @@ export async function POST(
       stripeSessionId = stripeRes.sessionId;
     }
 
-    // 5. Handle Twilio SMS
+    // 5. Handle Notifications:
+    // If Debit / Credit Card: Stripe sends SMS link to user for payment.
+    // If Cash / Interac: System enters cash received, client gets settlement SMS, and Owner gets completion notification.
     let smsResult = null;
-    if (sendSms && job.customer?.phone) {
-      if (paymentMethod === 'STRIPE_CARD' && stripeLink) {
+    if (job.customer?.phone) {
+      if (isCard && stripeLink) {
         const fullUrl = stripeLink.startsWith('http') ? stripeLink : `${appUrl}${stripeLink}`;
-        const smsBody = `Hello ${job.customer.name}, your invoice for Locksmith Job #${job.jobNumber} is ready.
-Total: $${calcBreakdown.grandTotal.toFixed(2)} (inc. 13% HST & card fee).
-Please complete your payment securely here: ${fullUrl}`;
+        const cardTypeLabel = paymentMethod === 'DEBIT_CARD' ? 'Debit Card' : 'Credit Card';
+        const smsBody = `Hello ${job.customer.name}, your payment link for Locksmith Job #${job.jobNumber} ($${calcBreakdown.grandTotal.toFixed(2)}) is ready.
+Please complete your ${cardTypeLabel} payment securely here: ${fullUrl}`;
         smsResult = await sendSMS({ to: job.customer.phone, body: smsBody });
-      } else {
+      } else if (isPaid) {
         const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac e-Transfer';
-        const smsBody = `Thank you ${job.customer.name}! Payment of $${calcBreakdown.grandTotal.toFixed(2)} received via ${methodStr} for Job #${job.jobNumber}.
-Subtotal: $${calcBreakdown.subtotal.toFixed(2)} | HST (13%): $${calcBreakdown.taxAmount.toFixed(2)}.`;
-        smsResult = await sendSMS({ to: job.customer.phone, body: smsBody });
+        const clientSms = `Thank you ${job.customer.name}! Your payment of $${calcBreakdown.grandTotal.toFixed(2)} received via ${methodStr} for Job #${job.jobNumber} has been settled.`;
+        smsResult = await sendSMS({ to: job.customer.phone, body: clientSms });
       }
     }
 
-    // 6. Persist Job Items
+    // Notify Owner / Dispatcher when Cash / Interac job is completed
+    if (isPaid) {
+      const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac e-Transfer';
+      const dispatcherOrOwner = job.dispatcher?.phone
+        ? job.dispatcher
+        : await prisma.user.findFirst({
+            where: { role: { in: ['OWNER', 'SUPER_ADMIN', 'DISPATCHER'] }, active: true },
+          });
+
+      if (dispatcherOrOwner?.phone) {
+        const ownerSms = `Job #${job.jobNumber} has been completed by ${job.technician?.name || 'Technician'}. Payment: $${calcBreakdown.grandTotal.toFixed(2)} received via ${methodStr}.`;
+        await sendSMS({ to: dispatcherOrOwner.phone, body: ownerSms });
+      }
+    }
+
+    // 6. Handle Resend Email Invoice / Receipt
+    let emailResult = null;
+    const recipientEmail = customerEmail || (job.customer as any).email;
+    if (recipientEmail) {
+      try {
+        const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
+        const emailData = buildInvoiceReceiptEmail({
+          customerName: job.customer.name,
+          jobNumber: job.jobNumber,
+          serviceType: job.serviceType,
+          subtotal: calcBreakdown.subtotal,
+          taxAmount: calcBreakdown.taxAmount,
+          grandTotal: calcBreakdown.grandTotal,
+          paymentMethod,
+          paymentStatus: isPaid ? 'PAID' : 'PENDING',
+          paymentUrl: stripeLink ? (stripeLink.startsWith('http') ? stripeLink : `${appUrl}${stripeLink}`) : undefined,
+          technicianName: job.technician?.name,
+        });
+
+        emailResult = await sendEmail({
+          to: recipientEmail,
+          subject: emailData.subject,
+          html: emailData.html,
+        });
+      } catch (emailErr) {
+        console.error('Failed to send invoice email via Resend:', emailErr);
+      }
+    }
+
+    // 7. Persist Job Items
     await prisma.jobItem.deleteMany({ where: { jobId: job.id } });
     const itemsToCreate = [];
 
@@ -138,7 +191,7 @@ Subtotal: $${calcBreakdown.subtotal.toFixed(2)} | HST (13%): $${calcBreakdown.ta
     }
 
     // 7. Upsert Invoice
-    const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
+    const dbPaymentMethod = isCard ? 'STRIPE_CARD' : (paymentMethod as 'CASH' | 'INTERAC');
     const invoice = await prisma.invoice.upsert({
       where: { jobId: job.id },
       create: {
@@ -153,9 +206,9 @@ Subtotal: $${calcBreakdown.subtotal.toFixed(2)} | HST (13%): $${calcBreakdown.ta
         cardSurchargeAmount: calcBreakdown.cardSurchargeAmount,
         grandTotal: calcBreakdown.grandTotal,
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
-        paymentMethod,
+        paymentMethod: dbPaymentMethod,
         cashOwedToCompany: settlement.cashOwedToCompany,
-        smsSent: sendSms,
+        smsSent: true,
         stripeSessionId,
         stripePaymentUrl: stripeLink,
         paidAt: isPaid ? new Date() : null,
@@ -171,9 +224,9 @@ Subtotal: $${calcBreakdown.subtotal.toFixed(2)} | HST (13%): $${calcBreakdown.ta
         cardSurchargeAmount: calcBreakdown.cardSurchargeAmount,
         grandTotal: calcBreakdown.grandTotal,
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
-        paymentMethod,
+        paymentMethod: dbPaymentMethod,
         cashOwedToCompany: settlement.cashOwedToCompany,
-        smsSent: sendSms,
+        smsSent: true,
         stripeSessionId,
         stripePaymentUrl: stripeLink,
         paidAt: isPaid ? new Date() : null,
@@ -188,6 +241,7 @@ Subtotal: $${calcBreakdown.subtotal.toFixed(2)} | HST (13%): $${calcBreakdown.ta
         status: newStatus,
         keyBitting: keyBitting !== undefined ? keyBitting : job.keyBitting,
         doorDetails: doorDetails !== undefined ? doorDetails : job.doorDetails,
+        preWorkSignature: preWorkSignature !== undefined ? preWorkSignature : (job as any).preWorkSignature,
         customerSignature: customerSignature !== undefined ? customerSignature : job.customerSignature,
         proofPhotoUrl: proofPhotoUrl !== undefined ? proofPhotoUrl : job.proofPhotoUrl,
         ...(isPaid ? { completedAt: new Date() } : {}),
@@ -199,6 +253,13 @@ Subtotal: $${calcBreakdown.subtotal.toFixed(2)} | HST (13%): $${calcBreakdown.ta
         items: true,
       },
     });
+
+    // 9. Send Google Review Booster SMS if customer requested receipt and job is paid
+    if (isPaid && sendSms && job.customer?.phone) {
+      const googleReviewUrl = process.env.GOOGLE_REVIEW_URL || 'https://g.page/r/locksmith-toronto/review';
+      const reviewSms = `Hi ${job.customer.name}, thank you for choosing LockOps! If you were pleased with ${job.technician?.name || 'our service'}, please take a moment to leave us a 5-star Google review: ${googleReviewUrl}`;
+      await sendSMS({ to: job.customer.phone, body: reviewSms });
+    }
 
     return NextResponse.json({
       success: true,

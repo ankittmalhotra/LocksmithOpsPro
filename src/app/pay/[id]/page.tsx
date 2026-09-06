@@ -205,8 +205,11 @@ export default function CustomerPaymentPortalPage({
                     ${invoice.taxAmount.toFixed(2)}
                   </span>
                 </div>
+                <div className="text-[10px] text-slate-400">
+                  CRA Business / HST Reg: 83921 4092 RT0001
+                </div>
                 <div className="flex justify-between text-amber-700 font-medium">
-                  <span>Card Processing Surcharge (4%):</span>
+                  <span>Card Processing Surcharge (2.4%):</span>
                   <span className="font-bold">
                     +${invoice.cardSurchargeAmount.toFixed(2)}
                   </span>
@@ -294,7 +297,7 @@ export default function CustomerPaymentPortalPage({
                 </div>
 
                 <p className="text-[10px] text-center text-slate-400 mt-2">
-                  Secured by 256-bit encryption • Powered by Stripe & Twilio
+                  Secured by 256-bit SSL encryption
                 </p>
               </form>
             </div>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { sendSMS } from '@/lib/twilio';
+import { sendEmail, buildJobDispatchedEmail } from '@/lib/resend';
 
 export async function GET(request: Request) {
   try {
@@ -54,6 +55,14 @@ export async function POST(request: Request) {
       workerCommission,
       technicianId,
       dispatcherId,
+      vehicleYear,
+      vehicleMake,
+      vehicleModel,
+      vehicleVin,
+      keyType,
+      fccId,
+      isScheduled = false,
+      scheduledFor,
     } = body;
 
     if (!customerName || !customerPhone || !serviceAddress || !serviceType) {
@@ -98,19 +107,26 @@ export async function POST(request: Request) {
     });
     const nextJobNumber = (highestJob?.jobNumber || 9815) + 1;
 
-    // 4. Create the Job
+    // 4. Create the Job in NEW status awaiting technician acknowledgment
     const job = await prisma.job.create({
       data: {
         jobNumber: nextJobNumber,
         customerId: customer.id,
         dispatcherId: activeDispatcherId!,
         technicianId: technicianId || null,
-        status: technicianId ? 'DISPATCHED' : 'NEW',
+        status: 'NEW',
         serviceType,
         problemDescription: problemDescription || '',
         serviceAddress,
         workerCommission: parseFloat(workerCommission || '0') || 0,
-        dispatchedAt: technicianId ? new Date() : null,
+        vehicleYear: vehicleYear || null,
+        vehicleMake: vehicleMake || null,
+        vehicleModel: vehicleModel || null,
+        vehicleVin: vehicleVin || null,
+        keyType: keyType || null,
+        fccId: fccId || null,
+        isScheduled: !!isScheduled,
+        scheduledFor: scheduledFor ? new Date(scheduledFor) : null,
       },
       include: {
         customer: true,
@@ -118,23 +134,51 @@ export async function POST(request: Request) {
       },
     });
 
-    // 5. If assigned to a technician, send Twilio SMS Dispatch notification
+    // 5. If assigned to a technician, send SMS and Email assignment alert
     let smsResult = null;
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
     if (job.technician?.phone) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const extStr = customer.extension ? ` #${customer.extension}` : '';
-      const smsBody = `🚨 NEW JOB #${job.jobNumber}
+      const autoDetails = job.vehicleMake ? `\nVehicle: ${job.vehicleYear || ''} ${job.vehicleMake} ${job.vehicleModel || ''} (${job.keyType || 'Key'})` : '';
+      const scheduleDetails = job.isScheduled && job.scheduledFor ? `\n📅 Scheduled: ${new Date(job.scheduledFor).toLocaleString()}` : '';
+      const smsBody = `🚨 NEW JOB ASSIGNMENT #${job.jobNumber}${scheduleDetails}
 Customer: ${customer.name} (${customer.phone}${extStr})
 Address: ${serviceAddress}
-Service: ${serviceType}
-Notes: ${problemDescription || 'N/A'}
+Service: ${serviceType}${autoDetails}
 Commission: $${job.workerCommission.toFixed(2)}
-Open Job: ${appUrl}/tech/jobs/${job.id}`;
+Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
 
       smsResult = await sendSMS({
         to: job.technician.phone,
         body: smsBody,
       });
+
+      // Send dispatch notification email via Resend if technician has email configured
+      if (job.technician.email) {
+        try {
+          const emailData = buildJobDispatchedEmail({
+            technicianName: job.technician.name,
+            jobNumber: job.jobNumber,
+            customerName: customer.name,
+            customerPhone: customer.phone,
+            customerExtension: customer.extension || undefined,
+            serviceAddress,
+            serviceType,
+            commission: job.workerCommission,
+            problemDescription: problemDescription || undefined,
+            appUrl,
+          });
+
+          await sendEmail({
+            to: job.technician.email,
+            subject: emailData.subject,
+            html: emailData.html,
+          });
+        } catch (emailErr) {
+          console.error('Failed to send dispatch email:', emailErr);
+        }
+      }
     }
 
     return NextResponse.json({

@@ -13,6 +13,14 @@ interface Job {
   status: string;
   isAbandoned: boolean;
   createdAt: string;
+  isScheduled?: boolean;
+  scheduledFor?: string;
+  vehicleYear?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleVin?: string;
+  keyType?: string;
+  fccId?: string;
   customer: {
     name: string;
     phone: string;
@@ -45,6 +53,19 @@ export default function DispatchPage() {
   const [problemDescription, setProblemDescription] = useState('');
   const [workerCommission, setWorkerCommission] = useState('150.00');
   const [technicianId, setTechnicianId] = useState('');
+  
+  // Scheduled Booking State
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [scheduledFor, setScheduledFor] = useState('');
+
+  // Automotive Locksmith State
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [vehicleMake, setVehicleMake] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [vehicleVin, setVehicleVin] = useState('');
+  const [keyType, setKeyType] = useState('Transponder Chip Key');
+  const [fccId, setFccId] = useState('');
+
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -73,13 +94,17 @@ export default function DispatchPage() {
         setJobs(data.jobs);
       }
 
-      // Fetch all available registered contractors
-      const usersRes = await fetch('/api/auth/users?role=TECHNICIAN');
+      // Fetch only approved active registered contractors with their fixed commissions
+      const usersRes = await fetch('/api/auth/users?role=TECHNICIAN&activeOnly=true');
       const usersData = await usersRes.json();
       if (usersData.success && usersData.users.length > 0) {
         setTechnicians(usersData.users);
         if (!technicianId) {
-          setTechnicianId(usersData.users[0].id);
+          const firstTech = usersData.users[0];
+          setTechnicianId(firstTech.id);
+          if (firstTech.fixedCommission) {
+            setWorkerCommission(Number(firstTech.fixedCommission).toFixed(2));
+          }
         }
       }
     } catch (err) {
@@ -108,6 +133,14 @@ export default function DispatchPage() {
           problemDescription,
           workerCommission,
           technicianId,
+          isScheduled,
+          scheduledFor: isScheduled && scheduledFor ? scheduledFor : null,
+          vehicleYear: vehicleYear || null,
+          vehicleMake: vehicleMake || null,
+          vehicleModel: vehicleModel || null,
+          vehicleVin: vehicleVin || null,
+          keyType: keyType || null,
+          fccId: fccId || null,
         }),
       });
 
@@ -116,7 +149,7 @@ export default function DispatchPage() {
         throw new Error(data.error || 'Failed to dispatch job');
       }
 
-      setSuccessMsg(`✅ Job #${data.job.jobNumber} created and dispatched via Twilio to technician!`);
+      setSuccessMsg(`✅ Job #${data.job.jobNumber} created! Notification sent to technician & customer.`);
       // Reset form
       setCustomerName('');
       setCustomerPhone('');
@@ -124,6 +157,13 @@ export default function DispatchPage() {
       setServiceAddress('');
       setProblemDescription('');
       setWorkerCommission('150.00');
+      setIsScheduled(false);
+      setScheduledFor('');
+      setVehicleYear('');
+      setVehicleMake('');
+      setVehicleModel('');
+      setVehicleVin('');
+      setFccId('');
       fetchAuthAndJobs();
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -134,7 +174,8 @@ export default function DispatchPage() {
 
   const filteredJobs = jobs.filter((j) => {
     if (filter === 'ALL') return true;
-    if (filter === 'ACTIVE') return ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status);
+    if (filter === 'ACTIVE') return ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status) && !j.isScheduled;
+    if (filter === 'SCHEDULED') return !!j.isScheduled;
     if (filter === 'COMPLETED') return j.status === 'COMPLETED';
     if (filter === 'ABANDONED') return j.status === 'ABANDONED_TRAVEL_FEE';
     return j.status === filter;
@@ -152,24 +193,9 @@ export default function DispatchPage() {
             </span>
           </h1>
           <p className="text-sm text-slate-600">
-            Log incoming customer calls, assign worker commissions, and dispatch automatically via Twilio SMS.
+            Log incoming customer calls, assign technician commissions, and dispatch active jobs.
           </p>
         </div>
-
-        <button
-          onClick={() => {
-            // Fill sample Toronto job for instant testing
-            setCustomerName('Ativan Bloor');
-            setCustomerPhone('6479510901');
-            setCustomerExtension('762');
-            setServiceAddress('663 Bloor Street West, Toronto, ON M6G 1L1');
-            setServiceType('Commercial Lock Change');
-            setProblemDescription('Need replaced lock cylinder on the glass door at the bottom');
-            setWorkerCommission('300.00');
-          }}
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 transition flex items-center gap-1.5"
-        >
-        </button>
       </div>
 
       {currentUser && currentUser.role === 'TECHNICIAN' && (
@@ -268,6 +294,52 @@ export default function DispatchPage() {
               />
             </div>
 
+            {/* Dispatch Mode: Immediate vs Scheduled */}
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                Dispatch Mode *
+              </label>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setIsScheduled(false)}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold border transition ${
+                    !isScheduled
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                >
+                  ⚡ Immediate Emergency
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsScheduled(true)}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold border transition ${
+                    isScheduled
+                      ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                >
+                  📅 Scheduled Booking
+                </button>
+              </div>
+
+              {isScheduled && (
+                <div>
+                  <label className="block text-[11px] font-bold text-purple-900 mb-1">
+                    Select Appointment Date & Time *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required={isScheduled}
+                    value={scheduledFor}
+                    onChange={(e) => setScheduledFor(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-purple-300 rounded-lg text-xs bg-white text-slate-900 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Service Category *
@@ -282,10 +354,78 @@ export default function DispatchPage() {
                 <option value="Residential Lockout">Residential Lockout</option>
                 <option value="Deadbolt Installation">Deadbolt Installation</option>
                 <option value="Rekey Master Key System">Rekey Master Key System</option>
+                <option value="Automotive Lockout / Key Generation">Automotive Lockout / Key Generation</option>
                 <option value="Car Lockout">Car Lockout</option>
                 <option value="Safe Opening">Safe Opening</option>
               </select>
             </div>
+
+            {/* Automotive Specs Suite (Shown when service involves automotive) */}
+            {(serviceType.includes('Car') || serviceType.includes('Auto')) && (
+              <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200 space-y-2">
+                <div className="text-xs font-black text-amber-900 flex items-center gap-1">
+                  <span>🚗</span> Automotive Specs & Programming
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-amber-800 mb-0.5">Year</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 2021"
+                      value={vehicleYear}
+                      onChange={(e) => setVehicleYear(e.target.value)}
+                      className="w-full px-2 py-1 border border-amber-300 rounded-lg text-xs text-slate-900 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-amber-800 mb-0.5">Make</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Honda"
+                      value={vehicleMake}
+                      onChange={(e) => setVehicleMake(e.target.value)}
+                      className="w-full px-2 py-1 border border-amber-300 rounded-lg text-xs text-slate-900 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-amber-800 mb-0.5">Model</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Civic"
+                      value={vehicleModel}
+                      onChange={(e) => setVehicleModel(e.target.value)}
+                      className="w-full px-2 py-1 border border-amber-300 rounded-lg text-xs text-slate-900 bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-amber-800 mb-0.5">Key / Fob Type</label>
+                    <select
+                      value={keyType}
+                      onChange={(e) => setKeyType(e.target.value)}
+                      className="w-full px-2 py-1 border border-amber-300 rounded-lg text-xs text-slate-900 bg-white"
+                    >
+                      <option value="Transponder Chip Key">Transponder Chip Key</option>
+                      <option value="Proximity Smart Key (Push-to-Start)">Proximity Smart Key (Push-to-Start)</option>
+                      <option value="Laser Cut High-Security Key">Laser Cut High-Security Key</option>
+                      <option value="Standard Mechanical Metal Key">Standard Mechanical Metal Key</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-amber-800 mb-0.5">VIN (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="17-digit VIN"
+                      value={vehicleVin}
+                      onChange={(e) => setVehicleVin(e.target.value.toUpperCase())}
+                      className="w-full px-2 py-1 border border-amber-300 rounded-lg text-xs font-mono text-slate-900 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -317,26 +457,32 @@ export default function DispatchPage() {
                     className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
-                <span className="text-[10px] text-slate-500">Initiator sets worker pay</span>
+                <span className="text-[10px] text-slate-500">Auto-filled from technician rate</span>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">
-                  Assign Contractor *
+                  Assign Technician *
                 </label>
                 <select
                   value={technicianId}
-                  onChange={(e) => setTechnicianId(e.target.value)}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    setTechnicianId(selectedId);
+                    const found = technicians.find((t) => t.id === selectedId);
+                    if (found && found.fixedCommission !== undefined) {
+                      setWorkerCommission(Number(found.fixedCommission).toFixed(2));
+                    }
+                  }}
                   className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 >
                   {technicians.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name}
+                      {t.name} (Fixed: ${Number(t.fixedCommission || 150).toFixed(2)})
                     </option>
                   ))}
                   {technicians.length === 0 && <option value="">Dave Miller (Tech)</option>}
                 </select>
-                <span className="text-[10px] text-emerald-600 font-medium">Dispatches via Twilio SMS</span>
               </div>
             </div>
 
@@ -345,7 +491,7 @@ export default function DispatchPage() {
               disabled={submitting}
               className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {submitting ? 'Dispatching...' : '🚀 Create & Dispatch Job via Twilio'}
+              {submitting ? 'Dispatching...' : isScheduled ? '📅 Schedule Appointment & Notify Tech' : '🚀 Create & Dispatch Job'}
             </button>
           </form>
         </div>
@@ -362,7 +508,7 @@ export default function DispatchPage() {
 
             {/* Filter Pills */}
             <div className="flex items-center gap-1 text-xs">
-              {(['ALL', 'ACTIVE', 'COMPLETED', 'ABANDONED'] as const).map((f) => (
+              {(['ALL', 'ACTIVE', 'SCHEDULED', 'COMPLETED', 'ABANDONED'] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
@@ -372,7 +518,7 @@ export default function DispatchPage() {
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  {f}
+                  {f === 'ACTIVE' ? '⚡ Emergency' : f === 'SCHEDULED' ? '📅 Scheduled' : f}
                 </button>
               ))}
             </div>
@@ -405,7 +551,7 @@ export default function DispatchPage() {
                     className="p-3.5 rounded-xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-extrabold text-sm text-slate-900">
                           #{job.jobNumber}
                         </span>
@@ -421,6 +567,16 @@ export default function DispatchPage() {
                         >
                           {job.status.replace('_', ' ')}
                         </span>
+                        {job.isScheduled && job.scheduledFor && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-100 text-purple-800 border border-purple-300">
+                            📅 {new Date(job.scheduledFor).toLocaleDateString()} {new Date(job.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                        {job.vehicleMake && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                            🚗 {job.vehicleYear || ''} {job.vehicleMake} {job.vehicleModel || ''}
+                          </span>
+                        )}
                       </div>
 
                       <div className="text-xs text-slate-600 flex items-center gap-1.5">

@@ -1,15 +1,26 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { roundToTwo } from '@/lib/calculations';
+import { getCurrentUser } from '@/lib/auth';
+import { getTechnicianCommission } from '@/lib/commissions';
 
 export async function GET() {
   try {
-    // 1. Fetch all completed/invoiced jobs with invoices
+    const user = await getCurrentUser();
+    if (!user || (user.role !== 'SUPER_ADMIN' && user.role !== 'OWNER')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Owner or Super Admin access required' },
+        { status: 403 }
+      );
+    }
+
+    // 1. Fetch all completed/invoiced jobs with invoices and items
     const jobs = await prisma.job.findMany({
       include: {
         invoice: true,
         technician: true,
         customer: true,
+        items: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -28,6 +39,7 @@ export async function GET() {
     let totalCardRevenue = 0;
     let totalTaxHST = 0;
     let totalCommissionsEarned = 0;
+    let totalPartsCost = 0;
     let activeJobsCount = 0;
     let completedJobsCount = 0;
     let abandonedJobsCount = 0;
@@ -44,6 +56,13 @@ export async function GET() {
         totalGrossRevenue += job.invoice.grandTotal;
         totalTaxHST += job.invoice.taxAmount;
         totalCommissionsEarned += job.workerCommission;
+
+        // Calculate wholesale parts cost (COGS)
+        for (const item of job.items || []) {
+          if (item.isPart) {
+            totalPartsCost += (item.unitCost || 0) * (item.quantity || 1);
+          }
+        }
 
         if (job.invoice.paymentMethod === 'CASH') {
           totalCashRevenue += job.invoice.grandTotal;
@@ -83,6 +102,9 @@ export async function GET() {
         id: tech.id,
         name: tech.name,
         phone: tech.phone,
+        active: tech.active,
+        fixedCommission: getTechnicianCommission(tech.phone) || getTechnicianCommission(tech.id) || 150.0,
+        createdAt: tech.createdAt,
         cashCollected: roundToTwo(cashCollected),
         commissionsEarned: roundToTwo(commissionsEarned),
         totalSettled: roundToTwo(totalSettled),
@@ -92,7 +114,7 @@ export async function GET() {
       };
     });
 
-    const netCompanyProfit = roundToTwo(totalGrossRevenue - totalTaxHST - totalCommissionsEarned);
+    const netCompanyProfit = roundToTwo(totalGrossRevenue - totalTaxHST - totalCommissionsEarned - totalPartsCost);
 
     return NextResponse.json({
       success: true,
@@ -103,6 +125,7 @@ export async function GET() {
         totalCardRevenue: roundToTwo(totalCardRevenue),
         totalTaxHST: roundToTwo(totalTaxHST),
         totalCommissionsEarned: roundToTwo(totalCommissionsEarned),
+        totalPartsCost: roundToTwo(totalPartsCost),
         netCompanyProfit,
         activeJobsCount,
         completedJobsCount,

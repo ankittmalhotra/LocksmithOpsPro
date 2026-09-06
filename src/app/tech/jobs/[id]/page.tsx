@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -8,8 +8,11 @@ import {
   calculateReverseInvoice,
   calculateTravelFee,
   calculateJobSettlementPosition,
+  SupportedPaymentMethod,
+  isCardPaymentMethod,
 } from '@/lib/calculations';
 import SignaturePad from '@/components/SignaturePad';
+import { LOCKSMITH_CATALOG } from '@/lib/catalog';
 
 interface PartItem {
   description: string;
@@ -37,8 +40,11 @@ export default function TechJobDetailPage({
   // Locksmith-specific Field States
   const [keyBitting, setKeyBitting] = useState('');
   const [doorDetails, setDoorDetails] = useState('');
+  const [preWorkSignature, setPreWorkSignature] = useState<string>('');
   const [customerSignature, setCustomerSignature] = useState<string>('');
   const [proofPhotoUrl, setProofPhotoUrl] = useState<string>('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Billing Mode: 'REVERSE' (enter total received) or 'FORWARD' (enter labor + parts)
   const [calculationMode, setCalculationMode] = useState<'REVERSE' | 'FORWARD'>('REVERSE');
@@ -51,8 +57,9 @@ export default function TechJobDetailPage({
   ]);
 
   // Payment Options
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'INTERAC' | 'STRIPE_CARD'>('CASH');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'INTERAC' | 'CREDIT_CARD' | 'DEBIT_CARD'>('CASH');
   const [sendSms, setSendSms] = useState(false);
+  const [customerEmail, setCustomerEmail] = useState('');
   const [submittingInvoice, setSubmittingInvoice] = useState(false);
   const [generatedStripeLink, setGeneratedStripeLink] = useState<string | null>(null);
 
@@ -68,7 +75,7 @@ export default function TechJobDetailPage({
 
   // Adjust default sendSms toggle when paymentMethod changes
   useEffect(() => {
-    if (paymentMethod === 'STRIPE_CARD') {
+    if (paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD') {
       setSendSms(true);
     } else {
       setSendSms(false);
@@ -84,6 +91,7 @@ export default function TechJobDetailPage({
         setJob(data.job);
         setKeyBitting(data.job.keyBitting || '');
         setDoorDetails(data.job.doorDetails || '');
+        setPreWorkSignature(data.job.preWorkSignature || '');
         setCustomerSignature(data.job.customerSignature || '');
         setProofPhotoUrl(data.job.proofPhotoUrl || '');
         if (data.job.invoice) {
@@ -102,6 +110,33 @@ export default function TechJobDetailPage({
       setErrorMsg(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setUploadingPhoto(true);
+      setErrorMsg('');
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success && data.url) {
+        setProofPhotoUrl(data.url);
+        setActionSuccess('✅ Proof of work photo uploaded successfully!');
+        setTimeout(() => setActionSuccess(''), 3000);
+      } else {
+        throw new Error(data.error || 'Photo upload failed');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setUploadingPhoto(false);
     }
   };
 
@@ -171,8 +206,10 @@ export default function TechJobDetailPage({
           parts,
           paymentMethod,
           sendSms,
+          customerEmail: customerEmail.trim() || undefined,
           keyBitting,
           doorDetails,
+          preWorkSignature,
           customerSignature,
           proofPhotoUrl,
         }),
@@ -187,12 +224,11 @@ export default function TechJobDetailPage({
       if (data.stripeLink) {
         setGeneratedStripeLink(data.stripeLink);
         setActionSuccess(
-          data.smsResult?.isSimulated
-            ? `✅ Stripe Payment link generated! (Simulated Twilio SMS sent to ${job.customer.phone})`
-            : `✅ Stripe Payment link sent to customer via SMS!`
+          `✅ Stripe payment link generated and sent via SMS to ${job.customer.phone}!`
         );
       } else {
-        setActionSuccess(`✅ Job closed! Payment recorded via ${paymentMethod}.`);
+        const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
+        setActionSuccess(`✅ Job closed! Payment recorded via ${methodStr}. Customer & Owner notified.`);
       }
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -310,33 +346,24 @@ export default function TechJobDetailPage({
         </div>
 
         {/* 1-Tap Action Buttons for Field Workers */}
-        <div className="grid grid-cols-3 gap-1.5 mt-3 pt-3 border-t border-slate-100">
+        <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-100">
           <a
             href={`https://maps.google.com/?q=${encodeURIComponent(job.serviceAddress)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="py-2 px-2 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-sm hover:bg-slate-800 transition"
+            className="py-2.5 px-3 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm hover:bg-slate-800 transition"
           >
             <span>🗺️</span>
-            <span>Maps</span>
+            <span>Google Maps</span>
           </a>
 
           <a
             href={`tel:${job.customer.phone}${job.customer.extension ? `,${job.customer.extension}` : ''}`}
-            className="py-2 px-2 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-sm hover:bg-blue-700 transition"
+            className="py-2.5 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm hover:bg-blue-700 transition"
           >
             <span>📞</span>
-            <span>Call</span>
+            <span>Call Customer</span>
           </a>
-
-          <Link
-            href={`/track/${job.jobNumber}`}
-            target="_blank"
-            className="py-2 px-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition"
-          >
-            <span>📲</span>
-            <span>Track</span>
-          </Link>
         </div>
 
         <div className="mt-3 text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
@@ -345,8 +372,28 @@ export default function TechJobDetailPage({
         </div>
       </div>
 
+      {/* Step: Technician Job Acknowledgment Banner */}
+      {!isClosed && (job.status === 'NEW' || !job.dispatchedAt) && (
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-4 shadow-sm mb-4">
+          <div className="flex items-center gap-2 text-amber-900 font-extrabold text-sm mb-1">
+            <span>🚨</span> New Dispatch Assignment
+          </div>
+          <p className="text-xs text-amber-800 mb-3 leading-relaxed">
+            Click below to acknowledge this call. Dispatcher will be notified and client will receive an SMS alert that you are dispatched.
+          </p>
+          <button
+            type="button"
+            disabled={updatingStatus}
+            onClick={() => updateStatus('DISPATCHED')}
+            className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-sm shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {updatingStatus ? 'Acknowledging...' : '⚡ Acknowledge Job (Technician Dispatched) →'}
+          </button>
+        </div>
+      )}
+
       {/* Progress Status Bar (If Not Closed) */}
-      {!isClosed && (
+      {!isClosed && job.status !== 'NEW' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-3.5 shadow-sm mb-4">
           <div className="text-xs font-bold text-slate-700 mb-2 flex items-center justify-between">
             <span>Work Progression</span>
@@ -359,7 +406,7 @@ export default function TechJobDetailPage({
           </div>
 
           <div className="grid grid-cols-3 gap-1.5">
-            {(['EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'] as const).map((st) => (
+            {(['DISPATCHED', 'ON_SITE', 'IN_PROGRESS'] as const).map((st) => (
               <button
                 key={st}
                 disabled={updatingStatus}
@@ -370,7 +417,7 @@ export default function TechJobDetailPage({
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
-                {st.replace('_', ' ')}
+                {st === 'DISPATCHED' ? 'Dispatched' : st.replace('_', ' ')}
               </button>
             ))}
           </div>
@@ -381,8 +428,8 @@ export default function TechJobDetailPage({
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-4">
         <h2 className="text-sm font-black text-slate-900 mb-3 flex items-center justify-between pb-2 border-b border-slate-100">
           <span>{isClosed ? '🧾 Invoice Summary' : '💳 Complete & Bill Customer'}</span>
-          <span className="text-xs bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full font-bold">
-            13% HST Ontario
+          <span className="text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded-full font-bold">
+            Tax Calculated (13%)
           </span>
         </h2>
 
@@ -520,6 +567,31 @@ export default function TechJobDetailPage({
                   + Keys ($10)
                 </button>
               </div>
+
+              {/* Standard Locksmith Hardware Catalog Dropdown */}
+              <div className="mt-2.5 pt-2 border-t border-slate-200">
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                  📦 Add from Standard Hardware Catalog / Price Book:
+                </label>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    const selected = LOCKSMITH_CATALOG.find((c) => c.id === e.target.value);
+                    if (selected) {
+                      handleAddPart(selected.name, selected.defaultPrice, selected.defaultCost);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="" disabled>-- Select Hardware Item to Add --</option>
+                  {LOCKSMITH_CATALOG.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      [{item.category}] {item.name} — Retail: ${item.defaultPrice.toFixed(2)} (Wholesale: ${item.defaultCost.toFixed(2)})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Locksmith Hardware Specs */}
@@ -549,13 +621,40 @@ export default function TechJobDetailPage({
                   />
                 </div>
               </div>
+
+              {/* Automotive Locksmith Specs (if applicable) */}
+              {(job?.vehicleMake || job?.keyType || job?.serviceType?.toLowerCase().includes('auto')) && (
+                <div className="mt-2.5 pt-2 border-t border-slate-200 bg-amber-50/60 p-2 rounded-lg">
+                  <div className="text-[11px] font-black text-amber-900 mb-1 flex items-center gap-1">
+                    <span>🚗</span> Automotive Locksmith Specs
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5 text-[11px] text-slate-700">
+                    <div>
+                      <span className="font-semibold text-slate-500">Vehicle:</span> {job?.vehicleYear || ''} {job?.vehicleMake || ''} {job?.vehicleModel || 'N/A'}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-500">Key Type:</span> {job?.keyType || 'Standard Metal'}
+                    </div>
+                    {job?.vehicleVin && (
+                      <div className="col-span-2 font-mono text-[10px]">
+                        <span className="font-semibold text-slate-500 font-sans">VIN:</span> {job.vehicleVin}
+                      </div>
+                    )}
+                    {job?.fccId && (
+                      <div className="col-span-2 font-mono text-[10px]">
+                        <span className="font-semibold text-slate-500 font-sans">FCC-ID / Fob Part:</span> {job.fccId}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Proof of Work Photo */}
+            {/* Proof of Work Photo - Real Mobile Camera Upload */}
             <div className="mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <span>📷</span> Proof of Work Photo
+                  <span>📷</span> Proof of Work Photo (Dispute Defense)
                 </span>
                 {proofPhotoUrl && (
                   <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
@@ -563,13 +662,23 @@ export default function TechJobDetailPage({
                   </span>
                 )}
               </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                capture="environment"
+                onChange={handlePhotoUpload}
+                className="hidden"
+              />
+
               {proofPhotoUrl ? (
-                <div className="relative rounded-lg overflow-hidden border border-slate-300 h-28 bg-slate-900 flex items-center justify-center">
+                <div className="relative rounded-lg overflow-hidden border border-slate-300 h-32 bg-slate-900 flex items-center justify-center">
                   <img src={proofPhotoUrl} alt="Proof of installation" className="max-h-full object-contain" />
                   <button
                     type="button"
                     onClick={() => setProofPhotoUrl('')}
-                    className="absolute top-1 right-1 bg-rose-600 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center"
+                    className="absolute top-1.5 right-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center shadow"
                   >
                     ✕
                   </button>
@@ -577,16 +686,51 @@ export default function TechJobDetailPage({
               ) : (
                 <button
                   type="button"
-                  onClick={() => setProofPhotoUrl('https://images.unsplash.com/photo-1558002038-1055907df827?auto=format&fit=crop&w=400&q=80')}
-                  className="w-full py-2 border-2 border-dashed border-slate-300 rounded-xl text-xs font-semibold text-slate-600 hover:border-slate-400 bg-white transition flex items-center justify-center gap-1.5"
+                  disabled={uploadingPhoto}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full py-2.5 border-2 border-dashed border-slate-300 hover:border-slate-400 rounded-xl text-xs font-semibold text-slate-700 bg-white transition flex items-center justify-center gap-1.5 shadow-xs"
                 >
-                  <span>📸</span> Snap / Attach Lock Photo (Dispute Prevention)
+                  {uploadingPhoto ? (
+                    <span className="text-blue-600 animate-pulse font-bold">Uploading photo...</span>
+                  ) : (
+                    <>
+                      <span>📸</span> Snap Camera Photo / Attach Lock Photo
+                    </>
+                  )}
                 </button>
               )}
             </div>
 
-            {/* Customer On-Site Digital Signature */}
+            {/* Step 1: Pre-Work Authorization Signature */}
             <div className="mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <span>📋</span> Step 1: Pre-Work Authorization (Estimate & Drill Consent)
+                </span>
+                {preWorkSignature && (
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                    Pre-Work Signed
+                  </span>
+                )}
+              </div>
+              <SignaturePad
+                onSave={setPreWorkSignature}
+                initialValue={preWorkSignature}
+              />
+            </div>
+
+            {/* Step 2: Customer Final Acceptance Signature */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <span>🏁</span> Step 2: Final Acceptance (Receipt of Keys & Sign-Off)
+                </span>
+                {customerSignature && (
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                    Final Sign-Off Completed
+                  </span>
+                )}
+              </div>
               <SignaturePad
                 onSave={setCustomerSignature}
                 initialValue={customerSignature}
@@ -596,74 +740,82 @@ export default function TechJobDetailPage({
             {/* Payment Method Selector */}
             <div className="mb-4">
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Payment Method
+                Payment Mode Selected by Client *
               </label>
-              <div className="grid grid-cols-3 gap-2 text-xs font-bold">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-bold mb-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('CASH')}
-                  className={`py-2 px-1 rounded-xl border flex flex-col items-center gap-1 transition ${
+                  className={`py-2.5 px-2 rounded-xl border flex flex-col items-center gap-1 transition ${
                     paymentMethod === 'CASH'
                       ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-sm'
                       : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <span>💵</span>
+                  <span className="text-lg">💵</span>
                   <span>Cash</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('INTERAC')}
-                  className={`py-2 px-1 rounded-xl border flex flex-col items-center gap-1 transition ${
+                  className={`py-2.5 px-2 rounded-xl border flex flex-col items-center gap-1 transition ${
                     paymentMethod === 'INTERAC'
                       ? 'bg-blue-50 border-blue-500 text-blue-800 shadow-sm'
                       : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <span>🏦</span>
-                  <span>Interac (ET)</span>
+                  <span className="text-lg">🏦</span>
+                  <span>Interac</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('STRIPE_CARD')}
-                  className={`py-2 px-1 rounded-xl border flex flex-col items-center gap-1 transition ${
-                    paymentMethod === 'STRIPE_CARD'
+                  onClick={() => setPaymentMethod('CREDIT_CARD')}
+                  className={`py-2.5 px-2 rounded-xl border flex flex-col items-center gap-1 transition ${
+                    paymentMethod === 'CREDIT_CARD'
                       ? 'bg-purple-50 border-purple-500 text-purple-800 shadow-sm'
                       : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <span>💳</span>
-                  <span>Card (+4%)</span>
+                  <span className="text-lg">💳</span>
+                  <span>Credit Card</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('DEBIT_CARD')}
+                  className={`py-2.5 px-2 rounded-xl border flex flex-col items-center gap-1 transition ${
+                    paymentMethod === 'DEBIT_CARD'
+                      ? 'bg-indigo-50 border-indigo-500 text-indigo-800 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="text-lg">🏧</span>
+                  <span>Debit Card</span>
                 </button>
               </div>
+
+              <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                {paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD'
+                  ? `📱 Stripe will generate and send a secure payment link via SMS directly to ${job.customer.phone}.`
+                  : `✅ System enters ${paymentMethod === 'CASH' ? 'cash received' : 'Interac transfer received'}. Client gets settlement SMS, and Owner is notified.`}
+              </p>
             </div>
 
-            {/* Twilio SMS Toggle */}
-            <div className="mb-4 p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-bold text-slate-800">
-                  {paymentMethod === 'STRIPE_CARD'
-                    ? 'Send SMS Payment Link via Twilio'
-                    : 'Send SMS Receipt to Customer'}
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  {paymentMethod === 'CASH'
-                    ? 'Not needed for cash unless client requests'
-                    : 'Sends secure link to client phone'}
-                </div>
-              </div>
-
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={sendSms}
-                  onChange={(e) => setSendSms(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            {/* Email Invoice / Receipt Field (Powered by Resend) */}
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                📧 Customer Email for Digital Receipt
+                <span className="text-[10px] text-slate-400 font-normal ml-1">(Optional, powered by Resend)</span>
               </label>
+              <input
+                type="email"
+                placeholder="customer@example.com"
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
             </div>
           </>
         )}
@@ -683,7 +835,7 @@ export default function TechJobDetailPage({
             </div>
           )}
           <div className="flex justify-between text-slate-300">
-            <span>Ontario HST (13%):</span>
+            <span>Sales Tax (13%):</span>
             <span className="font-semibold text-white">
               ${liveCalculation.taxAmount.toFixed(2)}
             </span>
@@ -691,7 +843,7 @@ export default function TechJobDetailPage({
 
           {liveCalculation.cardSurchargeAmount > 0 && (
             <div className="flex justify-between text-amber-300 font-medium">
-              <span>Card Processing Surcharge (4%):</span>
+              <span>Card Processing Surcharge:</span>
               <span>+${liveCalculation.cardSurchargeAmount.toFixed(2)}</span>
             </div>
           )}
@@ -742,16 +894,16 @@ export default function TechJobDetailPage({
             disabled={submittingInvoice}
             onClick={handleCompleteInvoice}
             className={`w-full py-3 px-4 rounded-xl font-black text-sm text-white shadow-md transition flex items-center justify-center gap-2 ${
-              paymentMethod === 'STRIPE_CARD'
+              isCardPaymentMethod(paymentMethod)
                 ? 'bg-purple-600 hover:bg-purple-700'
                 : 'bg-emerald-600 hover:bg-emerald-700'
             }`}
           >
             {submittingInvoice
               ? 'Processing...'
-              : paymentMethod === 'STRIPE_CARD'
-              ? '💳 Generate & Send Stripe Link via Twilio'
-              : `💵 Confirm ${paymentMethod} ($${liveCalculation.grandTotal.toFixed(2)}) & Close Job`}
+              : isCardPaymentMethod(paymentMethod)
+              ? `💳 Generate & Send ${paymentMethod === 'DEBIT_CARD' ? 'Debit' : 'Credit'} Card Payment Link via SMS`
+              : `💵 Confirm ${paymentMethod === 'CASH' ? 'Cash' : 'Interac'} ($${liveCalculation.grandTotal.toFixed(2)}) & Settle Job`}
           </button>
         )}
       </div>

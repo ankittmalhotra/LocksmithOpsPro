@@ -16,10 +16,10 @@ export default function CustomerPaymentPortalPage({
   const [paidSuccess, setPaidSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Card input mock states
-  const [cardNumber, setCardNumber] = useState('•••• •••• •••• 4242');
-  const [cardExpiry, setCardExpiry] = useState('12/28');
-  const [cardCvc, setCardCvc] = useState('123');
+  // Card input states
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvc, setCardCvc] = useState('');
   const [cardholderName, setCardholderName] = useState('');
 
   useEffect(() => {
@@ -239,12 +239,13 @@ export default function CustomerPaymentPortalPage({
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    Card Number (Demo Test Mode)
+                    Card Number
                   </label>
                   <div className="relative">
                     <input
                       type="text"
                       required
+                      placeholder="•••• •••• •••• ••••"
                       value={cardNumber}
                       onChange={(e) => setCardNumber(e.target.value)}
                       className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-xl font-mono text-slate-900 focus:ring-2 focus:ring-purple-500 focus:outline-none"

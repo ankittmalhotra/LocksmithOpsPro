@@ -48,13 +48,11 @@ export default function TechJobDetailPage({
 
   // Billing Mode: 'REVERSE' (enter total received) or 'FORWARD' (enter labor + parts)
   const [calculationMode, setCalculationMode] = useState<'REVERSE' | 'FORWARD'>('REVERSE');
-  const [amountReceived, setAmountReceived] = useState('1661.77'); // default sample from prompt
-  const [laborAmount, setLaborAmount] = useState('150.00');
+  const [amountReceived, setAmountReceived] = useState('');
+  const [laborAmount, setLaborAmount] = useState('');
 
   // Parts (Optional)
-  const [parts, setParts] = useState<PartItem[]>([
-    { description: '1 HS mortise cylinder', quantity: 1, unitCost: 15, unitPrice: 30 },
-  ]);
+  const [parts, setParts] = useState<PartItem[]>([]);
 
   // Payment Options
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'INTERAC' | 'CREDIT_CARD' | 'DEBIT_CARD'>('CASH');

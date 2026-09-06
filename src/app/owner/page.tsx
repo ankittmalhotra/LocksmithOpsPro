@@ -32,7 +32,8 @@ export default function OwnerDashboardPage() {
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState<'OWNER' | 'TECHNICIAN'>('TECHNICIAN');
+  const [newMemberRole, setNewMemberRole] = useState<'OWNER' | 'DISPATCHER' | 'TECHNICIAN'>('TECHNICIAN');
+  const [newMemberCommission, setNewMemberCommission] = useState('150.00');
   const [addingMember, setAddingMember] = useState(false);
 
   // Settlement Modal State
@@ -60,10 +61,11 @@ export default function OwnerDashboardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: newMemberName,
-          phone: newMemberPhone,
+          name: newMemberName.trim(),
+          phone: newMemberPhone.trim(),
           email: newMemberEmail.trim() || undefined,
           role: newMemberRole,
+          fixedCommission: newMemberRole === 'TECHNICIAN' ? parseFloat(newMemberCommission) : undefined,
         }),
       });
 
@@ -72,10 +74,18 @@ export default function OwnerDashboardPage() {
         throw new Error(data.error || 'Failed to add team member');
       }
 
-      setSuccessMsg(`Successfully added ${data.user.name} as ${data.user.role === 'OWNER' ? 'Owner' : 'Contractor'}!`);
+      const roleLabel =
+        data.user.role === 'OWNER'
+          ? 'Owner'
+          : data.user.role === 'DISPATCHER'
+          ? 'Dispatcher'
+          : 'Technician';
+
+      setSuccessMsg(`Successfully added ${data.user.name} as ${roleLabel}!`);
       setNewMemberName('');
       setNewMemberPhone('');
       setNewMemberEmail('');
+      setNewMemberCommission('150.00');
       setShowAddMember(false);
       fetchAuthAndAnalytics();
     } catch (err: any) {
@@ -276,9 +286,9 @@ export default function OwnerDashboardPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowAddMember(true)}
-            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition shadow flex items-center gap-1.5"
+            className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition shadow flex items-center gap-1.5"
           >
-            <span>➕</span> {currentUser?.role === 'SUPER_ADMIN' ? 'Add Owner / Contractor' : 'Add Contractor'}
+            <span>➕</span> Add Team Member
           </button>
           <button
             onClick={fetchAuthAndAnalytics}
@@ -647,7 +657,7 @@ export default function OwnerDashboardPage() {
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                <span>➕</span> {currentUser?.role === 'SUPER_ADMIN' ? 'Add Owner or Contractor' : 'Add Contractor'}
+                <span>➕</span> Add Team Member
               </h3>
               <button
                 onClick={() => setShowAddMember(false)}
@@ -659,8 +669,8 @@ export default function OwnerDashboardPage() {
 
             <p className="text-xs text-slate-500 mb-4">
               {currentUser?.role === 'SUPER_ADMIN'
-                ? 'Super Admin can register new Owners or Field Contractors.'
-                : 'Owners can register new Field Contractors.'}
+                ? 'Super Admin can register new Owners, Dispatchers, or Field Technicians.'
+                : 'Owners can register new Field Technicians.'}
             </p>
 
             <form onSubmit={handleAddMember} className="space-y-3.5">
@@ -680,7 +690,7 @@ export default function OwnerDashboardPage() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Phone Number *
+                  Phone Number (Primary Key) *
                 </label>
                 <input
                   type="text"
@@ -694,7 +704,7 @@ export default function OwnerDashboardPage() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Email Address <span className="text-slate-400 font-normal">(For Resend dispatch & notifications)</span>
+                  Email Address <span className="text-slate-400 font-normal">(Optional)</span>
                 </label>
                 <input
                   type="email"
@@ -713,17 +723,38 @@ export default function OwnerDashboardPage() {
                   <select
                     value={newMemberRole}
                     onChange={(e: any) => setNewMemberRole(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
                   >
-                    <option value="TECHNICIAN">🛠️ Contractor (Field Tech & Invoicing)</option>
-                    <option value="OWNER">👑 Owner (Full Hub & Dispatch Access)</option>
+                    <option value="TECHNICIAN">🛠️ Technician (Field Mobile & Invoicing)</option>
+                    <option value="OWNER">👑 Owner (Full Executive Hub & Intake)</option>
+                    <option value="DISPATCHER">📞 Dispatcher (Call Intake & Assignment)</option>
                   </select>
                 ) : (
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
-                    <span>🛠️</span> Contractor (Field Technician)
+                    <span>🛠️</span> Technician (Field Contractor)
                   </div>
                 )}
               </div>
+
+              {newMemberRole === 'TECHNICIAN' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Initial Fixed Commission Rate ($) *
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">$</span>
+                    <input
+                      type="number"
+                      step="5"
+                      required
+                      value={newMemberCommission}
+                      onChange={(e) => setNewMemberCommission(e.target.value)}
+                      placeholder="150.00"
+                      className="w-full pl-7 pr-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <button
@@ -736,7 +767,7 @@ export default function OwnerDashboardPage() {
                 <button
                   type="submit"
                   disabled={addingMember}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow transition disabled:opacity-50"
+                  className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow transition disabled:opacity-50"
                 >
                   {addingMember ? 'Saving...' : 'Add Team Member'}
                 </button>

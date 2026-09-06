@@ -5,11 +5,15 @@ import { setSessionCookie } from '@/lib/auth';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, phone, role, username, password } = body;
+    const { userId, phone, role, username, password, identifier } = body;
 
-    // 1. Handle Super Admin Login (admin / admin123)
-    if (username || password) {
-      if (username === 'admin' && password === 'admin123') {
+    // Handle credential / identifier normalization
+    const loginIdentifier = (identifier || username || phone || '').trim();
+    const loginPassword = (password || '').trim();
+
+    // 1. Handle Super Admin Login (admin / Linkbook@1234)
+    if (loginIdentifier.toLowerCase() === 'admin') {
+      if (loginPassword === 'Linkbook@1234') {
         let adminUser = null;
         try {
           adminUser = await prisma.user.findFirst({
@@ -49,11 +53,12 @@ export async function POST(request: Request) {
         return NextResponse.json({
           success: true,
           user: sessionData,
+          redirectUrl: '/dispatch',
           message: 'Logged in as Super Admin',
         });
       } else {
         return NextResponse.json(
-          { success: false, error: 'Invalid Super Admin credentials' },
+          { success: false, error: 'Invalid password for admin' },
           { status: 401 }
         );
       }
@@ -63,20 +68,33 @@ export async function POST(request: Request) {
 
     if (userId) {
       user = await prisma.user.findUnique({ where: { id: userId } });
-    } else if (phone) {
-      const cleanPhone = phone.replace(/[^0-9]/g, '');
-      user = await prisma.user.findFirst({
-        where: {
-          phone: { contains: cleanPhone.slice(-10) },
-        },
-      });
+    } else if (loginIdentifier) {
+      const cleanPhone = loginIdentifier.replace(/[^0-9]/g, '');
+      if (cleanPhone.length >= 7) {
+        user = await prisma.user.findFirst({
+          where: {
+            phone: { contains: cleanPhone.slice(-10) },
+          },
+        });
+      }
+      if (!user) {
+        user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { phone: loginIdentifier },
+              { name: { equals: loginIdentifier, mode: 'insensitive' } },
+              { email: { equals: loginIdentifier, mode: 'insensitive' } },
+            ],
+          },
+        });
+      }
     } else if (role) {
       user = await prisma.user.findFirst({ where: { role } });
     }
 
     if (!user) {
       return NextResponse.json(
-        { success: false, error: 'User not found' },
+        { success: false, error: 'User not found. Please verify your phone number or credentials.' },
         { status: 404 }
       );
     }
@@ -101,9 +119,15 @@ export async function POST(request: Request) {
 
     await setSessionCookie(sessionData);
 
+    const redirectUrl =
+      user.role === 'SUPER_ADMIN' || user.role === 'OWNER' || user.role === 'DISPATCHER'
+        ? '/dispatch'
+        : '/tech';
+
     return NextResponse.json({
       success: true,
       user: sessionData,
+      redirectUrl,
       message: `Logged in as ${user.name} (${user.role})`,
     });
   } catch (err: any) {

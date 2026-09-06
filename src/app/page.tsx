@@ -94,9 +94,9 @@ export default function HomePage() {
         </p>
       </div>
 
-      {/* 2 Core User Profile Workspaces */}
+      {/* 2 Core Workspaces */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        {/* Profile 1: Owner / Dispatcher */}
+        {/* Owner / Dispatcher */}
         <Link
           href="/dispatch"
           className="group block bg-white rounded-3xl border border-slate-200 hover:border-blue-500 p-7 shadow-xs hover:shadow-lg transition relative"
@@ -105,22 +105,19 @@ export default function HomePage() {
             <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center text-2xl group-hover:scale-105 transition">
               📞
             </div>
-            <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200/80">
-              Profile 1
-            </span>
           </div>
           <h3 className="text-lg font-black text-slate-900 mb-1.5 group-hover:text-blue-600 transition">
             Owner / Dispatcher
           </h3>
           <p className="text-xs text-slate-600 mb-5 leading-relaxed">
-            Receive incoming customer phone calls, enter job details, configure technician fixed commissions, assign field staff, and monitor dispatches and settlements.
+            Receive incoming calls, assign jobs, configure technician commissions, and manage dispatches & settlements.
           </p>
           <div className="text-xs font-black text-blue-600 flex items-center gap-1 group-hover:translate-x-0.5 transition">
             Open Dispatch Desk &rarr;
           </div>
         </Link>
 
-        {/* Profile 2: Technician */}
+        {/* Technician */}
         <Link
           href="/tech"
           className="group block bg-white rounded-3xl border border-slate-200 hover:border-emerald-500 p-7 shadow-xs hover:shadow-lg transition relative"
@@ -129,15 +126,12 @@ export default function HomePage() {
             <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center text-2xl group-hover:scale-105 transition">
               🛠️
             </div>
-            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200/80">
-              Profile 2
-            </span>
           </div>
           <h3 className="text-lg font-black text-slate-900 mb-1.5 group-hover:text-emerald-600 transition">
-            Field Technician
+            Technician
           </h3>
           <p className="text-xs text-slate-600 mb-5 leading-relaxed">
-            Receive dispatch alerts, 1-tap acknowledge jobs to notify dispatcher & client, inspect & quote on site, and record payment mode (Cash, Interac, Debit, or Credit).
+            Receive jobs, 1-tap acknowledge dispatches, inspect & quote on site, and record payment mode.
           </p>
           <div className="text-xs font-black text-emerald-600 flex items-center gap-1 group-hover:translate-x-0.5 transition">
             Open Technician Portal &rarr;
@@ -150,9 +144,9 @@ export default function HomePage() {
         <div className="text-center pt-2">
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs shadow-sm transition"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs shadow-sm transition"
           >
-            <span>📱</span> Sign In with Phone Number &rarr;
+            <span>🔐</span> Sign In to Account &rarr;
           </Link>
         </div>
       )}

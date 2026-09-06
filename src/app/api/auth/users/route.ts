@@ -105,7 +105,19 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json({ success: true, user: newUser });
+    if (body.fixedCommission !== undefined && !isNaN(Number(body.fixedCommission))) {
+      const comm = parseFloat(body.fixedCommission);
+      setTechnicianCommission(newUser.id, comm);
+      setTechnicianCommission(newUser.phone, comm);
+    }
+
+    return NextResponse.json({
+      success: true,
+      user: {
+        ...newUser,
+        fixedCommission: getTechnicianCommission(newUser.phone) || 150.0,
+      },
+    });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }

@@ -77,6 +77,16 @@ export default function DispatchPage() {
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const [showAddTechnician, setShowAddTechnician] = useState(false);
+  const [newTechnicianName, setNewTechnicianName] = useState('');
+  const [newTechnicianPhone, setNewTechnicianPhone] = useState('');
+  const [newTechnicianEmail, setNewTechnicianEmail] = useState('');
+  const [newTechnicianPassword, setNewTechnicianPassword] = useState('');
+  const [newTechnicianCommission, setNewTechnicianCommission] = useState('0.00');
+  const [addingTechnician, setAddingTechnician] = useState(false);
+  const [editingTechnicianId, setEditingTechnicianId] = useState<string | null>(null);
+  const [deletingTechnicianId, setDeletingTechnicianId] = useState<string | null>(null);
+
   const [technicians, setTechnicians] = useState<any[]>([]);
   const [showManualJob, setShowManualJob] = useState(false);
   const [editingManualId, setEditingManualId] = useState<string | null>(null);
@@ -195,6 +205,95 @@ export default function DispatchPage() {
     }
   };
 
+  const handleAddTechnician = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const isEditing = Boolean(editingTechnicianId);
+    setAddingTechnician(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    try {
+      const payload = {
+        ...(isEditing ? { userId: editingTechnicianId } : { role: 'TECHNICIAN' }),
+        name: newTechnicianName.trim(),
+        phone: newTechnicianPhone.trim(),
+        email: newTechnicianEmail.trim() || null,
+        commissionRate: Number(newTechnicianCommission),
+        ...(newTechnicianPassword ? { password: newTechnicianPassword } : {}),
+      };
+      const res = await fetch('/api/auth/users', {
+        method: isEditing ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isEditing ? payload : { ...payload, password: newTechnicianPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to add technician');
+      }
+
+      setSuccessMsg(`✅ Technician ${data.user.name} ${isEditing ? 'updated' : 'added'} successfully.`);
+      setNewTechnicianName('');
+      setNewTechnicianPhone('');
+      setNewTechnicianEmail('');
+      setNewTechnicianPassword('');
+      setNewTechnicianCommission('0.00');
+      setEditingTechnicianId(null);
+      setShowAddTechnician(false);
+      fetchAuthAndJobs();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setAddingTechnician(false);
+    }
+  };
+
+  const openAddTechnician = () => {
+    setEditingTechnicianId(null);
+    setNewTechnicianName('');
+    setNewTechnicianPhone('');
+    setNewTechnicianEmail('');
+    setNewTechnicianPassword('');
+    setNewTechnicianCommission('0.00');
+    setShowAddTechnician(true);
+  };
+
+  const openEditTechnician = (technician: any) => {
+    setEditingTechnicianId(technician.id);
+    setNewTechnicianName(technician.name || '');
+    setNewTechnicianPhone(technician.phone || '');
+    setNewTechnicianEmail(technician.email || '');
+    setNewTechnicianPassword('');
+    setNewTechnicianCommission(Number(technician.commissionRate || 0).toFixed(2));
+    setShowAddTechnician(true);
+  };
+
+  const handleDeleteTechnician = async (technician: any) => {
+    if (!window.confirm(`Delete ${technician.name}? They will no longer be available for job assignment, but historical jobs will be preserved.`)) return;
+
+    setDeletingTechnicianId(technician.id);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch('/api/auth/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: technician.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete technician');
+      }
+
+      if (technicianId === technician.id) setTechnicianId('');
+      setSuccessMsg(`✅ ${data.message}`);
+      fetchAuthAndJobs();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setDeletingTechnicianId(null);
+    }
+  };
+
   const updateManualField = (field: string, value: string) => {
     setManualForm((current) => ({ ...current, [field]: value }));
   };
@@ -295,6 +394,7 @@ export default function DispatchPage() {
   });
   const manualJobs = jobs.filter((j) => j.isManual);
   const canManageManualJobs = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
+  const canManageTechnicians = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -311,13 +411,22 @@ export default function DispatchPage() {
           </p>
         </div>
         {currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'DISPATCHER') && (
-          <button
-            type="button"
-            onClick={openNewManualJob}
-            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-extrabold shadow-md transition"
-          >
-            + Add Manual Job
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={openAddTechnician}
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-extrabold shadow-md transition"
+            >
+              + Add Technician
+            </button>
+            <button
+              type="button"
+              onClick={openNewManualJob}
+              className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-extrabold shadow-md transition"
+            >
+              + Add Manual Job
+            </button>
+          </div>
         )}
       </div>
 
@@ -335,6 +444,54 @@ export default function DispatchPage() {
           >
             Go to My Field Jobs &rarr;
           </Link>
+        </div>
+      )}
+
+      {canManageTechnicians && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-6 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-black text-slate-900">Technician Roster</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Edit technician details or remove a technician from future assignments.</p>
+            </div>
+            <span className="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">
+              {technicians.length} active
+            </span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {technicians.length === 0 ? (
+              <div className="py-8 px-5 text-center text-slate-500 text-sm">No active technicians found.</div>
+            ) : (
+              technicians.map((technician) => (
+                <div key={technician.id} className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="font-extrabold text-sm text-slate-900">{technician.name}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {technician.phone}{technician.email ? ` · ${technician.email}` : ''}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs font-bold text-slate-600">{Number(technician.commissionRate || 0).toFixed(2)}%</span>
+                    <button
+                      type="button"
+                      onClick={() => openEditTechnician(technician)}
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingTechnicianId === technician.id}
+                      onClick={() => handleDeleteTechnician(technician)}
+                      className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold text-xs disabled:opacity-50"
+                    >
+                      {deletingTechnicianId === technician.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 
@@ -393,6 +550,114 @@ export default function DispatchPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {showAddTechnician && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <span>🛠️</span> {editingTechnicianId ? 'Edit Technician' : 'Add Technician'}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowAddTechnician(false)}
+                className="text-slate-400 hover:text-slate-600 text-lg font-black"
+                aria-label="Close add technician form"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              {editingTechnicianId
+                ? 'Update this technician’s account details and assignment commission.'
+                : 'Create an active field technician account for job assignment.'}
+            </p>
+
+            <form onSubmit={handleAddTechnician} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={newTechnicianName}
+                  onChange={(e) => setNewTechnicianName(e.target.value)}
+                  placeholder="e.g. John Smith"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number *</label>
+                <input
+                  type="text"
+                  required
+                  value={newTechnicianPhone}
+                  onChange={(e) => setNewTechnicianPhone(e.target.value)}
+                  placeholder="e.g. 647-555-0303"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Email Address <span className="text-slate-400 font-normal">(Optional)</span></label>
+                <input
+                  type="email"
+                  value={newTechnicianEmail}
+                  onChange={(e) => setNewTechnicianEmail(e.target.value)}
+                  placeholder="e.g. technician@example.com"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {editingTechnicianId ? 'New Password (Optional)' : 'Initial Password *'}
+                </label>
+                <input
+                  type="password"
+                  required={!editingTechnicianId}
+                  minLength={8}
+                  value={newTechnicianPassword}
+                  onChange={(e) => setNewTechnicianPassword(e.target.value)}
+                  placeholder={editingTechnicianId ? 'Leave blank to keep current password' : 'At least 8 characters'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Initial Commission Rate (%) *</label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={newTechnicianCommission}
+                  onChange={(e) => setNewTechnicianCommission(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddTechnician(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingTechnician}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow transition disabled:opacity-50"
+                >
+                  {addingTechnician ? 'Saving...' : editingTechnicianId ? 'Save Changes' : 'Add Technician'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

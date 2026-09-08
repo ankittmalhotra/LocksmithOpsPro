@@ -9,8 +9,8 @@ function canViewTechnicians(role?: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
 }
 
-function canManageTeam(role?: string) {
-  return role === 'ADMIN';
+function canManageTechnicians(role?: string) {
+  return role === 'ADMIN' || role === 'DISPATCHER';
 }
 
 function isAppRole(role: unknown): role is AppRole {
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, phone, role, email, password } = body;
 
-    if (!currentUser || !canManageTeam(currentUser.role)) {
+    if (!currentUser || !canManageTechnicians(currentUser.role)) {
       return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
     }
 
@@ -114,8 +114,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Commission rate must be between 0 and 100 percent.' }, { status: 400 });
     }
 
-    // Only Admins create accounts. Dispatchers can look up active technicians
-    // for assignment but cannot change team membership or permissions.
     if (!role) {
       return NextResponse.json(
         { success: false, error: 'Role is required for team member creation' },
@@ -125,6 +123,13 @@ export async function POST(request: Request) {
 
     if (!isAppRole(role)) {
       return NextResponse.json({ success: false, error: 'Invalid team member role' }, { status: 400 });
+    }
+
+    if (currentUser.role === 'DISPATCHER' && role !== 'TECHNICIAN') {
+      return NextResponse.json(
+        { success: false, error: 'Dispatchers may only create technicians' },
+        { status: 403 }
+      );
     }
 
     const existingUser = await prisma.user.findUnique({
@@ -163,12 +168,12 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const currentUser = await getCurrentUser();
-    if (!currentUser || !canManageTeam(currentUser.role)) {
+    if (!currentUser || !canManageTechnicians(currentUser.role)) {
       return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
     }
 
     const body = await request.json();
-    const { userId, active } = body;
+    const { userId, active, name, phone, email, password } = body;
     const requestedRate = parseCommissionRate(body.commissionRate);
 
     if (typeof userId !== 'string' || !userId) {
@@ -181,6 +186,12 @@ export async function PATCH(request: Request) {
     const targetUser = await prisma.user.findUnique({ where: { id: userId } });
     if (!targetUser) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
+    }
+    if (currentUser.role === 'DISPATCHER' && targetUser.role !== 'TECHNICIAN') {
+      return NextResponse.json(
+        { success: false, error: 'Dispatchers may only manage technicians' },
+        { status: 403 }
+      );
     }
 
     const updateData: any = {};
@@ -198,6 +209,44 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ success: false, error: 'Commission rate must be between 0 and 100 percent.' }, { status: 400 });
       }
       updateData.commissionRate = requestedRate;
+    }
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) {
+        return NextResponse.json({ success: false, error: 'Name is required' }, { status: 400 });
+      }
+      updateData.name = name.trim();
+    }
+    if (phone !== undefined) {
+      if (typeof phone !== 'string' || !phone.trim()) {
+        return NextResponse.json({ success: false, error: 'Phone number is required' }, { status: 400 });
+      }
+      const cleanPhone = phone.replace(/[^0-9]/g, '');
+      if (cleanPhone.length < 7) {
+        return NextResponse.json({ success: false, error: 'A valid phone number is required' }, { status: 400 });
+      }
+      const existingPhone = await prisma.user.findFirst({
+        where: { phone: cleanPhone, NOT: { id: userId } },
+        select: { id: true },
+      });
+      if (existingPhone) {
+        return NextResponse.json(
+          { success: false, error: 'An account already exists for this phone number' },
+          { status: 409 }
+        );
+      }
+      updateData.phone = cleanPhone;
+    }
+    if (email !== undefined) {
+      if (email !== null && typeof email !== 'string') {
+        return NextResponse.json({ success: false, error: 'Email address is invalid' }, { status: 400 });
+      }
+      updateData.email = typeof email === 'string' && email.trim() ? email.trim() : null;
+    }
+    if (password !== undefined) {
+      if (typeof password !== 'string' || password.length < 8) {
+        return NextResponse.json({ success: false, error: 'Password must be at least 8 characters' }, { status: 400 });
+      }
+      updateData.passwordHash = hashPassword(password);
     }
 
     const updatedUser = Object.keys(updateData).length > 0
@@ -229,11 +278,50 @@ export async function PATCH(request: Request) {
       emailResult,
       message: body.commissionRate !== undefined
         ? `Commission rate for ${updatedUser.name} updated to ${updatedUser.commissionRate.toFixed(2)}%`
+        : name !== undefined || phone !== undefined || email !== undefined || password !== undefined
+        ? `Technician ${updatedUser.name} updated successfully.`
         : active
         ? `Contractor ${updatedUser.name} approved & activated!`
         : `Contractor ${updatedUser.name} deactivated.`,
     });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: 'Unable to update team member' }, { status: 500 });
+  }
+}
+
+// DELETE deactivates a technician so historical jobs and settlements remain intact.
+export async function DELETE(request: Request) {
+  try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser || !canManageTechnicians(currentUser.role)) {
+      return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const { userId } = body;
+    if (typeof userId !== 'string' || !userId) {
+      return NextResponse.json({ success: false, error: 'userId is required' }, { status: 400 });
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!targetUser) {
+      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
+    }
+    if (targetUser.role !== 'TECHNICIAN') {
+      return NextResponse.json({ success: false, error: 'Only technicians can be deleted here' }, { status: 400 });
+    }
+
+    const deletedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { active: false },
+    });
+
+    return NextResponse.json({
+      success: true,
+      user: publicUser(deletedUser),
+      message: `Technician ${deletedUser.name} deleted.`,
+    });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: 'Unable to delete technician' }, { status: 500 });
   }
 }

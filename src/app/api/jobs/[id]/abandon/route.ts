@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { calculateTravelFee, calculateJobSettlementPosition } from '@/lib/calculations';
-import { createStripePaymentLink } from '@/lib/stripe';
-import { sendSMS } from '@/lib/twilio';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 
 export async function POST(
@@ -15,7 +13,6 @@ export async function POST(
     const {
       travelFeeAmount = 25,
       paymentMethod = 'CASH',
-      sendSms = false,
       reason = 'Customer canceled on site',
     } = body;
 
@@ -23,6 +20,13 @@ export async function POST(
 
     if (!job) {
       return NextResponse.json({ success: false, error: 'Job not found' }, { status: 404 });
+    }
+
+    if (paymentMethod !== 'CASH' && paymentMethod !== 'INTERAC') {
+      return NextResponse.json(
+        { success: false, error: 'Only Cash and Interac payments are currently supported.' },
+        { status: 400 }
+      );
     }
 
     const fee = parseFloat(travelFeeAmount) || 25;
@@ -36,39 +40,6 @@ export async function POST(
       grandTotal: breakdown.grandTotal,
       workerCommission: job.workerCommission,
     });
-
-    let stripeLink = null;
-    let stripeSessionId = null;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-
-    if (paymentMethod === 'STRIPE_CARD') {
-      const stripeRes = await createStripePaymentLink({
-        jobId: job.id,
-        jobNumber: job.jobNumber,
-        customerName: job.customer.name,
-        customerPhone: job.customer.phone,
-        grandTotal: breakdown.grandTotal,
-        subtotal: breakdown.subtotal,
-        taxAmount: breakdown.taxAmount,
-        cardSurchargeAmount: breakdown.cardSurchargeAmount,
-        returnUrl: `${appUrl}/pay/${job.jobNumber}`,
-      });
-      stripeLink = stripeRes.paymentUrl;
-      stripeSessionId = stripeRes.sessionId;
-    }
-
-    let smsResult = null;
-    if (sendSms && job.customer?.phone) {
-      if (paymentMethod === 'STRIPE_CARD' && stripeLink) {
-        const fullUrl = stripeLink.startsWith('http') ? stripeLink : `${appUrl}${stripeLink}`;
-        const smsBody = `Hello ${job.customer.name}, service call/travel fee for Job #${job.jobNumber} is $${breakdown.grandTotal.toFixed(2)}.
-Please complete payment securely here: ${fullUrl}`;
-        smsResult = await sendSMS({ to: job.customer.phone, body: smsBody });
-      } else {
-        const smsBody = `Receipt: $${breakdown.grandTotal.toFixed(2)} received for Locksmith travel/service fee (Job #${job.jobNumber}). Thank you!`;
-        smsResult = await sendSMS({ to: job.customer.phone, body: smsBody });
-      }
-    }
 
     const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
     await prisma.invoice.upsert({
@@ -87,9 +58,9 @@ Please complete payment securely here: ${fullUrl}`;
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
         paymentMethod,
         cashOwedToCompany: settlement.cashOwedToCompany,
-        smsSent: sendSms,
-        stripeSessionId,
-        stripePaymentUrl: stripeLink,
+        smsSent: false,
+        stripeSessionId: null,
+        stripePaymentUrl: null,
         paidAt: isPaid ? new Date() : null,
       },
       update: {
@@ -105,9 +76,9 @@ Please complete payment securely here: ${fullUrl}`;
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
         paymentMethod,
         cashOwedToCompany: settlement.cashOwedToCompany,
-        smsSent: sendSms,
-        stripeSessionId,
-        stripePaymentUrl: stripeLink,
+        smsSent: false,
+        stripeSessionId: null,
+        stripePaymentUrl: null,
         paidAt: isPaid ? new Date() : null,
       },
     });
@@ -133,8 +104,8 @@ Please complete payment securely here: ${fullUrl}`;
       job: updatedJob,
       breakdown,
       settlement,
-      stripeLink,
-      smsResult,
+      stripeLink: null,
+      smsResult: null,
     });
   } catch (err: any) {
     console.error('Abandon fee error:', err);

@@ -353,7 +353,7 @@ export default function OwnerDashboardPage() {
               </span>
             </div>
             <div className="flex justify-between">
-              <span>💳 Card (Stripe):</span>
+              <span>💳 Card (future):</span>
               <span className="font-semibold text-slate-700">
                 ${(s.totalCardRevenue || 0).toFixed(2)}
               </span>
@@ -849,4 +849,3 @@ export default function OwnerDashboardPage() {
     </div>
   );
 }
-

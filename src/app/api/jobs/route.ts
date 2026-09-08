@@ -134,8 +134,11 @@ export async function POST(request: Request) {
       },
     });
 
-    // 5. If assigned to a technician, send SMS and Email assignment alert
+    // 5. If assigned to a technician, send the technician the job link.
+    // The dispatcher-side assignment flow also sends the only customer SMS:
+    // a simple "technician is on the way" notification.
     let smsResult = null;
+    let customerSmsResult = null;
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
     if (job.technician?.phone) {
@@ -152,6 +155,11 @@ Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
       smsResult = await sendSMS({
         to: job.technician.phone,
         body: smsBody,
+      });
+
+      customerSmsResult = await sendSMS({
+        to: customer.phone,
+        body: `Hello ${customer.name}, your locksmith technician ${job.technician.name} is on the way for Job #${job.jobNumber}.`,
       });
 
       // Send dispatch notification email via Resend if technician has email configured
@@ -185,6 +193,7 @@ Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
       success: true,
       job,
       smsResult,
+      customerSmsResult,
     });
   } catch (err: any) {
     console.error('Error creating job:', err);

@@ -9,7 +9,6 @@ import {
   calculateTravelFee,
   calculateJobSettlementPosition,
   SupportedPaymentMethod,
-  isCardPaymentMethod,
 } from '@/lib/calculations';
 import SignaturePad from '@/components/SignaturePad';
 import { LOCKSMITH_CATALOG } from '@/lib/catalog';
@@ -55,30 +54,17 @@ export default function TechJobDetailPage({
   const [parts, setParts] = useState<PartItem[]>([]);
 
   // Payment Options
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'INTERAC' | 'CREDIT_CARD' | 'DEBIT_CARD'>('CASH');
-  const [sendSms, setSendSms] = useState(false);
-  const [customerEmail, setCustomerEmail] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'INTERAC'>('CASH');
   const [submittingInvoice, setSubmittingInvoice] = useState(false);
-  const [generatedStripeLink, setGeneratedStripeLink] = useState<string | null>(null);
 
   // Abandoned Job Modal
   const [showAbandonModal, setShowAbandonModal] = useState(false);
   const [abandonTravelFee, setAbandonTravelFee] = useState<number>(25);
-  const [abandonPaymentMethod, setAbandonPaymentMethod] = useState<'CASH' | 'STRIPE_CARD'>('CASH');
-  const [abandonSendSms, setAbandonSendSms] = useState(false);
+  const [abandonPaymentMethod, setAbandonPaymentMethod] = useState<'CASH' | 'INTERAC'>('CASH');
 
   useEffect(() => {
     fetchJob();
   }, [id]);
-
-  // Adjust default sendSms toggle when paymentMethod changes
-  useEffect(() => {
-    if (paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD') {
-      setSendSms(true);
-    } else {
-      setSendSms(false);
-    }
-  }, [paymentMethod]);
 
   const fetchJob = async () => {
     try {
@@ -93,7 +79,6 @@ export default function TechJobDetailPage({
         setCustomerSignature(data.job.customerSignature || '');
         setProofPhotoUrl(data.job.proofPhotoUrl || '');
         if (data.job.invoice) {
-          setGeneratedStripeLink(data.job.invoice.stripePaymentUrl || null);
           if (data.job.invoice.calculationMode) {
             setCalculationMode(data.job.invoice.calculationMode);
           }
@@ -203,8 +188,6 @@ export default function TechJobDetailPage({
           laborAmount: parseFloat(laborAmount) || 0,
           parts,
           paymentMethod,
-          sendSms,
-          customerEmail: customerEmail.trim() || undefined,
           keyBitting,
           doorDetails,
           preWorkSignature,
@@ -219,15 +202,8 @@ export default function TechJobDetailPage({
       }
 
       setJob(data.job);
-      if (data.stripeLink) {
-        setGeneratedStripeLink(data.stripeLink);
-        setActionSuccess(
-          `✅ Stripe payment link generated and sent via SMS to ${job.customer.phone}!`
-        );
-      } else {
-        const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
-        setActionSuccess(`✅ Job closed! Payment recorded via ${methodStr}. Customer & Owner notified.`);
-      }
+      const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
+      setActionSuccess(`✅ Job closed! ${methodStr} of $${data.breakdown.grandTotal.toFixed(2)} recorded. Dispatcher notified.`);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -244,7 +220,6 @@ export default function TechJobDetailPage({
         body: JSON.stringify({
           travelFeeAmount: abandonTravelFee,
           paymentMethod: abandonPaymentMethod,
-          sendSms: abandonSendSms,
           reason: 'Customer canceled on site',
         }),
       });
@@ -377,7 +352,7 @@ export default function TechJobDetailPage({
             <span>🚨</span> New Dispatch Assignment
           </div>
           <p className="text-xs text-amber-800 mb-3 leading-relaxed">
-            Click below to acknowledge this call. Dispatcher will be notified and client will receive an SMS alert that you are dispatched.
+            Click below to acknowledge this call. The dispatcher will be notified. The customer receives the on-the-way SMS from the dispatcher assignment flow only.
           </p>
           <button
             type="button"
@@ -740,7 +715,7 @@ export default function TechJobDetailPage({
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 Payment Mode Selected by Client *
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-bold mb-2">
+              <div className="grid grid-cols-2 gap-2 text-xs font-bold mb-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('CASH')}
@@ -767,53 +742,11 @@ export default function TechJobDetailPage({
                   <span>Interac</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('CREDIT_CARD')}
-                  className={`py-2.5 px-2 rounded-xl border flex flex-col items-center gap-1 transition ${
-                    paymentMethod === 'CREDIT_CARD'
-                      ? 'bg-purple-50 border-purple-500 text-purple-800 shadow-sm'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="text-lg">💳</span>
-                  <span>Credit Card</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('DEBIT_CARD')}
-                  className={`py-2.5 px-2 rounded-xl border flex flex-col items-center gap-1 transition ${
-                    paymentMethod === 'DEBIT_CARD'
-                      ? 'bg-indigo-50 border-indigo-500 text-indigo-800 shadow-sm'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="text-lg">🏧</span>
-                  <span>Debit Card</span>
-                </button>
               </div>
 
               <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                {paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD'
-                  ? `📱 Stripe will generate and send a secure payment link via SMS directly to ${job.customer.phone}.`
-                  : `✅ System enters ${paymentMethod === 'CASH' ? 'cash received' : 'Interac transfer received'}. Client gets settlement SMS, and Owner is notified.`}
+                ✅ System records ${paymentMethod === 'CASH' ? 'cash received' : 'Interac transfer received'}. The dispatcher is notified with the completed job and amount received. No customer notification is sent from this device.
               </p>
-            </div>
-
-            {/* Email Invoice / Receipt Field (Powered by Resend) */}
-            <div className="mb-4">
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                📧 Customer Email for Digital Receipt
-                <span className="text-[10px] text-slate-400 font-normal ml-1">(Optional, powered by Resend)</span>
-              </label>
-              <input
-                type="email"
-                placeholder="customer@example.com"
-                value={customerEmail}
-                onChange={(e) => setCustomerEmail(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-              />
             </div>
           </>
         )}
@@ -839,13 +772,6 @@ export default function TechJobDetailPage({
             </span>
           </div>
 
-          {liveCalculation.cardSurchargeAmount > 0 && (
-            <div className="flex justify-between text-amber-300 font-medium">
-              <span>Card Processing Surcharge:</span>
-              <span>+${liveCalculation.cardSurchargeAmount.toFixed(2)}</span>
-            </div>
-          )}
-
           <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
             <span className="font-black text-sm text-white uppercase">Grand Total:</span>
             <span className="text-xl font-black text-emerald-400">
@@ -864,44 +790,17 @@ export default function TechJobDetailPage({
           )}
         </div>
 
-        {/* Generated Stripe Link & Interactive Customer Portal */}
-        {generatedStripeLink && (
-          <div className="mb-4 p-3 rounded-xl bg-purple-50 border border-purple-200">
-            <div className="text-xs font-bold text-purple-900 mb-1 flex items-center gap-1">
-              <span>🔗</span> Stripe Payment Link Active:
-            </div>
-            <div className="text-xs text-purple-700 break-all mb-2">
-              {generatedStripeLink}
-            </div>
-            <div className="flex gap-2">
-              <Link
-                href={generatedStripeLink}
-                target="_blank"
-                className="flex-1 py-1.5 px-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold text-center transition"
-              >
-                Open Customer Checkout Screen &rarr;
-              </Link>
-            </div>
-          </div>
-        )}
-
         {/* Action Button */}
         {!isClosed && (
           <button
             type="button"
             disabled={submittingInvoice}
             onClick={handleCompleteInvoice}
-            className={`w-full py-3 px-4 rounded-xl font-black text-sm text-white shadow-md transition flex items-center justify-center gap-2 ${
-              isCardPaymentMethod(paymentMethod)
-                ? 'bg-purple-600 hover:bg-purple-700'
-                : 'bg-emerald-600 hover:bg-emerald-700'
-            }`}
+            className="w-full py-3 px-4 rounded-xl font-black text-sm text-white shadow-md transition flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700"
           >
             {submittingInvoice
               ? 'Processing...'
-              : isCardPaymentMethod(paymentMethod)
-              ? `💳 Generate & Send ${paymentMethod === 'DEBIT_CARD' ? 'Debit' : 'Credit'} Card Payment Link via SMS`
-              : `💵 Confirm ${paymentMethod === 'CASH' ? 'Cash' : 'Interac'} ($${liveCalculation.grandTotal.toFixed(2)}) & Settle Job`}
+              : `💵 Confirm ${paymentMethod === 'CASH' ? 'Cash' : 'Interac'} ($${liveCalculation.grandTotal.toFixed(2)}) & Notify Dispatcher`}
           </button>
         )}
       </div>
@@ -957,17 +856,6 @@ export default function TechJobDetailPage({
                   }`}
                 >
                   💵 Cash
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAbandonPaymentMethod('STRIPE_CARD')}
-                  className={`py-2 rounded-xl border transition ${
-                    abandonPaymentMethod === 'STRIPE_CARD'
-                      ? 'bg-purple-50 border-purple-500 text-purple-800'
-                      : 'bg-white border-slate-200 text-slate-600'
-                  }`}
-                >
-                  💳 Card (+4%)
                 </button>
               </div>
             </div>

@@ -2,8 +2,8 @@
  * Twilio SMS Gateway for Locksmith Operations
  * Handles:
  * 1. Dispatch alert SMS to technician
- * 2. Payment Link SMS to customer (Stripe)
- * 3. Payment Receipt SMS to customer (Cash / Interac)
+ * 2. One assignment/on-the-way SMS to customer from the dispatcher flow
+ * 3. Completion notification SMS to dispatcher from the technician flow
  */
 
 interface SendSmsParams {

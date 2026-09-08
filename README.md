@@ -2,7 +2,7 @@
 
 **Mobile-First Cloud Operations Management Platform for Locksmith Firms**
 
-Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fast call intake (<30s), automated Twilio SMS dispatch, Ontario 13% HST calculations (with reverse tax-inclusive split), Stripe payment links with 4% fixed surcharge, contractor cash-in-hand reconciliation, digital signature capture, proof-of-work photo attachment, and customer live service tracking.
+Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fast call intake (<30s), technician SMS dispatch, one simple customer "technician is on the way" SMS, Ontario 13% HST calculations, contractor cash-in-hand reconciliation, digital signature capture, and proof-of-work photo attachment.
 
 ---
 
@@ -14,6 +14,7 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 - Dispatcher assigns technician and explicitly enters the **worker commission** for each job.
 - Dispatches job alerts via **Twilio SMS** directly to the technician's phone.
 - **🟢 Live Sync**: Real-time auto-polling queue updating status changes across the team.
+- Customer receives only one simple SMS from the dispatcher-side assignment flow: technician is on the way.
 
 ### 2. Field Technician Mobile App (`/tech` & `/tech/jobs/[id]`)
 - Mobile-first interface designed for one-hand operation on mobile phones.
@@ -31,14 +32,13 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
   - **Forward Calculation**: Labor + optional Parts + 13% HST.
   - **Abandoned Job Travel Fee**: Quick-charge `$20.00` or `$25.00` cancellation fee + 13% HST if a customer cancels on site.
 - **Multi-Payment Settlement**:
-  - 💵 **Cash**: Record physical cash received; toggle SMS receipt (Default: OFF); automatically updates contractor's cash ledger.
-  - 🏦 **Interac e-Transfer**: Record confirmation reference.
-  - 💳 **Credit/Debit Card (Stripe)**: Automatically adds fixed **+4% card surcharge**; generates Twilio SMS checkout link.
+  - 💵 **Cash**: Record physical cash received and automatically update the contractor's cash ledger.
+  - 🏦 **Interac e-Transfer**: Record the payment method and automatically update the contractor's cash ledger.
+  - 💳 **Credit/Debit Card (Stripe)**: Disabled for now; planned for a future release.
 
-### 3. Customer Live Service Tracker (`/track/[id]`)
-- Real-time customer portal showing live status progression (`Assigned` ➔ `En Route` ➔ `On Site` ➔ `In Progress` ➔ `Completed`).
-- 1-Tap "Call Locksmith" button.
-- Embedded secure payment link & digital receipt.
+### 3. Customer Tracking and Online Payments
+- Customer tracking and Stripe online payments are disabled for now.
+- The technician sends completion details to the dispatcher, including payment method and amount received.
 
 ### 4. Owner Executive Hub & Cash Handover Settlements (`/owner`)
 - **Executive KPIs**: Total Gross Revenue, Cash vs Card vs Interac splits, Ontario HST (13%) collected for CRA tax filing, and Net Company Profit.
@@ -59,7 +59,7 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 - **Framework**: [Next.js 15](https://nextjs.org/) (App Router, React 19, TypeScript)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **Database & ORM**: [Prisma ORM](https://www.prisma.io/) with PostgreSQL (Supabase) / SQLite (Local)
-- **Payments**: [Stripe](https://stripe.com/) Checkout Sessions & Webhooks
+- **Payments**: Cash and Interac are currently supported. Stripe is reserved for a future release.
 - **Messaging**: [Twilio](https://www.twilio.com/) Programmable SMS API
 - **Deployment**: [Vercel](https://vercel.com/) (Frontend & Serverless API) + [Supabase](https://supabase.com/) (Managed PostgreSQL)
 
@@ -106,7 +106,7 @@ Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.
 ## 🧪 Testing
 
 ```bash
-# Run unit financial calculation tests (HST 13%, Reverse Mode, 4% Surcharge)
+# Run unit financial calculation tests (HST 13%, Reverse Mode)
 node --experimental-strip-types tests/calculations.test.ts
 
 # Run production E2E integration test suite

@@ -41,23 +41,12 @@ export async function POST(
 
     // 1. When Technician Acknowledges & Dispatches
     if (status === 'DISPATCHED') {
-      // Client gets SMS notification that Technician is Dispatched (No live tracking link)
-      if (job.customer?.phone) {
-        const clientSms = `Hello ${job.customer.name}, your locksmith technician ${techName} is dispatched and on the way for Job #${job.jobNumber}.`;
-        await sendSMS({ to: job.customer.phone, body: clientSms });
-      }
-
-      // Dispatcher / Owner gets notification that Technician is Dispatched
+      // The technician device only notifies the dispatcher. Customer SMS is
+      // sent once by the dispatcher-side assignment flow in /api/jobs.
       const dispatcherPhone = job.dispatcher?.phone || targetJob.dispatcher?.phone;
       if (dispatcherPhone) {
         const dispatcherSms = `Technician ${techName} has acknowledged and is dispatched to Job #${job.jobNumber} (${job.serviceAddress}).`;
         await sendSMS({ to: dispatcherPhone, body: dispatcherSms });
-      }
-    } else if (status === 'ON_SITE') {
-      // Tech arrives on site to check work & quote client
-      if (job.customer?.phone) {
-        const arrivalSms = `📍 LockOps Update: ${techName} has arrived on site for Job #${job.jobNumber}.`;
-        await sendSMS({ to: job.customer.phone, body: arrivalSms });
       }
     }
 

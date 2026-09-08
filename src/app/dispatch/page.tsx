@@ -149,7 +149,7 @@ export default function DispatchPage() {
         throw new Error(data.error || 'Failed to dispatch job');
       }
 
-      setSuccessMsg(`✅ Job #${data.job.jobNumber} created! Notification sent to technician & customer.`);
+      setSuccessMsg(`✅ Job #${data.job.jobNumber} created! Technician and customer on-the-way notifications sent.`);
       // Reset form
       setCustomerName('');
       setCustomerPhone('');

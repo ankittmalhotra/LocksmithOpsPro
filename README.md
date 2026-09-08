@@ -51,7 +51,7 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 ### 5. Role-Based Access Control (RBAC)
 - Authenticated roles: `ADMIN`, `DISPATCHER`, `TECHNICIAN`.
 - Admin has full access to every workspace, operation, report, and team-management action.
-- **1-Tap Team Login** on `/login` for seamless testing and staff sign-in.
+- Password-based staff login on `/login`; Admin creates and manages all staff accounts.
 - Route protection with contextual navigation header.
 
 ---

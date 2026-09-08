@@ -21,12 +21,10 @@ export function middleware(request: NextRequest) {
   // Paths that require role protection
   const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner');
   const isJobApi = pathname.startsWith('/api/jobs');
-  const isTeamApi = pathname.startsWith('/api/auth/users');
-  const isAuthApi = pathname.startsWith('/api/auth');
   const isDispatchRoute = pathname.startsWith('/dispatch');
   const isTechRoute = pathname.startsWith('/tech');
 
-  if (!isAdminRoute && !isDispatchRoute && !isTechRoute && !isJobApi && !isTeamApi && !isAuthApi) {
+  if (!isAdminRoute && !isDispatchRoute && !isTechRoute && !isJobApi) {
     return NextResponse.next();
   }
 
@@ -40,9 +38,6 @@ export function middleware(request: NextRequest) {
     }
     if (isAdminRoute && user.role !== 'ADMIN') {
       return NextResponse.json({ success: false, error: 'Forbidden: Admin access required' }, { status: 403 });
-    }
-    if (isTeamApi && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
-      return NextResponse.json({ success: false, error: 'Forbidden: Team access required' }, { status: 403 });
     }
     return NextResponse.next();
   }

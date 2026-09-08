@@ -5,8 +5,12 @@ import { getCurrentUser } from '@/lib/auth';
 import { APP_ROLES, type AppRole } from '@/lib/session';
 import { hashPassword } from '@/lib/password';
 
-function canManageTeam(role?: string) {
+function canViewTechnicians(role?: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
+}
+
+function canManageTeam(role?: string) {
+  return role === 'ADMIN';
 }
 
 function isAppRole(role: unknown): role is AppRole {
@@ -28,7 +32,7 @@ function publicUser(user: Record<string, unknown>) {
 export async function GET(request: Request) {
   try {
     const currentUser = await getCurrentUser();
-    if (!currentUser || !canManageTeam(currentUser.role)) {
+    if (!currentUser || !canViewTechnicians(currentUser.role)) {
       return NextResponse.json({ success: false, error: 'Team access required' }, { status: 403 });
     }
 
@@ -84,17 +88,9 @@ export async function POST(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     const body = await request.json();
-    const { name, phone, role, email, isSelfRegistration, password } = body;
-    const wantsSelfRegistration = isSelfRegistration === true;
+    const { name, phone, role, email, password } = body;
 
-    if (wantsSelfRegistration && currentUser) {
-      return NextResponse.json(
-        { success: false, error: 'Self-registration is only available when signed out' },
-        { status: 403 }
-      );
-    }
-
-    if (!wantsSelfRegistration && (!currentUser || !canManageTeam(currentUser.role))) {
+    if (!currentUser || !canManageTeam(currentUser.role)) {
       return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
     }
 
@@ -118,51 +114,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Commission rate must be between 0 and 100 percent.' }, { status: 400 });
     }
 
-    // Public self-registration is strictly for TECHNICIAN / Contractor only
-    // and requires Admin approval before becoming active. It must never
-    // update an existing account by phone.
-    if (wantsSelfRegistration) {
-      if (role !== undefined && role !== null && role !== '' && role !== 'TECHNICIAN') {
-        return NextResponse.json(
-          { success: false, error: 'Self-registration is only available for technicians' },
-          { status: 400 }
-        );
-      }
-
-      const existingUser = await prisma.user.findUnique({
-        where: { phone: cleanPhone },
-        select: { id: true },
-      });
-      if (existingUser) {
-        return NextResponse.json(
-          { success: false, error: 'An account already exists for this phone number' },
-          { status: 409 }
-        );
-      }
-
-      const newUser = await prisma.user.create({
-        data: {
-          name: name.trim(),
-          phone: cleanPhone,
-          role: 'TECHNICIAN',
-          email: email || null,
-          active: false, // Pending admin approval
-          commissionRate: 0,
-          passwordHash: hashPassword(password),
-        },
-      });
-
-      return NextResponse.json({
-        success: true,
-        user: publicUser(newUser),
-        pendingApproval: !newUser.active,
-        message: newUser.active
-          ? 'Account already active. You can sign in now.'
-          : 'Registration submitted! Your account is pending admin approval before you can access jobs.',
-      });
-    }
-
-    // Direct creation by Admin
+    // Only Admins create accounts. Dispatchers can look up active technicians
+    // for assignment but cannot change team membership or permissions.
     if (!role) {
       return NextResponse.json(
         { success: false, error: 'Role is required for team member creation' },
@@ -172,20 +125,6 @@ export async function POST(request: Request) {
 
     if (!isAppRole(role)) {
       return NextResponse.json({ success: false, error: 'Invalid team member role' }, { status: 400 });
-    }
-
-    if (role === 'ADMIN' && currentUser?.role !== 'ADMIN') {
-      return NextResponse.json(
-        { success: false, error: 'Only Admin may create Admin users' },
-        { status: 403 }
-      );
-    }
-
-    if (currentUser?.role === 'DISPATCHER' && role !== 'TECHNICIAN') {
-      return NextResponse.json(
-        { success: false, error: 'Dispatchers may only create Technician users' },
-        { status: 403 }
-      );
     }
 
     const existingUser = await prisma.user.findUnique({
@@ -220,7 +159,7 @@ export async function POST(request: Request) {
   }
 }
 
-// PATCH to toggle active / approve technician or update commission rate
+// PATCH to activate/deactivate a team member or update a technician commission rate.
 export async function PATCH(request: Request) {
   try {
     const currentUser = await getCurrentUser();
@@ -242,13 +181,6 @@ export async function PATCH(request: Request) {
     const targetUser = await prisma.user.findUnique({ where: { id: userId } });
     if (!targetUser) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
-    }
-
-    if (currentUser.role === 'DISPATCHER' && targetUser.role !== 'TECHNICIAN') {
-      return NextResponse.json(
-        { success: false, error: 'Dispatchers may only manage Technician users' },
-        { status: 403 }
-      );
     }
 
     const updateData: any = {};
@@ -275,7 +207,7 @@ export async function PATCH(request: Request) {
         })
       : targetUser;
 
-    // If contractor is activated/approved and has an email, send email via Resend
+    // Notify a Technician when an Admin reactivates the account.
     let emailResult = null;
     if (active === true && updatedUser.role === 'TECHNICIAN' && updatedUser.email) {
       try {

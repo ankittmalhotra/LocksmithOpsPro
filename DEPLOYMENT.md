@@ -48,19 +48,15 @@ DIRECT_URL="postgresql://postgres.[PROJECT_REF]:[YOUR_PASSWORD]@aws-0-[REGION].p
 ### Step 3: Push Schema and Seed Database
 Run the following commands in your terminal to initialize tables and load initial data on Supabase:
 
-For an existing database, run `prisma/role-consolidation.sql` in the Supabase SQL Editor before deploying this version. It adds `ADMIN`, records each existing `SUPER_ADMIN`/`OWNER` mapping, and updates those users without changing their IDs. Keep `prisma/role-consolidation-rollback.sql` available if a rollback is required. Do not run `prisma/supabase-fresh-reset.sql` against an existing database.
-
 ```bash
-# Fresh database only: push the three-role schema to PostgreSQL
+# This is a new production database: create the schema directly from Prisma
 npx prisma db push
 
-# Populate initial users (Admin, Dispatcher, Techs) & Toronto sample jobs
+# Create the initial Admin account. Set ADMIN_PASSWORD first.
 node prisma/seed.js
 ```
 
-For an existing database, skip `prisma db push` after the manual role migration unless its proposed enum/table changes have been reviewed; the backup table is intentionally outside the Prisma schema so it remains available for rollback.
-
-After role consolidation, run `prisma/manual-job-migration.sql` to add manual-job fields and Debit/Credit payment-method values. These migrations should be verified in staging before production. Set a strong `SESSION_SECRET` in production; the application fails closed when it is missing.
+The Prisma schema is the single source of truth for this new database. No role-consolidation or manual-job SQL migration is required when production starts empty. Set a strong `SESSION_SECRET` in production; the application fails closed when it is missing.
 
 Required production environment variables:
 

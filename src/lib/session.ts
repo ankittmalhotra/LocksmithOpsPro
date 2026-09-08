@@ -197,21 +197,13 @@ function timingSafeEqual(actual: Uint8Array, expected: Uint8Array): boolean {
   return difference === 0;
 }
 
-function normalizeRole(role: unknown): AppRole | null {
-  // Signed tokens from before the database role migration can still be
-  // understood and are normalized to the only current administrative role.
-  if (role === 'SUPER_ADMIN' || role === 'OWNER') return 'ADMIN';
-  if (typeof role === 'string' && (APP_ROLES as readonly string[]).includes(role)) {
-    return role as AppRole;
-  }
-  return null;
-}
-
 function normalizeSession(value: unknown): AuthSession | null {
   if (!value || typeof value !== 'object') return null;
 
   const parsed = value as Record<string, unknown>;
-  const role = normalizeRole(parsed.role);
+  const role = typeof parsed.role === 'string' && (APP_ROLES as readonly string[]).includes(parsed.role)
+    ? parsed.role as AppRole
+    : null;
   if (
     typeof parsed.id !== 'string' ||
     typeof parsed.name !== 'string' ||
@@ -245,13 +237,7 @@ export function deserializeSession(token: string): AuthSession | null {
     if (typeof token !== 'string' || !token) return null;
 
     const parts = token.split('.');
-    if (parts.length !== 2) {
-      // Raw base64 was accepted by the pre-HMAC implementation. It is only
-      // retained for local migration/testing and is never accepted in prod.
-      if (process.env.NODE_ENV === 'production') return null;
-      const legacyJson = new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64(token));
-      return normalizeSession(JSON.parse(legacyJson));
-    }
+    if (parts.length !== 2) return null;
 
     const [payload, signature] = parts;
     if (!payload || !signature) return null;

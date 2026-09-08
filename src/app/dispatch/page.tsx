@@ -117,7 +117,7 @@ export default function DispatchPage() {
         setJobs(data.jobs);
       }
 
-      // Fetch only approved active registered contractors with their commission rates.
+      // Fetch only active technicians with their commission rates.
       const usersRes = await fetch('/api/auth/users?role=TECHNICIAN&activeOnly=true');
       const usersData = await usersRes.json();
       if (usersData.success && usersData.users.length > 0) {

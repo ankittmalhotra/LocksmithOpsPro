@@ -51,7 +51,7 @@ export default function TechJobsPage() {
         return;
       }
 
-      if (authData.user.role !== 'TECHNICIAN') {
+      if (authData.user.role !== 'TECHNICIAN' && authData.user.role !== 'ADMIN') {
         setJobs([]);
         return;
       }
@@ -69,7 +69,9 @@ export default function TechJobsPage() {
   };
 
   // The API already scopes this response to the authenticated technician.
-  const techJobs = currentUser
+  const techJobs = currentUser?.role === 'ADMIN'
+    ? jobs
+    : currentUser
     ? jobs.filter((j) => j.technician?.id === currentUser.id)
     : [];
   const activeJobs = techJobs.filter((j) =>

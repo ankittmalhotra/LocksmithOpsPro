@@ -1,0 +1,157 @@
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getCurrentUser } from '@/lib/auth';
+import { calculateJobSettlementPosition, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
+import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+
+class ManualJobInputError extends Error {}
+
+function amount(value: unknown, field: string, allowZero = true): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || (!allowZero && parsed === 0)) {
+    throw new ManualJobInputError(`${field} must be a valid ${allowZero ? 'non-negative' : 'positive'} amount`);
+  }
+  return roundToTwo(parsed);
+}
+
+export async function POST(request: Request) {
+  try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json({ success: false, error: 'Unauthorized: Authentication required' }, { status: 401 });
+    }
+    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'DISPATCHER') {
+      return NextResponse.json({ success: false, error: 'Forbidden: Dispatcher access required' }, { status: 403 });
+    }
+
+    const body = await request.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: 'Invalid manual job payload' }, { status: 400 });
+    }
+    const jobNumber = Number(body.jobNumber);
+    const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : '';
+    const rawPhone = typeof body.customerPhone === 'string' ? body.customerPhone : '';
+    const customerPhone = rawPhone.replace(/[^0-9]/g, '');
+    const customerExtension = typeof body.customerExtension === 'string' ? body.customerExtension.trim() : '';
+    const serviceAddress = typeof body.serviceAddress === 'string' ? body.serviceAddress.trim() : '';
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    const selectedServiceType = typeof body.serviceType === 'string' ? body.serviceType.trim() : '';
+    const otherServiceType = typeof body.otherServiceType === 'string' ? body.otherServiceType.trim() : '';
+    const serviceType = selectedServiceType === 'Other' ? otherServiceType : selectedServiceType;
+    const paymentMethod = body.paymentMethod as string;
+    const technicianId = typeof body.technicianId === 'string' ? body.technicianId : '';
+
+    if (!Number.isSafeInteger(jobNumber) || jobNumber <= 0) {
+      return NextResponse.json({ success: false, error: 'Job number must be a positive whole number' }, { status: 400 });
+    }
+    if (!customerName || customerPhone.length < 7 || !serviceAddress || !description) {
+      return NextResponse.json({ success: false, error: 'Customer name, valid phone, address, and description are required' }, { status: 400 });
+    }
+    if (!(MANUAL_SERVICE_TYPES as readonly string[]).includes(selectedServiceType) && selectedServiceType !== 'Other') {
+      return NextResponse.json({ success: false, error: 'Invalid job type' }, { status: 400 });
+    }
+    if (!serviceType) {
+      return NextResponse.json({ success: false, error: 'A job type is required when Other is selected' }, { status: 400 });
+    }
+    if (!(MANUAL_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
+      return NextResponse.json({ success: false, error: 'Invalid payment method' }, { status: 400 });
+    }
+    if (typeof body.taxCollected !== 'boolean') {
+      return NextResponse.json({ success: false, error: 'Tax collected must be Yes or No' }, { status: 400 });
+    }
+
+    const totalAmountCollected = amount(body.totalAmountCollected, 'Total amount collected', false);
+    const cogsAmount = amount(body.cogsAmount, 'COGS amount');
+    const technicianCommission = amount(body.technicianCommission, 'Technician commission');
+
+    const [existingJob, technician] = await Promise.all([
+      prisma.job.findUnique({ where: { jobNumber }, select: { id: true } }),
+      prisma.user.findUnique({
+        where: { id: technicianId },
+        select: { id: true, name: true, role: true, active: true },
+      }),
+    ]);
+    if (existingJob) {
+      return NextResponse.json({ success: false, error: `Job #${jobNumber} already exists` }, { status: 409 });
+    }
+    if (!technician || technician.role !== 'TECHNICIAN' || !technician.active) {
+      return NextResponse.json({ success: false, error: 'Selected technician is not active' }, { status: 400 });
+    }
+
+    const payment = paymentMethod as SupportedPaymentMethod;
+    const settlement = calculateJobSettlementPosition({
+      paymentMethod: payment,
+      grandTotal: totalAmountCollected,
+      workerCommission: technicianCommission,
+    });
+
+    const job = await prisma.$transaction(async (tx) => {
+      let customer = await tx.customer.findFirst({ where: { phone: customerPhone } });
+      if (!customer) {
+        customer = await tx.customer.create({
+          data: {
+            name: customerName,
+            phone: customerPhone,
+            extension: customerExtension || null,
+            address: serviceAddress,
+          },
+        });
+      }
+
+      const created = await tx.job.create({
+        data: {
+          jobNumber,
+          customerId: customer.id,
+          dispatcherId: currentUser.id,
+          technicianId: technician.id,
+          status: 'COMPLETED',
+          isManual: true,
+          serviceType,
+          problemDescription: description,
+          serviceAddress,
+          workerCommissionRate: 0,
+          workerCommission: technicianCommission,
+          completedAt: new Date(),
+          invoice: {
+            create: {
+              calculationMode: 'MANUAL',
+              subtotal: totalAmountCollected,
+              partsTotal: 0,
+              laborTotal: totalAmountCollected,
+              taxRate: 0,
+              taxAmount: 0,
+              cardSurchargeRate: 0,
+              cardSurchargeAmount: 0,
+              grandTotal: totalAmountCollected,
+              totalAmountCollected,
+              taxCollected: body.taxCollected,
+              cogsAmount,
+              paymentStatus: 'PAID',
+              paymentMethod: payment,
+              cashOwedToCompany: settlement.cashOwedToCompany,
+              paidAt: new Date(),
+            },
+          },
+        },
+        include: {
+          customer: true,
+          technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
+          dispatcher: { select: { id: true, name: true, phone: true, email: true, active: true } },
+          invoice: true,
+        },
+      });
+      return created;
+    });
+
+    return NextResponse.json({ success: true, job, message: `Manual Job #${job.jobNumber} recorded successfully.` }, { status: 201 });
+  } catch (err: any) {
+    if (err instanceof ManualJobInputError) {
+      return NextResponse.json({ success: false, error: err.message }, { status: 400 });
+    }
+    if (err?.code === 'P2002') {
+      return NextResponse.json({ success: false, error: 'That job number already exists' }, { status: 409 });
+    }
+    console.error('Manual job creation error:', err);
+    return NextResponse.json({ success: false, error: 'Failed to create manual job' }, { status: 500 });
+  }
+}

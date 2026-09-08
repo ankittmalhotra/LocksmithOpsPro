@@ -6,9 +6,9 @@ import { getCurrentUser } from '@/lib/auth';
 export async function GET() {
   try {
     const user = await getCurrentUser();
-    if (!user || (user.role !== 'SUPER_ADMIN' && user.role !== 'OWNER')) {
+    if (!user || user.role !== 'ADMIN') {
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Owner or Super Admin access required' },
+        { success: false, error: 'Unauthorized: Admin access required' },
         { status: 403 }
       );
     }
@@ -17,7 +17,7 @@ export async function GET() {
     const jobs = await prisma.job.findMany({
       include: {
         invoice: true,
-        technician: true,
+        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
         customer: true,
         items: true,
       },
@@ -50,16 +50,23 @@ export async function GET() {
       if (job.status === 'ABANDONED_TRAVEL_FEE') {
         abandonedJobsCount++;
       }
-      if (job.invoice && job.invoice.paymentStatus === 'PAID') {
+      const isOnBooks = job.invoice?.taxCollected !== false;
+      if (job.invoice && job.invoice.paymentStatus === 'PAID' && isOnBooks) {
         completedJobsCount++;
         totalGrossRevenue += job.invoice.grandTotal;
-        totalTaxHST += job.invoice.taxAmount;
+        // Manual Tax Collected is an on-books/off-books bookkeeping flag, not
+        // an Ontario HST value. Manual entries never contribute to HST totals.
+        if (!job.isManual) totalTaxHST += job.invoice.taxAmount;
         totalCommissionsEarned += job.workerCommission;
 
         // Calculate wholesale parts cost (COGS)
-        for (const item of job.items || []) {
-          if (item.isPart) {
-            totalPartsCost += (item.unitCost || 0) * (item.quantity || 1);
+        if (job.invoice.cogsAmount > 0) {
+          totalPartsCost += job.invoice.cogsAmount;
+        } else {
+          for (const item of job.items || []) {
+            if (item.isPart) {
+              totalPartsCost += (item.unitCost || 0) * (item.quantity || 1);
+            }
           }
         }
 
@@ -67,7 +74,7 @@ export async function GET() {
           totalCashRevenue += job.invoice.grandTotal;
         } else if (job.invoice.paymentMethod === 'INTERAC') {
           totalInteracRevenue += job.invoice.grandTotal;
-        } else if (job.invoice.paymentMethod === 'STRIPE_CARD') {
+        } else if (job.invoice.paymentMethod === 'STRIPE_CARD' || job.invoice.paymentMethod === 'DEBIT_CARD' || job.invoice.paymentMethod === 'CREDIT_CARD') {
           totalCardRevenue += job.invoice.grandTotal;
         }
       }
@@ -84,7 +91,7 @@ export async function GET() {
         if (j.invoice && j.invoice.paymentStatus === 'PAID') {
           commissionsEarned += j.workerCommission;
           if (j.invoice.paymentMethod === 'CASH') {
-            cashCollected += j.invoice.grandTotal;
+            cashCollected += j.invoice.totalAmountCollected || j.invoice.grandTotal;
           }
         }
       }
@@ -94,7 +101,7 @@ export async function GET() {
       // Net cash owed:
       // Worker collected physical cash.
       // Offset by commissions the worker earned.
-      // Offset by any prior cash handovers settled with owner.
+      // Offset by any prior cash handovers settled with the admin team.
       const netCashOwedToCompany = roundToTwo(cashCollected - commissionsEarned - totalSettled);
 
       return {
@@ -135,7 +142,7 @@ export async function GET() {
       recentJobs: jobs.slice(0, 10),
     });
   } catch (err: any) {
-    console.error('Owner analytics error:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    console.error('Admin analytics error:', err);
+    return NextResponse.json({ success: false, error: 'Unable to load Admin analytics' }, { status: 500 });
   }
 }

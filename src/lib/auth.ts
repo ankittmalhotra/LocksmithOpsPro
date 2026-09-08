@@ -11,7 +11,22 @@ export async function getCurrentUser(): Promise<AuthSession | null> {
   const cookieStore = await cookies();
   const sessionToken = cookieStore.get(COOKIE_NAME)?.value;
   if (!sessionToken) return null;
-  return deserializeSession(sessionToken);
+  const session = deserializeSession(sessionToken);
+  if (!session) return null;
+
+  // Sessions are signed, but still validate the account on every server-side
+  // request so deactivation and role changes take effect immediately.
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: session.id },
+      select: { name: true, phone: true, role: true, active: true },
+    });
+    if (!user || !user.active || user.role !== session.role) return null;
+    return { ...session, name: user.name, phone: user.phone };
+  } catch (error) {
+    console.error('Session account validation failed:', error);
+    return null;
+  }
 }
 
 export async function setSessionCookie(user: AuthSession) {

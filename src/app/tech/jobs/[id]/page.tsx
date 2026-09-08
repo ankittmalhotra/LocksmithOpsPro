@@ -259,6 +259,9 @@ export default function TechJobDetailPage({
   }
 
   const isClosed = job.status === 'COMPLETED' || job.status === 'ABANDONED_TRAVEL_FEE';
+  const isManualJob = Boolean(job.isManual || job.invoice?.calculationMode === 'MANUAL');
+  const manualTotalCollected = Number(job.invoice?.totalAmountCollected ?? job.invoice?.grandTotal ?? 0);
+  const manualTaxCollected = job.invoice?.taxCollected !== false;
 
   return (
     <div className="max-w-md mx-auto px-4 py-4 w-full pb-20">
@@ -405,7 +408,11 @@ export default function TechJobDetailPage({
         <h2 className="text-sm font-black text-slate-900 mb-3 flex items-center justify-between pb-2 border-b border-slate-100">
           <span>{isClosed ? '🧾 Invoice Summary' : '💳 Complete & Bill Customer'}</span>
           <span className="text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded-full font-bold">
-            Tax Calculated (13%)
+            {isManualJob
+              ? manualTaxCollected
+                ? 'On Books'
+                : 'Off Books'
+              : 'Tax Calculated (13%)'}
           </span>
         </h2>
 
@@ -756,40 +763,59 @@ export default function TechJobDetailPage({
 
         {/* Breakdown Display */}
         <div className="p-3.5 bg-slate-900 text-white rounded-xl space-y-1.5 text-xs mb-4">
-          <div className="flex justify-between text-slate-300">
-            <span>Job Subtotal (Labor + Parts):</span>
-            <span className="font-semibold text-white">
-              ${liveCalculation.subtotal.toFixed(2)}
-            </span>
-          </div>
-          {liveCalculation.partsTotal > 0 && (
-            <div className="flex justify-between text-slate-400 text-[11px]">
-              <span>↳ Parts Included:</span>
-              <span>${liveCalculation.partsTotal.toFixed(2)}</span>
-            </div>
-          )}
-          <div className="flex justify-between text-slate-300">
-            <span>Sales Tax (13%):</span>
-            <span className="font-semibold text-white">
-              ${liveCalculation.taxAmount.toFixed(2)}
-            </span>
-          </div>
+          {isManualJob ? (
+            <>
+              <div className="flex justify-between text-slate-300">
+                <span>Total Amount Collected:</span>
+                <span className="font-semibold text-white">${manualTotalCollected.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span>Tax Collected:</span>
+                <span className="font-semibold text-white">{manualTaxCollected ? 'Yes — On Books' : 'No — Off Books'}</span>
+              </div>
+              <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
+                <span className="font-black text-sm text-white uppercase">Recorded Total:</span>
+                <span className="text-xl font-black text-emerald-400">${manualTotalCollected.toFixed(2)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between text-slate-300">
+                <span>Job Subtotal (Labor + Parts):</span>
+                <span className="font-semibold text-white">
+                  ${liveCalculation.subtotal.toFixed(2)}
+                </span>
+              </div>
+              {liveCalculation.partsTotal > 0 && (
+                <div className="flex justify-between text-slate-400 text-[11px]">
+                  <span>↳ Parts Included:</span>
+                  <span>${liveCalculation.partsTotal.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-slate-300">
+                <span>Sales Tax (13%):</span>
+                <span className="font-semibold text-white">
+                  ${liveCalculation.taxAmount.toFixed(2)}
+                </span>
+              </div>
 
-          <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
-            <span className="font-black text-sm text-white uppercase">Grand Total:</span>
-            <span className="text-xl font-black text-emerald-400">
-              ${liveCalculation.grandTotal.toFixed(2)}
-            </span>
-          </div>
+              <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
+                <span className="font-black text-sm text-white uppercase">Grand Total:</span>
+                <span className="text-xl font-black text-emerald-400">
+                  ${liveCalculation.grandTotal.toFixed(2)}
+                </span>
+              </div>
 
-          {/* Cash Ledger Note */}
-          {paymentMethod === 'CASH' && (
-            <div className="pt-1.5 border-t border-slate-800 text-[11px] text-amber-300/90 font-medium flex justify-between">
-              <span>You owe company (Cash - Comm):</span>
-              <span className="font-bold">
-                ${liveSettlement.cashOwedToCompany.toFixed(2)}
-              </span>
-            </div>
+              {/* Cash Ledger Note */}
+              {paymentMethod === 'CASH' && (
+                <div className="pt-1.5 border-t border-slate-800 text-[11px] text-amber-300/90 font-medium flex justify-between">
+                  <span>You owe company (Cash - Comm):</span>
+                  <span className="font-bold">
+                    ${liveSettlement.cashOwedToCompany.toFixed(2)}
+                  </span>
+                </div>
+              )}
+            </>
           )}
         </div>
 

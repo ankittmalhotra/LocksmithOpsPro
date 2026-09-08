@@ -9,8 +9,7 @@ generator client {
 }
 
 enum Role {
-  SUPER_ADMIN
-  OWNER
+  ADMIN
   DISPATCHER
   TECHNICIAN
 }
@@ -31,6 +30,8 @@ enum PaymentMethod {
   CASH
   INTERAC
   STRIPE_CARD
+  DEBIT_CARD
+  CREDIT_CARD
 }
 
 enum PaymentStatus {
@@ -45,134 +46,139 @@ enum SettlementStatus {
 }
 
 model User {
-  id              String       @id @default(uuid())
-  name            String
-  phone           String       @unique
-  email           String?      @unique
-  role            Role         @default(TECHNICIAN)
-  active          Boolean      @default(true)
+  id             String   @id @default(uuid())
+  name           String
+  phone          String   @unique
+  email          String?  @unique
+  passwordHash   String?
+  role           Role     @default(TECHNICIAN)
+  active         Boolean  @default(true)
   // Percentage of the completed job total paid to the technician, e.g. 25 = 25%.
-  commissionRate  Float        @default(0.0)
-  createdAt       DateTime     @default(now())
+  commissionRate Float    @default(0.0)
+  createdAt      DateTime @default(now())
 
-  dispatchedJobs  Job[]        @relation("DispatcherJobs")
-  assignedJobs    Job[]        @relation("TechnicianJobs")
-  settlements     Settlement[] @relation("TechnicianSettlements")
+  dispatchedJobs Job[]        @relation("DispatcherJobs")
+  assignedJobs   Job[]        @relation("TechnicianJobs")
+  settlements    Settlement[] @relation("TechnicianSettlements")
 }
 
 model Customer {
-  id              String       @id @default(uuid())
-  name            String
-  phone           String
-  extension       String?
-  address         String
-  unit            String?
-  postalCode      String?
-  notes           String?
-  createdAt       DateTime     @default(now())
+  id         String   @id @default(uuid())
+  name       String
+  phone      String
+  extension  String?
+  address    String
+  unit       String?
+  postalCode String?
+  notes      String?
+  createdAt  DateTime @default(now())
 
-  jobs            Job[]
+  jobs Job[]
 }
 
 model Job {
-  id                 String       @id @default(uuid())
-  jobNumber          Int          @unique
-  customerId         String
-  customer           Customer     @relation(fields: [customerId], references: [id])
-  dispatcherId       String
-  dispatcher         User         @relation("DispatcherJobs", fields: [dispatcherId], references: [id])
-  technicianId       String?
-  technician         User?        @relation("TechnicianJobs", fields: [technicianId], references: [id])
-  
-  status             JobStatus    @default(NEW)
-  serviceType        String       // e.g., "Commercial Lock Change", "Lockout"
+  id           String   @id @default(uuid())
+  jobNumber    Int      @unique
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  dispatcherId String
+  dispatcher   User     @relation("DispatcherJobs", fields: [dispatcherId], references: [id])
+  technicianId String?
+  technician   User?    @relation("TechnicianJobs", fields: [technicianId], references: [id])
+
+  status             JobStatus @default(NEW)
+  isManual           Boolean   @default(false)
+  serviceType        String // e.g., "Commercial Lock Change", "Lockout"
   problemDescription String
   serviceAddress     String
-  
+
   // Commission rate is snapshotted at assignment; amount is calculated at completion.
-  workerCommissionRate Float      @default(0.0)
-  workerCommission     Float      @default(0.0)
-  
+  workerCommissionRate Float @default(0.0)
+  workerCommission     Float @default(0.0)
+
   // Abandoned job flag & travel fee
-  isAbandoned        Boolean      @default(false)
-  travelFeeAmount    Float?       // 20.0, 25.0
-  
+  isAbandoned     Boolean @default(false)
+  travelFeeAmount Float? // 20.0, 25.0
+
   // Locksmith-Specific Fields
-  keyBitting         String?      // e.g., "SC1: 3-5-2-1-4" or "KW1"
-  doorDetails        String?      // e.g., "Adams Rite mortise, 1-1/8 backset"
-  proofPhotoUrl      String?      // Proof of work photo
-  preWorkSignature   String?      // Pre-work estimate & authorization to drill/service
-  customerSignature  String?      // Customer digital signature on site
+  keyBitting        String? // e.g., "SC1: 3-5-2-1-4" or "KW1"
+  doorDetails       String? // e.g., "Adams Rite mortise, 1-1/8 backset"
+  proofPhotoUrl     String? // Proof of work photo
+  preWorkSignature  String? // Pre-work estimate & authorization to drill/service
+  customerSignature String? // Customer digital signature on site
 
   // Automotive Specs
-  vehicleYear        String?
-  vehicleMake        String?
-  vehicleModel       String?
-  vehicleVin         String?
-  keyType            String?      // e.g. "Transponder Chip", "Proximity Smart Fob", "Laser Cut High-Security"
-  fccId              String?      // Fob FCC-ID / Part code
+  vehicleYear  String?
+  vehicleMake  String?
+  vehicleModel String?
+  vehicleVin   String?
+  keyType      String? // e.g. "Transponder Chip", "Proximity Smart Fob", "Laser Cut High-Security"
+  fccId        String? // Fob FCC-ID / Part code
 
   // Scheduled / Appointment Booking
-  isScheduled        Boolean      @default(false)
-  scheduledFor       DateTime?
+  isScheduled  Boolean   @default(false)
+  scheduledFor DateTime?
 
-  createdAt          DateTime     @default(now())
-  dispatchedAt       DateTime?
-  completedAt        DateTime?
+  createdAt    DateTime  @default(now())
+  dispatchedAt DateTime?
+  completedAt  DateTime?
 
-  items              JobItem[]
-  invoice            Invoice?
+  items   JobItem[]
+  invoice Invoice?
 }
 
 model JobItem {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   jobId       String
-  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  description String   // e.g. "HS mortise cylinder"
-  quantity    Int      @default(1)
-  unitCost    Float    @default(0.0)
-  unitPrice   Float    @default(0.0)
-  isPart      Boolean  @default(true)
+  job         Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  description String // e.g. "HS mortise cylinder"
+  quantity    Int     @default(1)
+  unitCost    Float   @default(0.0)
+  unitPrice   Float   @default(0.0)
+  isPart      Boolean @default(true)
 }
 
 model Invoice {
-  id                  String           @id @default(uuid())
-  jobId               String           @unique
-  job                 Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  
-  calculationMode     String           @default("FORWARD") // "FORWARD" or "REVERSE"
-  subtotal            Float            // Labor + Parts
-  partsTotal          Float            @default(0.0)
-  laborTotal          Float            @default(0.0)
-  taxRate             Float            @default(0.13) // Ontario HST
-  taxAmount           Float            @default(0.0)
-  cardSurchargeRate   Float            @default(0.024) // Compliant 2.4% Canadian card cost-of-acceptance
-  cardSurchargeAmount Float            @default(0.0)
-  grandTotal          Float            // Final amount billed
-  
-  paymentStatus       PaymentStatus    @default(PENDING)
-  paymentMethod       PaymentMethod?
-  
+  id    String @id @default(uuid())
+  jobId String @unique
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  calculationMode      String  @default("FORWARD") // "FORWARD" or "REVERSE"
+  subtotal             Float // Labor + Parts
+  partsTotal           Float   @default(0.0)
+  laborTotal           Float   @default(0.0)
+  taxRate              Float   @default(0.13) // Ontario HST
+  taxAmount            Float   @default(0.0)
+  cardSurchargeRate    Float   @default(0.024) // Compliant 2.4% Canadian card cost-of-acceptance
+  cardSurchargeAmount  Float   @default(0.0)
+  grandTotal           Float // Final amount billed
+  totalAmountCollected Float   @default(0.0)
+  taxCollected         Boolean @default(true)
+  cogsAmount           Float   @default(0.0)
+
+  paymentStatus PaymentStatus  @default(PENDING)
+  paymentMethod PaymentMethod?
+
   // Cash Reconciliation & Settlement
-  cashOwedToCompany   Float            @default(0.0)
-  settlementStatus    SettlementStatus @default(UNSETTLED)
-  
+  cashOwedToCompany Float            @default(0.0)
+  settlementStatus  SettlementStatus @default(UNSETTLED)
+
   // Twilio & Stripe tracking
-  smsSent             Boolean          @default(false)
-  stripeSessionId     String?
-  stripePaymentUrl    String?
-  
-  paidAt              DateTime?
-  createdAt           DateTime         @default(now())
+  smsSent          Boolean @default(false)
+  stripeSessionId  String?
+  stripePaymentUrl String?
+
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
 }
 
 model Settlement {
-  id             String    @id @default(uuid())
-  technicianId   String
-  technician     User      @relation("TechnicianSettlements", fields: [technicianId], references: [id])
-  amountSettled  Float
-  paymentMethod  String    // e.g., "CASH_HANDOVER", "BANK_TRANSFER"
-  notes          String?
-  settledBy      String    // Owner User ID
-  settledAt      DateTime  @default(now())
+  id            String   @id @default(uuid())
+  technicianId  String
+  technician    User     @relation("TechnicianSettlements", fields: [technicianId], references: [id])
+  amountSettled Float
+  paymentMethod String // e.g., "CASH_HANDOVER", "BANK_TRANSFER"
+  notes         String?
+  settledBy     String // Admin User ID
+  settledAt     DateTime @default(now())
 }

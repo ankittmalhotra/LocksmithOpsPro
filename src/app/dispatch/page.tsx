@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 
 interface Job {
   id: string;
@@ -13,6 +14,7 @@ interface Job {
   workerCommissionRate: number;
   status: string;
   isAbandoned: boolean;
+  isManual?: boolean;
   createdAt: string;
   isScheduled?: boolean;
   scheduledFor?: string;
@@ -34,8 +36,11 @@ interface Job {
   };
   invoice?: {
     grandTotal: number;
+    totalAmountCollected?: number;
+    cogsAmount?: number;
     paymentStatus: string;
     paymentMethod: string;
+    taxCollected?: boolean;
   };
 }
 
@@ -72,6 +77,26 @@ export default function DispatchPage() {
   const [errorMsg, setErrorMsg] = useState('');
 
   const [technicians, setTechnicians] = useState<any[]>([]);
+  const [showManualJob, setShowManualJob] = useState(false);
+  const [editingManualId, setEditingManualId] = useState<string | null>(null);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [deletingManualId, setDeletingManualId] = useState<string | null>(null);
+  const [manualForm, setManualForm] = useState<Record<string, string>>({
+    jobNumber: '',
+    customerName: '',
+    customerPhone: '',
+    customerExtension: '',
+    serviceAddress: '',
+    serviceType: MANUAL_SERVICE_TYPES[0],
+    otherServiceType: '',
+    description: '',
+    paymentMethod: 'CASH',
+    cogsAmount: '0.00',
+    totalAmountCollected: '',
+    taxCollected: 'yes',
+    technicianId: '',
+    technicianCommission: '0.00',
+  });
 
   useEffect(() => {
     fetchAuthAndJobs();
@@ -168,6 +193,94 @@ export default function DispatchPage() {
     }
   };
 
+  const updateManualField = (field: string, value: string) => {
+    setManualForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const resetManualJob = () => {
+    setManualForm({
+      jobNumber: '', customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
+      serviceType: MANUAL_SERVICE_TYPES[0], otherServiceType: '', description: '', paymentMethod: 'CASH',
+      cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
+      technicianCommission: '0.00',
+    });
+  };
+
+  const openNewManualJob = () => {
+    setEditingManualId(null);
+    resetManualJob();
+    setShowManualJob(true);
+  };
+
+  const openEditManualJob = (job: Job) => {
+    const knownType = MANUAL_SERVICE_TYPES.includes(job.serviceType as (typeof MANUAL_SERVICE_TYPES)[number]);
+    setEditingManualId(job.id);
+    setManualForm({
+      jobNumber: String(job.jobNumber),
+      customerName: job.customer.name,
+      customerPhone: job.customer.phone,
+      customerExtension: job.customer.extension || '',
+      serviceAddress: job.serviceAddress,
+      serviceType: knownType ? job.serviceType : 'Other',
+      otherServiceType: knownType ? '' : job.serviceType,
+      description: job.problemDescription,
+      paymentMethod: job.invoice?.paymentMethod || 'CASH',
+      cogsAmount: Number(job.invoice?.cogsAmount || 0).toFixed(2),
+      totalAmountCollected: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
+      taxCollected: job.invoice?.taxCollected === false ? 'no' : 'yes',
+      technicianId: job.technician?.id || '',
+      technicianCommission: Number(job.workerCommission || 0).toFixed(2),
+    });
+    setShowManualJob(true);
+  };
+
+  const handleManualJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setManualSubmitting(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(editingManualId ? `/api/jobs/manual/${editingManualId}` : '/api/jobs/manual', {
+        method: editingManualId ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...manualForm, taxCollected: manualForm.taxCollected === 'yes' }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to record manual job');
+      setSuccessMsg(`✅ ${data.message}`);
+      setShowManualJob(false);
+      setEditingManualId(null);
+      resetManualJob();
+      fetchAuthAndJobs();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setManualSubmitting(false);
+    }
+  };
+
+  const handleDeleteManualJob = async (job: Job) => {
+    if (!window.confirm(`Delete manual Job #${job.jobNumber}? This cannot be undone.`)) return;
+    setDeletingManualId(job.id);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(`/api/jobs/manual/${job.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to delete manual job');
+      setSuccessMsg(`✅ ${data.message}`);
+      if (editingManualId === job.id) {
+        setShowManualJob(false);
+        setEditingManualId(null);
+      }
+      fetchAuthAndJobs();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setDeletingManualId(null);
+    }
+  };
+
   const filteredJobs = jobs.filter((j) => {
     if (filter === 'ALL') return true;
     if (filter === 'ACTIVE') return ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status) && !j.isScheduled;
@@ -176,6 +289,8 @@ export default function DispatchPage() {
     if (filter === 'ABANDONED') return j.status === 'ABANDONED_TRAVEL_FEE';
     return j.status === filter;
   });
+  const manualJobs = jobs.filter((j) => j.isManual);
+  const canManageManualJobs = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -191,6 +306,15 @@ export default function DispatchPage() {
             Log incoming customer calls, assign technician commissions, and dispatch active jobs.
           </p>
         </div>
+        {currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'DISPATCHER') && (
+          <button
+            type="button"
+            onClick={openNewManualJob}
+            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-extrabold shadow-md transition"
+          >
+            + Add Manual Job
+          </button>
+        )}
       </div>
 
       {currentUser && currentUser.role === 'TECHNICIAN' && (
@@ -207,6 +331,65 @@ export default function DispatchPage() {
           >
             Go to My Field Jobs &rarr;
           </Link>
+        </div>
+      )}
+
+      {canManageManualJobs && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-6 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-black text-slate-900">Manual Job Entries</h2>
+              <p className="text-xs text-slate-500 mt-0.5">All manually recorded completed jobs. Admins and Dispatchers can edit or delete these entries.</p>
+            </div>
+            <span className="text-xs font-black text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2.5 py-1">{manualJobs.length} entries</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
+                  <th className="py-2.5 px-4">Job #</th>
+                  <th className="py-2.5 px-4">Customer</th>
+                  <th className="py-2.5 px-4">Type</th>
+                  <th className="py-2.5 px-4">Technician</th>
+                  <th className="py-2.5 px-4">Payment</th>
+                  <th className="py-2.5 px-4">Total Collected</th>
+                  <th className="py-2.5 px-4">COGS</th>
+                  <th className="py-2.5 px-4">Tax Status</th>
+                  <th className="py-2.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {manualJobs.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
+                  </tr>
+                )}
+                {manualJobs.map((job) => (
+                  <tr key={job.id} className="hover:bg-slate-50/80">
+                    <td className="py-3 px-4 font-black text-slate-900">#{job.jobNumber}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-bold text-slate-800">{job.customer.name}</div>
+                      <div className="text-[10px] text-slate-500">{job.customer.phone}</div>
+                    </td>
+                    <td className="py-3 px-4 text-slate-600 max-w-[180px]">{job.serviceType}</td>
+                    <td className="py-3 px-4 text-slate-700">{job.technician?.name || 'Unassigned'}</td>
+                    <td className="py-3 px-4 font-bold text-slate-700">{(job.invoice?.paymentMethod || '—').replace('_', ' ')}</td>
+                    <td className="py-3 px-4 font-black text-slate-900">${Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2)}</td>
+                    <td className="py-3 px-4 text-slate-700">${Number(job.invoice?.cogsAmount || 0).toFixed(2)}</td>
+                    <td className="py-3 px-4">
+                      <span className={job.invoice?.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>
+                        {job.invoice?.taxCollected === false ? 'Off Books' : 'On Books'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <button type="button" onClick={() => openEditManualJob(job)} className="px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold mr-1.5">Edit</button>
+                      <button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold disabled:opacity-50">{deletingManualId === job.id ? 'Deleting…' : 'Delete'}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -551,6 +734,16 @@ export default function DispatchPage() {
                         <span className="font-semibold text-sm text-slate-800">
                           {job.customer.name}
                         </span>
+                        {job.isManual && (
+                          <span className="text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-md border bg-violet-100 text-violet-800 border-violet-300">
+                            Manual
+                          </span>
+                        )}
+                        {job.invoice?.taxCollected === false && (
+                          <span className="text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-md border bg-rose-100 text-rose-800 border-rose-300">
+                            Off Books
+                          </span>
+                        )}
                         <span className="text-xs text-slate-500">
                           ({job.customer.phone}
                           {job.customer.extension ? ` #${job.customer.extension}` : ''})
@@ -636,6 +829,95 @@ export default function DispatchPage() {
           )}
         </div>
       </div>
+
+      {showManualJob && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="manual-job-title" className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-start justify-between gap-4 mb-5">
+              <div>
+                <h2 id="manual-job-title" className="text-xl font-black text-slate-900">{editingManualId ? 'Edit Manual Job' : 'Add Manual Job'}</h2>
+                <p className="text-xs text-slate-500 mt-1">{editingManualId ? 'Update this completed manual entry.' : 'Record a completed job without dispatch notifications.'}</p>
+              </div>
+              <button type="button" onClick={() => setShowManualJob(false)} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
+            </div>
+            <form onSubmit={handleManualJob} className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-sm">
+              <div>
+                <label className="field-label">Job number *</label>
+                <input aria-label="Job number" required type="number" min="1" step="1" value={manualForm.jobNumber} onChange={(e) => updateManualField('jobNumber', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Customer name *</label>
+                <input aria-label="Customer name" required value={manualForm.customerName} onChange={(e) => updateManualField('customerName', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Customer phone number *</label>
+                <input aria-label="Customer phone number" required value={manualForm.customerPhone} onChange={(e) => updateManualField('customerPhone', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Extension (optional)</label>
+                <input aria-label="Customer phone extension" value={manualForm.customerExtension} onChange={(e) => updateManualField('customerExtension', e.target.value)} className="field-input" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="field-label">Service address *</label>
+                <input aria-label="Service address" required value={manualForm.serviceAddress} onChange={(e) => updateManualField('serviceAddress', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Type of job *</label>
+                <select aria-label="Type of job" value={manualForm.serviceType} onChange={(e) => updateManualField('serviceType', e.target.value)} className="field-input bg-white">
+                  {MANUAL_SERVICE_TYPES.map((type) => <option key={type}>{type}</option>)}
+                  <option>Other</option>
+                </select>
+              </div>
+              {manualForm.serviceType === 'Other' && (
+                <div>
+                  <label className="field-label">Other job type *</label>
+                  <input aria-label="Other job type" required value={manualForm.otherServiceType} onChange={(e) => updateManualField('otherServiceType', e.target.value)} className="field-input" />
+                </div>
+              )}
+              <div className="sm:col-span-2">
+                <label className="field-label">Description of job *</label>
+                <textarea aria-label="Description of job" required rows={3} value={manualForm.description} onChange={(e) => updateManualField('description', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Mode of payment *</label>
+                <select aria-label="Mode of payment" value={manualForm.paymentMethod} onChange={(e) => updateManualField('paymentMethod', e.target.value)} className="field-input bg-white">
+                  <option value="CASH">Cash</option><option value="INTERAC">Interac</option><option value="DEBIT_CARD">Debit Card</option><option value="CREDIT_CARD">Credit Card</option>
+                </select>
+              </div>
+              <div>
+                <label className="field-label">Total amount collected *</label>
+                <input aria-label="Total amount collected" required type="number" min="0.01" step="0.01" value={manualForm.totalAmountCollected} onChange={(e) => updateManualField('totalAmountCollected', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">COGS amount *</label>
+                <input aria-label="COGS amount" required type="number" min="0" step="0.01" value={manualForm.cogsAmount} onChange={(e) => updateManualField('cogsAmount', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Tax collected *</label>
+                <select aria-label="Tax collected status" value={manualForm.taxCollected} onChange={(e) => updateManualField('taxCollected', e.target.value)} className="field-input bg-white">
+                  <option value="yes">Yes — on books</option><option value="no">No — off books transaction</option>
+                </select>
+                <p className="text-[10px] text-slate-500 mt-1">Bookkeeping status only; this does not calculate Ontario tax.</p>
+              </div>
+              <div>
+                <label className="field-label">Technician name *</label>
+                <select aria-label="Technician name" required value={manualForm.technicianId} onChange={(e) => updateManualField('technicianId', e.target.value)} className="field-input bg-white">
+                  <option value="" disabled>Select technician</option>
+                  {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="field-label">Technician commission *</label>
+                <input aria-label="Technician commission" required type="number" min="0" step="0.01" value={manualForm.technicianCommission} onChange={(e) => updateManualField('technicianCommission', e.target.value)} className="field-input" />
+              </div>
+              <div className="sm:col-span-2 flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button type="button" onClick={() => setShowManualJob(false)} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold">Cancel</button>
+                <button type="submit" disabled={manualSubmitting} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{manualSubmitting ? 'Saving...' : editingManualId ? 'Save Changes' : 'Save Manual Job'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

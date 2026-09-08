@@ -113,9 +113,9 @@ async function runE2E() {
 
   console.log(`✅ Cash invoice completed. Tech owes company: $${settlement.cashOwedToCompany.toFixed(2)}`);
 
-  // 3. Owner Settlement Handover
-  console.log('\nStep 3: Owner Cash Handover Settlement');
-  const owner = await prisma.user.findFirst({ where: { role: 'OWNER' } });
+  // 3. Admin Settlement Handover
+  console.log('\nStep 3: Admin Cash Handover Settlement');
+  const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
 
   // Record cash handover
   const handoverRecord = await prisma.settlement.create({
@@ -124,11 +124,11 @@ async function runE2E() {
       amountSettled: settlement.cashOwedToCompany,
       paymentMethod: 'CASH_HANDOVER',
       notes: 'Received cash envelope for Job #9816',
-      settledBy: owner?.id || 'OWNER',
+      settledBy: admin?.id || 'ADMIN',
     },
   });
 
-  console.log(`✅ Owner recorded settlement of $${handoverRecord.amountSettled.toFixed(2)} from ${tech.name}`);
+  console.log(`✅ Admin recorded settlement of $${handoverRecord.amountSettled.toFixed(2)} from ${tech.name}`);
 
   // 4. Stripe + 4% Surcharge Test
   console.log('\nStep 4: Card Payment with 4% Surcharge & Webhook Verification');

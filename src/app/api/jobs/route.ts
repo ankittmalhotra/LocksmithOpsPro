@@ -2,16 +2,46 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { sendSMS } from '@/lib/twilio';
 import { sendEmail, buildJobDispatchedEmail } from '@/lib/resend';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function GET(request: Request) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    if (
+      currentUser.role !== 'ADMIN' &&
+      currentUser.role !== 'DISPATCHER' &&
+      currentUser.role !== 'TECHNICIAN'
+    ) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Invalid role' },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const technicianId = searchParams.get('technicianId');
 
     const where: any = {};
     if (status) where.status = status;
-    if (technicianId) where.technicianId = technicianId;
+    if (currentUser.role === 'TECHNICIAN') {
+      if (technicianId && technicianId !== currentUser.id) {
+        return NextResponse.json(
+          { success: false, error: 'Technicians may only view their own jobs' },
+          { status: 403 }
+        );
+      }
+      where.technicianId = currentUser.id;
+    } else if (technicianId) {
+      where.technicianId = technicianId;
+    }
 
     const jobs = await prisma.job.findMany({
       where,
@@ -28,22 +58,28 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {
     console.error('Error fetching jobs:', err);
-    return NextResponse.json(
-      {
-        success: false,
-        error: err.message,
-        code: err.code,
-        meta: err.meta,
-        clientVersion: err.clientVersion,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: 'Unable to load jobs' }, { status: 500 });
   }
 }
 
 
 export async function POST(request: Request) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'DISPATCHER') {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Dispatcher access required' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const {
       customerName,
@@ -53,7 +89,6 @@ export async function POST(request: Request) {
       serviceType,
       problemDescription,
       technicianId,
-      dispatcherId,
       vehicleYear,
       vehicleMake,
       vehicleModel,
@@ -99,31 +134,20 @@ export async function POST(request: Request) {
       });
     }
 
-    // 2. Determine default dispatcher / creator (Owner or Dispatcher)
-    let activeDispatcherId = dispatcherId;
-    if (!activeDispatcherId) {
-      const defaultUser = await prisma.user.findFirst({
-        where: {
-          role: { in: ['SUPER_ADMIN', 'OWNER', 'DISPATCHER'] },
-          active: true,
-        },
-      });
-      activeDispatcherId = defaultUser?.id;
-    }
-
-    // 3. Generate sequential Job Number
+    // 2. Generate sequential Job Number
     const highestJob = await prisma.job.findFirst({
       orderBy: { jobNumber: 'desc' },
       select: { jobNumber: true },
     });
     const nextJobNumber = (highestJob?.jobNumber || 9815) + 1;
 
-    // 4. Create the Job in NEW status awaiting technician acknowledgment
+    // 3. Create the Job in NEW status awaiting technician acknowledgment
     const job = await prisma.job.create({
       data: {
         jobNumber: nextJobNumber,
         customerId: customer.id,
-        dispatcherId: activeDispatcherId!,
+        // Dispatch ownership always comes from the authenticated session.
+        dispatcherId: currentUser.id,
         technicianId: technicianId || null,
         status: 'NEW',
         serviceType,
@@ -142,7 +166,7 @@ export async function POST(request: Request) {
       },
       include: {
         customer: true,
-        technician: true,
+        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
       },
     });
 
@@ -209,6 +233,6 @@ Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
     });
   } catch (err: any) {
     console.error('Error creating job:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Unable to create job' }, { status: 500 });
   }
 }

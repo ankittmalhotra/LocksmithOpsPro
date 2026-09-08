@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import type { AppRole } from '@/lib/session';
 
 interface AuthUser {
   id: string;
   name: string;
   phone: string;
-  role: 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
+  role: AppRole;
 }
 
 export default function HomePage() {
@@ -38,11 +39,10 @@ export default function HomePage() {
     setCurrentUser(null);
   };
 
-  const isOwnerOrDispatcher =
+  const isAdminOrDispatcher =
     currentUser &&
-    (currentUser.role === 'OWNER' ||
-      currentUser.role === 'DISPATCHER' ||
-      currentUser.role === 'SUPER_ADMIN');
+    (currentUser.role === 'ADMIN' ||
+      currentUser.role === 'DISPATCHER');
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12 flex-1 flex flex-col justify-center w-full">
@@ -51,14 +51,14 @@ export default function HomePage() {
         <div className="bg-slate-900 text-white rounded-2xl p-4 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
           <div className="flex items-center gap-3">
             <span className="text-2xl">
-              {isOwnerOrDispatcher ? '📞' : '🛠️'}
+              {isAdminOrDispatcher ? '📞' : '🛠️'}
             </span>
             <div>
               <div className="text-xs text-slate-400">Signed In As</div>
               <div className="font-extrabold text-sm sm:text-base text-white">
                 {currentUser.name}{' '}
                 <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-white/10 text-amber-300 ml-1">
-                  {isOwnerOrDispatcher ? 'Owner / Dispatcher' : 'Technician'}
+                  {isAdminOrDispatcher ? 'Admin / Dispatcher' : 'Technician'}
                 </span>
               </div>
             </div>
@@ -66,10 +66,10 @@ export default function HomePage() {
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <Link
-              href={isOwnerOrDispatcher ? '/dispatch' : '/tech'}
+              href={isAdminOrDispatcher ? '/dispatch' : '/tech'}
               className="flex-1 sm:flex-none text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
             >
-              Enter {isOwnerOrDispatcher ? 'Dispatch' : 'Technician'} Workspace &rarr;
+              Enter {isAdminOrDispatcher ? 'Dispatch' : 'Technician'} Workspace &rarr;
             </Link>
             <button
               onClick={handleLogout}
@@ -96,7 +96,7 @@ export default function HomePage() {
 
       {/* 2 Core Workspaces */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        {/* Owner / Dispatcher */}
+        {/* Admin / Dispatcher */}
         <Link
           href="/dispatch"
           className="group block bg-white rounded-3xl border border-slate-200 hover:border-blue-500 p-7 shadow-xs hover:shadow-lg transition relative"
@@ -107,7 +107,7 @@ export default function HomePage() {
             </div>
           </div>
           <h3 className="text-lg font-black text-slate-900 mb-1.5 group-hover:text-blue-600 transition">
-            Owner / Dispatcher
+            Admin / Dispatcher
           </h3>
           <p className="text-xs text-slate-600 mb-5 leading-relaxed">
             Receive incoming calls, assign jobs, configure technician commissions, and manage dispatches & settlements.

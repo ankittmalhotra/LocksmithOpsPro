@@ -12,20 +12,21 @@ export function middleware(request: NextRequest) {
     if (!user) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
-    const target = user.role === 'SUPER_ADMIN' || user.role === 'OWNER'
-      ? '/owner'
-      : user.role === 'DISPATCHER'
+    const target = user.role === 'ADMIN' || user.role === 'DISPATCHER'
       ? '/dispatch'
       : '/tech';
     return NextResponse.redirect(new URL(target, request.url));
   }
 
   // Paths that require role protection
-  const isOwnerRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner');
+  const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner');
+  const isJobApi = pathname.startsWith('/api/jobs');
+  const isTeamApi = pathname.startsWith('/api/auth/users');
+  const isAuthApi = pathname.startsWith('/api/auth');
   const isDispatchRoute = pathname.startsWith('/dispatch');
   const isTechRoute = pathname.startsWith('/tech');
 
-  if (!isOwnerRoute && !isDispatchRoute && !isTechRoute) {
+  if (!isAdminRoute && !isDispatchRoute && !isTechRoute && !isJobApi && !isTeamApi && !isAuthApi) {
     return NextResponse.next();
   }
 
@@ -37,8 +38,11 @@ export function middleware(request: NextRequest) {
     if (!user) {
       return NextResponse.json({ success: false, error: 'Unauthorized: Authentication required' }, { status: 401 });
     }
-    if (isOwnerRoute && user.role !== 'SUPER_ADMIN' && user.role !== 'OWNER') {
-      return NextResponse.json({ success: false, error: 'Forbidden: Owner access required' }, { status: 403 });
+    if (isAdminRoute && user.role !== 'ADMIN') {
+      return NextResponse.json({ success: false, error: 'Forbidden: Admin access required' }, { status: 403 });
+    }
+    if (isTeamApi && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
+      return NextResponse.json({ success: false, error: 'Forbidden: Team access required' }, { status: 403 });
     }
     return NextResponse.next();
   }
@@ -51,13 +55,17 @@ export function middleware(request: NextRequest) {
   }
 
   // Role Checks for Pages
-  if (isOwnerRoute && user.role !== 'SUPER_ADMIN' && user.role !== 'OWNER') {
+  if (isAdminRoute && user.role !== 'ADMIN') {
     const redirectTarget = user.role === 'DISPATCHER' ? '/dispatch' : '/tech';
     return NextResponse.redirect(new URL(redirectTarget, request.url));
   }
 
-  if (isDispatchRoute && user.role !== 'SUPER_ADMIN' && user.role !== 'OWNER' && user.role !== 'DISPATCHER') {
+  if (isDispatchRoute && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
     return NextResponse.redirect(new URL('/tech', request.url));
+  }
+
+  if (isTechRoute && user.role !== 'ADMIN' && user.role !== 'TECHNICIAN') {
+    return NextResponse.redirect(new URL('/dispatch', request.url));
   }
 
   return NextResponse.next();
@@ -69,5 +77,6 @@ export const config = {
     '/dispatch/:path*',
     '/tech/:path*',
     '/api/owner/:path*',
+    '/api/jobs/:path*',
   ],
 };

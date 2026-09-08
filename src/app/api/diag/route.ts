@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function GET() {
+  const user = await getCurrentUser();
+  if (!user || user.role !== 'ADMIN') {
+    return NextResponse.json({ success: false, error: 'Admin access required' }, { status: 403 });
+  }
   const envCheck = {
     hasDatabaseUrl: !!process.env.DATABASE_URL,
-    databaseUrlPrefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.slice(0, 20) : 'missing',
     hasDirectUrl: !!process.env.DIRECT_URL,
     nodeEnv: process.env.NODE_ENV,
   };
@@ -24,9 +28,7 @@ export async function GET() {
       envCheck,
       databaseConnected: false,
       errorName: err.name,
-      errorMessage: err.message,
       errorCode: err.code,
     });
   }
 }
-

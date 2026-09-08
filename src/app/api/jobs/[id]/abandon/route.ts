@@ -2,12 +2,28 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { calculateTravelFee, calculateJobSettlementPosition, roundToTwo } from '@/lib/calculations';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Admin or assigned technician access required' },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await request.json();
     const {
@@ -20,6 +36,13 @@ export async function POST(
 
     if (!job) {
       return NextResponse.json({ success: false, error: 'Job not found' }, { status: 404 });
+    }
+
+    if (currentUser.role === 'TECHNICIAN' && job.technicianId !== currentUser.id) {
+      return NextResponse.json(
+        { success: false, error: 'Technicians may only abandon their own jobs' },
+        { status: 403 }
+      );
     }
 
     if (paymentMethod !== 'CASH' && paymentMethod !== 'INTERAC') {
@@ -99,7 +122,7 @@ export async function POST(
       },
       include: {
         customer: true,
-        technician: true,
+        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
         invoice: true,
       },
     });
@@ -114,6 +137,6 @@ export async function POST(
     });
   } catch (err: any) {
     console.error('Abandon fee error:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Unable to abandon job' }, { status: 500 });
   }
 }

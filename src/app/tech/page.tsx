@@ -33,10 +33,7 @@ interface Job {
 export default function TechJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTechId, setSelectedTechId] = useState('');
-  const [techList, setTechList] = useState<any[]>([]);
-
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; role: string } | null>(null);
 
   useEffect(() => {
     fetchJobs();
@@ -49,28 +46,20 @@ export default function TechJobsPage() {
       const authData = await authRes.json();
       if (authData.success && authData.user) {
         setCurrentUser(authData.user);
-        if (authData.user.role === 'TECHNICIAN') {
-          setSelectedTechId(authData.user.id);
-          setTechList([{ id: authData.user.id, name: authData.user.name }]);
-        }
+      } else {
+        setJobs([]);
+        return;
+      }
+
+      if (authData.user.role !== 'TECHNICIAN') {
+        setJobs([]);
+        return;
       }
 
       const res = await fetch('/api/jobs');
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs);
-      }
-
-      // Managers may inspect a selected technician; technicians only see themselves.
-      if (!authData.user || authData.user.role !== 'TECHNICIAN') {
-        const usersRes = await fetch('/api/auth/users?role=TECHNICIAN');
-        const usersData = await usersRes.json();
-        if (usersData.success) {
-          setTechList(usersData.users);
-          if (usersData.users.length > 0) {
-            setSelectedTechId(usersData.users[0].id);
-          }
-        }
       }
     } catch (err) {
       console.error('Error fetching jobs:', err);
@@ -79,8 +68,10 @@ export default function TechJobsPage() {
     }
   };
 
-  // Filter jobs for selected tech
-  const techJobs = jobs.filter((j) => j.technician?.id === selectedTechId);
+  // The API already scopes this response to the authenticated technician.
+  const techJobs = currentUser
+    ? jobs.filter((j) => j.technician?.id === currentUser.id)
+    : [];
   const activeJobs = techJobs.filter((j) =>
     ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status)
   );
@@ -98,22 +89,9 @@ export default function TechJobsPage() {
           </div>
           <div>
             <div className="text-xs text-slate-400 font-medium">Technician Portal</div>
-            <select
-              value={selectedTechId}
-              onChange={(e) => setSelectedTechId(e.target.value)}
-              className="bg-transparent text-white font-bold text-base focus:outline-none cursor-pointer border-b border-dashed border-slate-600"
-            >
-              {techList.map((t) => (
-                <option key={t.id} value={t.id} className="text-slate-900">
-                  {t.name}
-                </option>
-              ))}
-              {techList.length === 0 && (
-                <option value="" className="text-slate-900">
-                  No technicians available
-                </option>
-              )}
-            </select>
+            <div className="text-white font-bold text-base">
+              {currentUser?.name || 'Technician'}
+            </div>
           </div>
         </div>
 

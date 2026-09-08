@@ -2,9 +2,15 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { sendEmail, buildContractorApprovedEmail } from '@/lib/resend';
 import { getCurrentUser } from '@/lib/auth';
+import { APP_ROLES, type AppRole } from '@/lib/session';
+import { hashPassword } from '@/lib/password';
 
 function canManageTeam(role?: string) {
-  return role === 'SUPER_ADMIN' || role === 'OWNER' || role === 'DISPATCHER';
+  return role === 'ADMIN' || role === 'DISPATCHER';
+}
+
+function isAppRole(role: unknown): role is AppRole {
+  return typeof role === 'string' && (APP_ROLES as readonly string[]).includes(role);
 }
 
 function parseCommissionRate(value: unknown): number | undefined {
@@ -12,6 +18,11 @@ function parseCommissionRate(value: unknown): number | undefined {
   const rate = Number(value);
   if (!Number.isFinite(rate) || rate < 0 || rate > 100) return undefined;
   return rate;
+}
+
+function publicUser(user: Record<string, unknown>) {
+  const { passwordHash: _passwordHash, ...safeUser } = user;
+  return safeUser;
 }
 
 export async function GET(request: Request) {
@@ -26,11 +37,26 @@ export async function GET(request: Request) {
     const activeOnly = searchParams.get('activeOnly');
 
     const where: any = {};
-    if (activeOnly !== 'false') {
+    if (currentUser.role === 'DISPATCHER') {
+      // Dispatchers only need active technicians for job assignment.
+      if (role && role !== 'TECHNICIAN') {
+        return NextResponse.json(
+          { success: false, error: 'Dispatchers may only view technicians' },
+          { status: 403 }
+        );
+      }
+      where.role = 'TECHNICIAN';
       where.active = true;
-    }
-    if (role) {
-      where.role = role;
+    } else {
+      if (activeOnly !== 'false') {
+        where.active = true;
+      }
+      if (role) {
+        if (!isAppRole(role)) {
+          return NextResponse.json({ success: false, error: 'Invalid user role filter' }, { status: 400 });
+        }
+        where.role = role;
+      }
     }
 
     const rawUsers = await prisma.user.findMany({
@@ -50,7 +76,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, users: rawUsers });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Unable to load team members' }, { status: 500 });
   }
 }
 
@@ -58,13 +84,21 @@ export async function POST(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     const body = await request.json();
-    const { name, phone, role, email, isSelfRegistration } = body;
+    const { name, phone, role, email, isSelfRegistration, password } = body;
+    const wantsSelfRegistration = isSelfRegistration === true;
 
-    if (!isSelfRegistration && (!currentUser || !canManageTeam(currentUser.role))) {
+    if (wantsSelfRegistration && currentUser) {
+      return NextResponse.json(
+        { success: false, error: 'Self-registration is only available when signed out' },
+        { status: 403 }
+      );
+    }
+
+    if (!wantsSelfRegistration && (!currentUser || !canManageTeam(currentUser.role))) {
       return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
     }
 
-    if (!name || !phone) {
+    if (typeof name !== 'string' || !name.trim() || typeof phone !== 'string' || !phone.trim()) {
       return NextResponse.json(
         { success: false, error: 'Name and phone are required' },
         { status: 400 }
@@ -72,6 +106,12 @@ export async function POST(request: Request) {
     }
 
     const cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (cleanPhone.length < 7) {
+      return NextResponse.json({ success: false, error: 'A valid phone number is required' }, { status: 400 });
+    }
+    if (typeof password !== 'string' || password.length < 8) {
+      return NextResponse.json({ success: false, error: 'Password must be at least 8 characters' }, { status: 400 });
+    }
     const requestedRate = parseCommissionRate(body.commissionRate);
 
     if (role === 'TECHNICIAN' && body.commissionRate !== undefined && requestedRate === undefined) {
@@ -79,28 +119,42 @@ export async function POST(request: Request) {
     }
 
     // Public self-registration is strictly for TECHNICIAN / Contractor only
-    // and requires Admin/Owner approval before becoming active.
-    if (isSelfRegistration) {
-      const newUser = await prisma.user.upsert({
+    // and requires Admin approval before becoming active. It must never
+    // update an existing account by phone.
+    if (wantsSelfRegistration) {
+      if (role !== undefined && role !== null && role !== '' && role !== 'TECHNICIAN') {
+        return NextResponse.json(
+          { success: false, error: 'Self-registration is only available for technicians' },
+          { status: 400 }
+        );
+      }
+
+      const existingUser = await prisma.user.findUnique({
         where: { phone: cleanPhone },
-        update: {
-          name,
-          role: 'TECHNICIAN',
-          email: email || null,
-        },
-        create: {
-          name,
+        select: { id: true },
+      });
+      if (existingUser) {
+        return NextResponse.json(
+          { success: false, error: 'An account already exists for this phone number' },
+          { status: 409 }
+        );
+      }
+
+      const newUser = await prisma.user.create({
+        data: {
+          name: name.trim(),
           phone: cleanPhone,
           role: 'TECHNICIAN',
           email: email || null,
           active: false, // Pending admin approval
           commissionRate: 0,
+          passwordHash: hashPassword(password),
         },
       });
 
       return NextResponse.json({
         success: true,
-        user: newUser,
+        user: publicUser(newUser),
         pendingApproval: !newUser.active,
         message: newUser.active
           ? 'Account already active. You can sign in now.'
@@ -108,7 +162,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // Direct creation by Admin / Owner
+    // Direct creation by Admin
     if (!role) {
       return NextResponse.json(
         { success: false, error: 'Role is required for team member creation' },
@@ -116,35 +170,53 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!['OWNER', 'DISPATCHER', 'TECHNICIAN'].includes(role)) {
+    if (!isAppRole(role)) {
       return NextResponse.json({ success: false, error: 'Invalid team member role' }, { status: 400 });
     }
 
-    const newUser = await prisma.user.upsert({
+    if (role === 'ADMIN' && currentUser?.role !== 'ADMIN') {
+      return NextResponse.json(
+        { success: false, error: 'Only Admin may create Admin users' },
+        { status: 403 }
+      );
+    }
+
+    if (currentUser?.role === 'DISPATCHER' && role !== 'TECHNICIAN') {
+      return NextResponse.json(
+        { success: false, error: 'Dispatchers may only create Technician users' },
+        { status: 403 }
+      );
+    }
+
+    const existingUser = await prisma.user.findUnique({
       where: { phone: cleanPhone },
-      update: {
-        name,
-        role,
-        email: email || null,
-        active: true,
-        ...(role === 'TECHNICIAN' && requestedRate !== undefined ? { commissionRate: requestedRate } : {}),
-      },
-      create: {
-        name,
+      select: { id: true },
+    });
+    if (existingUser) {
+      return NextResponse.json(
+        { success: false, error: 'An account already exists for this phone number' },
+        { status: 409 }
+      );
+    }
+
+    const newUser = await prisma.user.create({
+      data: {
+        name: name.trim(),
         phone: cleanPhone,
         role,
         email: email || null,
         active: true,
         commissionRate: role === 'TECHNICIAN' ? (requestedRate ?? 0) : 0,
+        passwordHash: hashPassword(password),
       },
     });
 
     return NextResponse.json({
       success: true,
-      user: newUser,
+      user: publicUser(newUser),
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Unable to create team member' }, { status: 500 });
   }
 }
 
@@ -160,10 +232,22 @@ export async function PATCH(request: Request) {
     const { userId, active } = body;
     const requestedRate = parseCommissionRate(body.commissionRate);
 
-    if (!userId) {
+    if (typeof userId !== 'string' || !userId) {
       return NextResponse.json(
         { success: false, error: 'userId is required' },
         { status: 400 }
+      );
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!targetUser) {
+      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
+    }
+
+    if (currentUser.role === 'DISPATCHER' && targetUser.role !== 'TECHNICIAN') {
+      return NextResponse.json(
+        { success: false, error: 'Dispatchers may only manage Technician users' },
+        { status: 403 }
       );
     }
 
@@ -172,6 +256,12 @@ export async function PATCH(request: Request) {
       updateData.active = active;
     }
     if (body.commissionRate !== undefined) {
+      if (targetUser.role !== 'TECHNICIAN') {
+        return NextResponse.json(
+          { success: false, error: 'Commission rates only apply to Technician users' },
+          { status: 400 }
+        );
+      }
       if (requestedRate === undefined) {
         return NextResponse.json({ success: false, error: 'Commission rate must be between 0 and 100 percent.' }, { status: 400 });
       }
@@ -183,11 +273,7 @@ export async function PATCH(request: Request) {
           where: { id: userId },
           data: updateData,
         })
-      : await prisma.user.findUnique({ where: { id: userId } });
-
-    if (!updatedUser) {
-      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
-    }
+      : targetUser;
 
     // If contractor is activated/approved and has an email, send email via Resend
     let emailResult = null;
@@ -207,7 +293,7 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({
       success: true,
-      user: updatedUser,
+      user: publicUser(updatedUser),
       emailResult,
       message: body.commissionRate !== undefined
         ? `Commission rate for ${updatedUser.name} updated to ${updatedUser.commissionRate.toFixed(2)}%`
@@ -216,6 +302,6 @@ export async function PATCH(request: Request) {
         : `Contractor ${updatedUser.name} deactivated.`,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Unable to update team member' }, { status: 500 });
   }
 }

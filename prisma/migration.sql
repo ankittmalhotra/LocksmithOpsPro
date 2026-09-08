@@ -2,13 +2,13 @@
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('SUPER_ADMIN', 'OWNER', 'DISPATCHER', 'TECHNICIAN');
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'DISPATCHER', 'TECHNICIAN');
 
 -- CreateEnum
 CREATE TYPE "JobStatus" AS ENUM ('NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS', 'ABANDONED_TRAVEL_FEE', 'INVOICED', 'COMPLETED', 'CANCELLED');
 
 -- CreateEnum
-CREATE TYPE "PaymentMethod" AS ENUM ('CASH', 'INTERAC', 'STRIPE_CARD');
+CREATE TYPE "PaymentMethod" AS ENUM ('CASH', 'INTERAC', 'STRIPE_CARD', 'DEBIT_CARD', 'CREDIT_CARD');
 
 -- CreateEnum
 CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'PAID', 'REFUNDED');
@@ -22,6 +22,7 @@ CREATE TABLE "User" (
     "name" TEXT NOT NULL,
     "phone" TEXT NOT NULL,
     "email" TEXT,
+    "passwordHash" TEXT,
     "role" "Role" NOT NULL DEFAULT 'TECHNICIAN',
     "active" BOOLEAN NOT NULL DEFAULT true,
     "commissionRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -53,6 +54,7 @@ CREATE TABLE "Job" (
     "dispatcherId" TEXT NOT NULL,
     "technicianId" TEXT,
     "status" "JobStatus" NOT NULL DEFAULT 'NEW',
+    "isManual" BOOLEAN NOT NULL DEFAULT false,
     "serviceType" TEXT NOT NULL,
     "problemDescription" TEXT NOT NULL,
     "serviceAddress" TEXT NOT NULL,
@@ -94,9 +96,12 @@ CREATE TABLE "Invoice" (
     "laborTotal" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "taxRate" DOUBLE PRECISION NOT NULL DEFAULT 0.13,
     "taxAmount" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-    "cardSurchargeRate" DOUBLE PRECISION NOT NULL DEFAULT 0.04,
+    "cardSurchargeRate" DOUBLE PRECISION NOT NULL DEFAULT 0.024,
     "cardSurchargeAmount" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "grandTotal" DOUBLE PRECISION NOT NULL,
+    "totalAmountCollected" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    "taxCollected" BOOLEAN NOT NULL DEFAULT true,
+    "cogsAmount" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "paymentStatus" "PaymentStatus" NOT NULL DEFAULT 'PENDING',
     "paymentMethod" "PaymentMethod",
     "cashOwedToCompany" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -153,9 +158,10 @@ ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_jobId_fkey" FOREIGN KEY ("jobId") 
 -- AddForeignKey
 ALTER TABLE "Settlement" ADD CONSTRAINT "Settlement_technicianId_fkey" FOREIGN KEY ("technicianId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- Initial admin only. Login is admin / admin123.
+-- Create the initial Admin account with prisma/seed.js so its password is
+-- hashed from ADMIN_PASSWORD. Do not insert a production password in SQL.
 INSERT INTO "User" ("id", "name", "phone", "email", "role", "active", "commissionRate")
-VALUES ('super-admin-root', 'Administrator', '0000000000', 'admin@locksmithops.com', 'SUPER_ADMIN', true, 0)
+VALUES ('super-admin-root', 'Administrator', '0000000000', 'admin@locksmithops.com', 'ADMIN', true, 0)
 ON CONFLICT ("phone") DO NOTHING;
 
 -- Phase 2 & 3 Additive Columns
@@ -168,4 +174,3 @@ ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "keyType" TEXT;
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "fccId" TEXT;
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "isScheduled" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "scheduledFor" TIMESTAMP(3);
-

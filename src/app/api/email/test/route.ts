@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
 import { sendEmail } from '@/lib/resend';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user || user.role !== 'ADMIN') {
+      return NextResponse.json({ success: false, error: 'Admin access required' }, { status: 403 });
+    }
     const body = await request.json();
     const { to, subject = 'Test Notification from LockOps', message = 'This is a test notification email powered by Resend.' } = body;
 
@@ -34,7 +39,6 @@ export async function POST(request: Request) {
       hasApiKey: !!process.env.RESEND_API_KEY,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Test email failed' }, { status: 500 });
   }
 }
-

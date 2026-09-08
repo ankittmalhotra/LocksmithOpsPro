@@ -9,12 +9,28 @@ import {
 } from '@/lib/calculations';
 import { sendSMS } from '@/lib/twilio';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Admin or assigned technician access required' },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await request.json();
 
@@ -35,6 +51,13 @@ export async function POST(
 
     if (!job) {
       return NextResponse.json({ success: false, error: 'Job not found' }, { status: 404 });
+    }
+
+    if (currentUser.role === 'TECHNICIAN' && job.technicianId !== currentUser.id) {
+      return NextResponse.json(
+        { success: false, error: 'Technicians may only invoice their own jobs' },
+        { status: 403 }
+      );
     }
 
     // Customer card/Stripe payments are intentionally disabled for now.
@@ -175,7 +198,7 @@ export async function POST(
       },
       include: {
         customer: true,
-        technician: true,
+        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
         invoice: true,
         items: true,
       },
@@ -184,7 +207,7 @@ export async function POST(
     // Technician completion notification to the dispatcher only.
     // No customer notification is sent from the technician device.
     let dispatcherNotification = null;
-    if (job.dispatcher?.phone) {
+    if (job.dispatcher?.phone && !job.isManual) {
       const methodLabel = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
       dispatcherNotification = await sendSMS({
         to: job.dispatcher.phone,
@@ -203,6 +226,6 @@ export async function POST(
     });
   } catch (err: any) {
     console.error('Invoice creation error:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Unable to complete invoice' }, { status: 500 });
   }
 }

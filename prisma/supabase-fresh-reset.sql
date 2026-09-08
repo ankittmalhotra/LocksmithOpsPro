@@ -11,7 +11,7 @@ grant all on schema public to public;
 
 create extension if not exists pgcrypto;
 
-create type "Role" as enum ('SUPER_ADMIN', 'OWNER', 'DISPATCHER', 'TECHNICIAN');
+create type "Role" as enum ('ADMIN', 'DISPATCHER', 'TECHNICIAN');
 create type "JobStatus" as enum (
   'NEW',
   'DISPATCHED',
@@ -23,7 +23,7 @@ create type "JobStatus" as enum (
   'COMPLETED',
   'CANCELLED'
 );
-create type "PaymentMethod" as enum ('CASH', 'INTERAC', 'STRIPE_CARD');
+create type "PaymentMethod" as enum ('CASH', 'INTERAC', 'STRIPE_CARD', 'DEBIT_CARD', 'CREDIT_CARD');
 create type "PaymentStatus" as enum ('PENDING', 'PAID', 'REFUNDED');
 create type "SettlementStatus" as enum ('UNSETTLED', 'SETTLED');
 
@@ -32,6 +32,7 @@ create table "User" (
   "name" text not null,
   "phone" text not null unique,
   "email" text unique,
+  "passwordHash" text,
   "role" "Role" not null default 'TECHNICIAN',
   "active" boolean not null default true,
   "commissionRate" double precision not null default 0.0,
@@ -57,6 +58,7 @@ create table "Job" (
   "dispatcherId" text not null,
   "technicianId" text,
   "status" "JobStatus" not null default 'NEW',
+  "isManual" boolean not null default false,
   "serviceType" text not null,
   "problemDescription" text not null,
   "serviceAddress" text not null,
@@ -112,6 +114,9 @@ create table "Invoice" (
   "cardSurchargeRate" double precision not null default 0.024,
   "cardSurchargeAmount" double precision not null default 0.0,
   "grandTotal" double precision not null,
+  "totalAmountCollected" double precision not null default 0.0,
+  "taxCollected" boolean not null default true,
+  "cogsAmount" double precision not null default 0.0,
   "paymentStatus" "PaymentStatus" not null default 'PENDING',
   "paymentMethod" "PaymentMethod",
   "cashOwedToCompany" double precision not null default 0.0,
@@ -144,15 +149,15 @@ create index "Job_status_idx" on "Job"("status");
 create index "JobItem_jobId_idx" on "JobItem"("jobId");
 create index "Settlement_technicianId_idx" on "Settlement"("technicianId");
 
--- Initial login account.
--- The application login route recognizes: admin / admin123
+-- Initial login account. Run prisma/seed.js with ADMIN_PASSWORD after this
+-- reset so the Admin account receives a password hash.
 insert into "User" ("id", "name", "phone", "email", "role", "active")
 values (
   'super-admin-root',
   'Administrator',
   '0000000000',
   'admin@locksmithops.com',
-  'SUPER_ADMIN',
+  'ADMIN',
   true
 );
 

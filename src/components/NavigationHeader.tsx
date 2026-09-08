@@ -3,12 +3,13 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
+import type { AppRole } from '@/lib/session';
 
 interface UserSession {
   id: string;
   name: string;
   phone: string;
-  role: 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN';
+  role: AppRole;
 }
 
 export default function NavigationHeader() {
@@ -58,21 +59,24 @@ export default function NavigationHeader() {
           </span>
         </div>
 
-        {/* Navigation Links based on 2 Profiles */}
+        {/* Navigation Links based on the current app role */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm font-semibold">
-          {(!user || user.role === 'SUPER_ADMIN' || user.role === 'OWNER' || user.role === 'DISPATCHER') && (
+          {(!user || user.role === 'ADMIN' || user.role === 'DISPATCHER') && (
+            <Link
+              href="/dispatch"
+              className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
+                pathname === '/dispatch'
+                  ? 'bg-blue-600 text-white font-bold'
+                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
+              }`}
+            >
+              <span>📞</span>
+              <span>Dispatch Desk</span>
+            </Link>
+          )}
+
+          {(!user || user.role === 'ADMIN') && (
             <>
-              <Link
-                href="/dispatch"
-                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
-                  pathname === '/dispatch'
-                    ? 'bg-blue-600 text-white font-bold'
-                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
-                }`}
-              >
-                <span>📞</span>
-                <span>Dispatch Desk</span>
-              </Link>
               <Link
                 href="/owner"
                 className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -82,12 +86,12 @@ export default function NavigationHeader() {
                 }`}
               >
                 <span>👑</span>
-                <span>Owner Hub</span>
+                <span>Admin Hub</span>
               </Link>
             </>
           )}
 
-          {(!user || user.role === 'TECHNICIAN') && (
+          {(!user || user.role === 'ADMIN' || user.role === 'TECHNICIAN') && (
             <Link
               href="/tech"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -107,7 +111,7 @@ export default function NavigationHeader() {
               <span className="text-xs text-slate-300 font-bold hidden md:inline">
                 {user.name.split(' ')[0]} (
                 <span className="text-amber-400 text-[11px]">
-                  {user.role === 'TECHNICIAN' ? 'Technician' : 'Owner/Dispatch'}
+                  {user.role === 'ADMIN' ? 'Admin' : user.role === 'DISPATCHER' ? 'Dispatcher' : 'Technician'}
                 </span>)
               </span>
 

@@ -8,7 +8,7 @@ This project is tailored specifically for **Vercel** (Frontend & Serverless API)
 
 | Provider | Free Tier Allowance | Fits Locksmith Operations? |
 | :--- | :--- | :--- |
-| **Vercel (Hobby)** | • Unlimited deployments<br>• Automated CI/CD from GitHub<br>• Free custom domain & SSL HTTPS<br>• 100 GB bandwidth / mo<br>• Fast Edge CDN | **Yes, 100% Free**. Operators, technicians, and owners can access the system with zero hosting fees. |
+| **Vercel (Hobby)** | • Unlimited deployments<br>• Automated CI/CD from GitHub<br>• Free custom domain & SSL HTTPS<br>• 100 GB bandwidth / mo<br>• Fast Edge CDN | **Yes, 100% Free**. Admins, dispatchers, and technicians can access the system with zero hosting fees. |
 | **Supabase (Free Tier)** | • 500 MB PostgreSQL Database<br>• 50,000 Monthly Active Users<br>• Supavisor Connection Pooling (Port 6543)<br>• Daily backups | **Yes, 100% Free**. 500 MB easily stores over **100,000+ locksmith jobs**, invoices, and customer records. |
 
 ---
@@ -48,13 +48,31 @@ DIRECT_URL="postgresql://postgres.[PROJECT_REF]:[YOUR_PASSWORD]@aws-0-[REGION].p
 ### Step 3: Push Schema and Seed Database
 Run the following commands in your terminal to initialize tables and load initial data on Supabase:
 
+For an existing database, run `prisma/role-consolidation.sql` in the Supabase SQL Editor before deploying this version. It adds `ADMIN`, records each existing `SUPER_ADMIN`/`OWNER` mapping, and updates those users without changing their IDs. Keep `prisma/role-consolidation-rollback.sql` available if a rollback is required. Do not run `prisma/supabase-fresh-reset.sql` against an existing database.
+
 ```bash
-# Push the schema to your Supabase PostgreSQL database
+# Fresh database only: push the three-role schema to PostgreSQL
 npx prisma db push
 
-# Populate initial users (Owner, Dispatcher, Techs) & Toronto sample jobs
+# Populate initial users (Admin, Dispatcher, Techs) & Toronto sample jobs
 node prisma/seed.js
 ```
+
+For an existing database, skip `prisma db push` after the manual role migration unless its proposed enum/table changes have been reviewed; the backup table is intentionally outside the Prisma schema so it remains available for rollback.
+
+After role consolidation, run `prisma/manual-job-migration.sql` to add manual-job fields and Debit/Credit payment-method values. These migrations should be verified in staging before production. Set a strong `SESSION_SECRET` in production; the application fails closed when it is missing.
+
+Required production environment variables:
+
+```env
+DATABASE_URL="..."
+DIRECT_URL="..."
+SESSION_SECRET="a-long-random-secret"
+ADMIN_PASSWORD="a-strong-admin-password"
+NEXT_PUBLIC_APP_URL="https://your-domain.example"
+```
+
+`ADMIN_PASSWORD` is used only for the built-in Admin login. Staff accounts created from the Admin console receive their own password hash. Do not use the development fallback password in production.
 
 You can now open the **Supabase Table Editor** in your browser and verify that all tables (`Job`, `User`, `Customer`, `Invoice`, `Settlement`) are populated!
 

@@ -5,7 +5,7 @@ import {
   calculateReverseInvoice,
   calculateJobSettlementPosition,
 } from '../src/lib/calculations.ts';
-import { serializeSession, deserializeSession, type AuthSession } from '../src/lib/session.ts';
+import { APP_ROLES, serializeSession, deserializeSession, type AuthSession } from '../src/lib/session.ts';
 
 const prisma = new PrismaClient();
 
@@ -56,15 +56,16 @@ async function runProductionE2E() {
 
   // TEST 3: RBAC Session Tokens and Role Validation
   console.log('\n[Test 3] Role-Based Access Control (RBAC) & Sessions');
-  const ownerUser: AuthSession = { id: 'u-1', name: 'Alex Vance', phone: '4165550100', role: 'OWNER' };
+  console.assert(APP_ROLES.join(',') === 'ADMIN,DISPATCHER,TECHNICIAN', 'App role set must contain exactly three roles');
+  const adminUser: AuthSession = { id: 'u-1', name: 'Alex Vance', phone: '4165550100', role: 'ADMIN' };
   const dispatchUser: AuthSession = { id: 'u-2', name: 'Sarah Connor', phone: '4165550200', role: 'DISPATCHER' };
   const techUser: AuthSession = { id: 'u-3', name: 'Dave Miller', phone: '6475550301', role: 'TECHNICIAN' };
 
-  const ownerToken = serializeSession(ownerUser);
+  const adminToken = serializeSession(adminUser);
   const dispatchToken = serializeSession(dispatchUser);
   const techToken = serializeSession(techUser);
 
-  console.assert(deserializeSession(ownerToken)?.role === 'OWNER', 'Owner role deserialization failed');
+  console.assert(deserializeSession(adminToken)?.role === 'ADMIN', 'Admin role deserialization failed');
   console.assert(deserializeSession(dispatchToken)?.role === 'DISPATCHER', 'Dispatcher role deserialization failed');
   console.assert(deserializeSession(techUser && techToken)?.role === 'TECHNICIAN', 'Tech role deserialization failed');
   console.log('✅ RBAC session tokens serialize and validate cleanly');
@@ -94,9 +95,9 @@ async function runProductionE2E() {
   console.assert(settlementPos.cashOwedToCompany === 1361.77, 'Dave must owe $1,361.77');
   console.log(`✅ Dave Miller collected $1,661.77 cash with $300 commission -> Owes Company: $${settlementPos.cashOwedToCompany.toFixed(2)}`);
 
-  // TEST 5: Owner Settle Cash Handover
-  console.log('\n[Test 5] Owner Cash Handover Settlement Verification');
-  const ownerRecord = await prisma.user.findFirst({ where: { role: 'OWNER' } });
+  // TEST 5: Admin Settle Cash Handover
+  console.log('\n[Test 5] Admin Cash Handover Settlement Verification');
+  const adminRecord = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
   const dave = await prisma.user.findFirst({ where: { phone: '6475550301' } });
 
   const settlementRecord = await prisma.settlement.create({
@@ -105,7 +106,7 @@ async function runProductionE2E() {
       amountSettled: settlementPos.cashOwedToCompany,
       paymentMethod: 'CASH_HANDOVER',
       notes: 'End-to-End verified handover for Job #9815',
-      settledBy: ownerRecord?.id || 'OWNER',
+      settledBy: adminRecord?.id || 'ADMIN',
     },
   });
 

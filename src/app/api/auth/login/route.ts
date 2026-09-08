@@ -1,51 +1,42 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { setSessionCookie } from '@/lib/auth';
+import type { AppRole } from '@/lib/session';
+import { verifyPassword } from '@/lib/password';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, phone, role, username, password, identifier } = body;
+    const { phone, username, password, identifier } = body;
 
     // Handle credential / identifier normalization
     const loginIdentifier = (identifier || username || phone || '').trim();
-    const loginPassword = (password || '').trim();
+    const loginPassword = typeof password === 'string' ? password : '';
 
-    // 1. Handle Super Admin Login (admin / admin123)
+    // Admin authentication uses the deployment secret rather than a client-
+    // supplied role or user id. The development fallback is never accepted
+    // when NODE_ENV is production.
     if (loginIdentifier.toLowerCase() === 'admin') {
-      if (loginPassword === 'admin123') {
-        let adminUser = null;
-        try {
-          adminUser = await prisma.user.findFirst({
-            where: { role: 'SUPER_ADMIN' },
-          });
-          if (!adminUser) {
-            adminUser = await prisma.user.upsert({
-              where: { phone: '0000000000' },
-              update: { role: 'SUPER_ADMIN', name: 'Super Admin' },
-              create: {
-                name: 'Super Admin',
-                phone: '0000000000',
-                email: 'admin@locksmithops.com',
-                role: 'SUPER_ADMIN',
-              },
-            });
-          }
-        } catch {
-          // fallback in-memory session if DB is not yet migrated
-          adminUser = {
-            id: 'super-admin-root',
-            name: 'Super Admin',
-            phone: '0000000000',
-            role: 'SUPER_ADMIN' as const,
-          };
+      const configuredAdminPassword = process.env.ADMIN_PASSWORD;
+      if (!configuredAdminPassword && process.env.NODE_ENV === 'production') {
+        return NextResponse.json({ success: false, error: 'Admin authentication is not configured.' }, { status: 503 });
+      }
+      if (loginPassword === (configuredAdminPassword || 'admin123')) {
+        const adminUser = await prisma.user.findFirst({
+          where: { role: 'ADMIN', active: true },
+        });
+        if (!adminUser) {
+          return NextResponse.json(
+            { success: false, error: 'No active Admin account is configured.' },
+            { status: 503 }
+          );
         }
 
         const sessionData = {
           id: adminUser.id,
           name: adminUser.name,
           phone: adminUser.phone,
-          role: 'SUPER_ADMIN' as const,
+          role: 'ADMIN' as const,
         };
 
         await setSessionCookie(sessionData);
@@ -54,7 +45,7 @@ export async function POST(request: Request) {
           success: true,
           user: sessionData,
           redirectUrl: '/dispatch',
-          message: 'Logged in as Super Admin',
+          message: 'Logged in as Admin',
         });
       } else {
         return NextResponse.json(
@@ -66,9 +57,7 @@ export async function POST(request: Request) {
 
     let user = null;
 
-    if (userId) {
-      user = await prisma.user.findUnique({ where: { id: userId } });
-    } else if (loginIdentifier) {
+    if (loginIdentifier) {
       const cleanPhone = loginIdentifier.replace(/[^0-9]/g, '');
       if (cleanPhone.length >= 7) {
         user = await prisma.user.findFirst({
@@ -88,8 +77,6 @@ export async function POST(request: Request) {
           },
         });
       }
-    } else if (role) {
-      user = await prisma.user.findFirst({ where: { role } });
     }
 
     if (!user) {
@@ -99,13 +86,13 @@ export async function POST(request: Request) {
       );
     }
 
-    if (user.role === 'TECHNICIAN' && user.active === false) {
+    if (!loginPassword || !verifyPassword(loginPassword, user.passwordHash)) {
+      return NextResponse.json({ success: false, error: 'Invalid credentials' }, { status: 401 });
+    }
+
+    if (user.active === false) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Your contractor account is pending admin approval. You will be able to log in once approved.',
-          pendingApproval: true,
-        },
+        { success: false, error: 'This account is inactive. Contact an Admin.' },
         { status: 403 }
       );
     }
@@ -114,13 +101,13 @@ export async function POST(request: Request) {
       id: user.id,
       name: user.name,
       phone: user.phone,
-      role: user.role as 'SUPER_ADMIN' | 'OWNER' | 'DISPATCHER' | 'TECHNICIAN',
+      role: user.role as AppRole,
     };
 
     await setSessionCookie(sessionData);
 
     const redirectUrl =
-      user.role === 'SUPER_ADMIN' || user.role === 'OWNER' || user.role === 'DISPATCHER'
+      user.role === 'ADMIN' || user.role === 'DISPATCHER'
         ? '/dispatch'
         : '/tech';
 
@@ -132,6 +119,6 @@ export async function POST(request: Request) {
     });
   } catch (err: any) {
     console.error('Login error:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Authentication service unavailable' }, { status: 500 });
   }
 }

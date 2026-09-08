@@ -10,6 +10,7 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 
 ### 1. Dispatch Desk & Call Intake (`/dispatch`)
 - Rapid customer call logging designed for under 30 seconds.
+- Admins and Dispatchers can record completed historical jobs with **Add Manual Job**. Manual entries capture total amount collected, COGS, technician commission, payment method, and an on-books/off-books flag without sending dispatch notifications. The Dispatch Desk includes an all-entry table where Admins and Dispatchers can edit or delete manual records.
 - Customer phone number formatting with extension parsing (e.g., `(647) 951-0901 #762`).
 - Dispatcher assigns technicians using each technician's configured commission rate.
 - Dispatches job alerts via **Twilio SMS** directly to the technician's phone.
@@ -40,15 +41,16 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 - Customer tracking and Stripe online payments are disabled for now.
 - The technician sends completion details to the dispatcher, including payment method and amount received.
 
-### 4. Owner Executive Hub & Cash Handover Settlements (`/owner`)
+### 4. Admin Executive Hub & Cash Handover Settlements (`/owner`)
 - **Executive KPIs**: Total Gross Revenue, Cash vs Card vs Interac splits, Ontario HST (13%) collected for CRA tax filing, and Net Company Profit.
 - **Contractor Cash-in-Hand Ledger**:
   - Tracks live cash physically held by each contractor (`Cash Collected - Commission Earned - Settled = Net Owed`).
-  - **1-Click "Settle Cash Handover"**: Owner records physical cash envelopes received from contractors with complete audit notes.
+  - **1-Click "Settle Cash Handover"**: Admin records physical cash envelopes received from contractors with complete audit notes.
 - **1-Click CSV Export**: Download accountant-ready reports for QuickBooks.
 
 ### 5. Role-Based Access Control (RBAC)
-- Authenticated roles: `OWNER`, `DISPATCHER`, `TECHNICIAN`.
+- Authenticated roles: `ADMIN`, `DISPATCHER`, `TECHNICIAN`.
+- Admin has full access to every workspace, operation, report, and team-management action.
 - **1-Tap Team Login** on `/login` for seamless testing and staff sign-in.
 - Route protection with contextual navigation header.
 
@@ -95,6 +97,8 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
 4. Set environment variables in Vercel:
    - `DATABASE_URL`: *(Supabase Transaction Pooler URL - Port 6543)*
    - `DIRECT_URL`: *(Supabase Direct Connection URL - Port 5432)*
+   - `SESSION_SECRET`: *(Long random secret used to sign sessions; required in production)*
+   - `ADMIN_PASSWORD`: *(Strong password for the built-in Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project.vercel.app`
    - *(Optional)* `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`

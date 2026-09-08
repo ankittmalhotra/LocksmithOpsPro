@@ -17,7 +17,7 @@ interface TechLedgerItem {
   settlements: any[];
 }
 
-export default function OwnerDashboardPage() {
+export default function AdminDashboardPage() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -27,12 +27,13 @@ export default function OwnerDashboardPage() {
   const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
 
-  // Team Member Management State (Super Admin can add Owners + Contractors, Owners can add Contractors)
+  // Team Member Management State (Admin can add all three app roles)
   const [showAddMember, setShowAddMember] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState<'OWNER' | 'DISPATCHER' | 'TECHNICIAN'>('TECHNICIAN');
+  const [newMemberPassword, setNewMemberPassword] = useState('');
+  const [newMemberRole, setNewMemberRole] = useState<'ADMIN' | 'DISPATCHER' | 'TECHNICIAN'>('TECHNICIAN');
   const [newMemberCommission, setNewMemberCommission] = useState('0.00');
   const [addingMember, setAddingMember] = useState(false);
 
@@ -62,6 +63,7 @@ export default function OwnerDashboardPage() {
           name: newMemberName.trim(),
           phone: newMemberPhone.trim(),
           email: newMemberEmail.trim() || undefined,
+          password: newMemberPassword,
           role: newMemberRole,
           commissionRate: newMemberRole === 'TECHNICIAN' ? parseFloat(newMemberCommission) : undefined,
         }),
@@ -73,8 +75,8 @@ export default function OwnerDashboardPage() {
       }
 
       const roleLabel =
-        data.user.role === 'OWNER'
-          ? 'Owner'
+        data.user.role === 'ADMIN'
+          ? 'Admin'
           : data.user.role === 'DISPATCHER'
           ? 'Dispatcher'
           : 'Technician';
@@ -83,6 +85,7 @@ export default function OwnerDashboardPage() {
       setNewMemberName('');
       setNewMemberPhone('');
       setNewMemberEmail('');
+      setNewMemberPassword('');
       setNewMemberCommission('0.00');
       setShowAddMember(false);
       fetchAuthAndAnalytics();
@@ -212,6 +215,7 @@ export default function OwnerDashboardPage() {
 
   const handleExportCSV = () => {
     if (!analytics?.recentJobs) return;
+    const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const headers = [
       'Job Number',
       'Customer',
@@ -223,28 +227,32 @@ export default function OwnerDashboardPage() {
       'Payment Method',
       'Subtotal',
       'HST (13%)',
-      'Card Surcharge (4%)',
-      'Grand Total',
+      'Tax Collected (On Books / Off Books)',
+      'Card Surcharge (2.4%)',
+      'Total Amount Collected',
+      'COGS Amount',
       'Worker Commission',
     ];
 
     const rows = analytics.recentJobs.map((j: any) => [
       j.jobNumber,
-      `"${j.customer.name}"`,
-      `"${j.customer.phone}"`,
-      `"${j.serviceAddress}"`,
-      `"${j.technician?.name || 'N/A'}"`,
-      `"${j.serviceType}"`,
+      j.customer.name,
+      j.customer.phone,
+      j.serviceAddress,
+      j.technician?.name || 'N/A',
+      j.serviceType,
       j.status,
       j.invoice?.paymentMethod || 'N/A',
       j.invoice?.subtotal?.toFixed(2) || '0.00',
       j.invoice?.taxAmount?.toFixed(2) || '0.00',
+      j.invoice?.taxCollected === false ? 'No - Off Books' : 'Yes - On Books',
       j.invoice?.cardSurchargeAmount?.toFixed(2) || '0.00',
-      j.invoice?.grandTotal?.toFixed(2) || '0.00',
+      (j.invoice?.totalAmountCollected || j.invoice?.grandTotal || 0).toFixed(2),
+      j.invoice?.cogsAmount?.toFixed(2) || '0.00',
       j.workerCommission?.toFixed(2) || '0.00',
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r: any) => r.join(','))].join('\n');
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.map(csvCell).join(','), ...rows.map((r: any[]) => r.map(csvCell).join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
@@ -257,7 +265,7 @@ export default function OwnerDashboardPage() {
   if (loading && !analytics) {
     return (
       <div className="max-w-6xl mx-auto p-12 text-center text-slate-400 text-sm">
-        Loading Owner Analytics...
+        Loading Admin Analytics...
       </div>
     );
   }
@@ -270,7 +278,7 @@ export default function OwnerDashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-            <span>📊</span> Owner Executive Hub & Financials
+            <span>📊</span> Admin Executive Hub & Financials
             <span className="text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span>
             </span>
@@ -303,12 +311,12 @@ export default function OwnerDashboardPage() {
       </div>
 
 
-      {currentUser && currentUser.role !== 'OWNER' && currentUser.role !== 'SUPER_ADMIN' && (
+      {currentUser && currentUser.role !== 'ADMIN' && (
         <div className="mb-6 p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
             <span className="text-lg">⚠️</span>
             <span>
-              Role Notice: You are authenticated as <strong>{currentUser.name} ({currentUser.role})</strong>. This console is restricted to Owners & Super Admins.
+              Role Notice: You are authenticated as <strong>{currentUser.name} ({currentUser.role})</strong>. This console is restricted to Admins.
             </span>
           </div>
           <Link
@@ -597,8 +605,8 @@ export default function OwnerDashboardPage() {
                 <th className="py-2.5 px-3">Location</th>
                 <th className="py-2.5 px-3">Technician</th>
                 <th className="py-2.5 px-3">Payment</th>
-                <th className="py-2.5 px-3">HST (13%)</th>
-                <th className="py-2.5 px-3">Total Billed</th>
+                <th className="py-2.5 px-3">Tax Collected</th>
+                <th className="py-2.5 px-3">Total Collected</th>
                 <th className="py-2.5 px-3">Commission</th>
                 <th className="py-2.5 px-3 text-right">Status</th>
               </tr>
@@ -607,7 +615,8 @@ export default function OwnerDashboardPage() {
               {analytics?.recentJobs?.map((job: any) => (
                 <tr key={job.id} className="hover:bg-slate-50/80 transition">
                   <td className="py-3 px-3 font-extrabold text-slate-900">
-                    #{job.jobNumber}
+                    <div>#{job.jobNumber}</div>
+                    {job.isManual && <span className="text-[9px] text-violet-700 uppercase">Manual</span>}
                   </td>
                   <td className="py-3 px-3">
                     <div className="font-bold text-slate-800">{job.customer.name}</div>
@@ -629,7 +638,11 @@ export default function OwnerDashboardPage() {
                     )}
                   </td>
                   <td className="py-3 px-3 text-slate-600">
-                    ${(job.invoice?.taxAmount || 0).toFixed(2)}
+                    {job.invoice?.taxCollected === false ? (
+                      <span className="font-bold text-rose-700">No — Off Books</span>
+                    ) : (
+                      <span className="font-bold text-emerald-700">Yes — On Books</span>
+                    )}
                   </td>
                   <td className="py-3 px-3 font-extrabold text-slate-900 text-sm">
                     ${(job.invoice?.grandTotal || 0).toFixed(2)}
@@ -674,12 +687,17 @@ export default function OwnerDashboardPage() {
             </div>
 
             <p className="text-xs text-slate-500 mb-4">
-              {currentUser?.role === 'SUPER_ADMIN'
-                ? 'Super Admin can register new Owners, Dispatchers, or Field Technicians.'
-                : 'Owners can register new Field Technicians.'}
+              {currentUser?.role === 'ADMIN'
+                ? 'Admins can register Admins, Dispatchers, or Field Technicians.'
+                : 'Admins can register Field Technicians.'}
             </p>
 
             <form onSubmit={handleAddMember} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Initial Password *</label>
+                <input type="password" required minLength={8} value={newMemberPassword} onChange={(e) => setNewMemberPassword(e.target.value)} placeholder="At least 8 characters" className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Full Name *
@@ -725,14 +743,14 @@ export default function OwnerDashboardPage() {
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Role Permission *
                 </label>
-                {currentUser?.role === 'SUPER_ADMIN' ? (
+                {currentUser?.role === 'ADMIN' ? (
                   <select
                     value={newMemberRole}
                     onChange={(e: any) => setNewMemberRole(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
                   >
                     <option value="TECHNICIAN">🛠️ Technician (Field Mobile & Invoicing)</option>
-                    <option value="OWNER">👑 Owner (Full Executive Hub & Intake)</option>
+                    <option value="ADMIN">🛡️ Admin (Full System Access)</option>
                     <option value="DISPATCHER">📞 Dispatcher (Call Intake & Assignment)</option>
                   </select>
                 ) : (

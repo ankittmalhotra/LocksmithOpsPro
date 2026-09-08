@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user || (user.role !== 'ADMIN' && user.role !== 'TECHNICIAN')) {
+      return NextResponse.json({ success: false, error: 'Authenticated Admin or Technician access required' }, { status: 403 });
+    }
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
@@ -12,16 +17,22 @@ export async function POST(request: Request) {
     }
 
     // Validate image MIME type
-    if (!file.type.startsWith('image/')) {
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowedTypes.has(file.type)) {
       return NextResponse.json({ success: false, error: 'File must be an image' }, { status: 400 });
+    }
+    if (file.size <= 0 || file.size > 10 * 1024 * 1024) {
+      return NextResponse.json({ success: false, error: 'Image must be between 1 byte and 10 MB' }, { status: 400 });
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
     // Generate unique filename
-    const ext = path.extname(file.name) || '.jpg';
-    const filename = `proof_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+    const ext = path.extname(file.name).toLowerCase();
+    const safeExtension = ({ '.jpeg': '.jpg', '.jpg': '.jpg', '.png': '.png', '.webp': '.webp' } as Record<string, string>)[ext];
+    if (!safeExtension) return NextResponse.json({ success: false, error: 'Unsupported image extension' }, { status: 400 });
+    const filename = `proof_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${safeExtension}`;
 
     // Ensure public/uploads exists
     const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
@@ -40,6 +51,6 @@ export async function POST(request: Request) {
     });
   } catch (err: any) {
     console.error('File upload error:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'File upload failed' }, { status: 500 });
   }
 }

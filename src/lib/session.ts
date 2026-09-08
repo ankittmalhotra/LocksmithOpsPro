@@ -9,6 +9,7 @@ export interface AuthSession {
 }
 
 const DEVELOPMENT_SESSION_SECRET = 'locksmith-ops-development-only';
+const SESSION_SECRET_CONTEXT = 'locksmith-ops-session:';
 const HMAC_BLOCK_SIZE = 64;
 
 const SHA256_K = [
@@ -33,14 +34,21 @@ const SHA256_K = [
 function getSessionSecret(): string {
   const configuredSecret = process.env.SESSION_SECRET;
   if (typeof configuredSecret === 'string' && configuredSecret.trim().length > 0) {
-    return configuredSecret;
+    return `${SESSION_SECRET_CONTEXT}${configuredSecret}`;
+  }
+
+  // ADMIN_PASSWORD is already required in production and is kept server-side.
+  // Use it as the fallback so deployments do not need a second secret variable.
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (typeof adminPassword === 'string' && adminPassword.trim().length > 0) {
+    return `${SESSION_SECRET_CONTEXT}${adminPassword}`;
   }
 
   if (process.env.NODE_ENV === 'production') {
-    throw new Error('SESSION_SECRET must be set in production');
+    throw new Error('ADMIN_PASSWORD or SESSION_SECRET must be set in production');
   }
 
-  return DEVELOPMENT_SESSION_SECRET;
+  return `${SESSION_SECRET_CONTEXT}${DEVELOPMENT_SESSION_SECRET}`;
 }
 
 function rotateRight(value: number, bits: number): number {

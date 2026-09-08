@@ -56,14 +56,13 @@ npx prisma db push
 node prisma/seed.js
 ```
 
-The Prisma schema is the single source of truth for this new database. No role-consolidation or manual-job SQL migration is required when production starts empty. Set a strong `SESSION_SECRET` in production; the application fails closed when it is missing.
+The Prisma schema is the single source of truth for this new database. No role-consolidation or manual-job SQL migration is required when production starts empty. Set a strong `ADMIN_PASSWORD` in production; it also signs login cookies, and the application fails closed when it is missing.
 
 Required production environment variables:
 
 ```env
 POSTGRES_PRISMA_URL="..."
 POSTGRES_URL_NON_POOLING="..."
-SESSION_SECRET="a-long-random-secret"
 ADMIN_PASSWORD="a-strong-admin-password"
 NEXT_PUBLIC_APP_URL="https://your-domain.example"
 ```
@@ -95,7 +94,6 @@ git push -u origin main
 4. Under **Environment Variables**, add:
    - `POSTGRES_PRISMA_URL`: *(Your Supabase pooled connection string from Step 1)*
    - `POSTGRES_URL_NON_POOLING`: *(Your Supabase direct connection string from Step 1)*
-   - `SESSION_SECRET`: *(Long random secret used to sign sessions; required in production)*
    - `ADMIN_PASSWORD`: *(Strong password for the initial Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project-name.vercel.app` *(or your custom domain)*
    - *(Optional)* `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`

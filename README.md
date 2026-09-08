@@ -97,7 +97,6 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
 4. Set environment variables in Vercel:
    - `POSTGRES_PRISMA_URL`: *(Supabase/Vercel pooled PostgreSQL URL)*
    - `POSTGRES_URL_NON_POOLING`: *(Supabase/Vercel direct, non-pooling PostgreSQL URL)*
-   - `SESSION_SECRET`: *(Long random secret used to sign sessions; required in production)*
    - `ADMIN_PASSWORD`: *(Strong password for the built-in Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project.vercel.app`
    - *(Optional)* `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`

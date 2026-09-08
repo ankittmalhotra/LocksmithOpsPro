@@ -108,6 +108,7 @@ export default function AdminDashboardPage() {
       const res = await fetch('/api/owner/analytics');
       const data = await res.json();
       if (data.success) {
+        setErrorMsg('');
         setAnalytics(data);
       } else {
         setErrorMsg(data.error || 'Failed to fetch analytics');

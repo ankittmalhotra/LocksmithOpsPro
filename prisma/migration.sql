@@ -24,6 +24,7 @@ CREATE TABLE "User" (
     "email" TEXT,
     "role" "Role" NOT NULL DEFAULT 'TECHNICIAN',
     "active" BOOLEAN NOT NULL DEFAULT true,
+    "commissionRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
@@ -55,6 +56,7 @@ CREATE TABLE "Job" (
     "serviceType" TEXT NOT NULL,
     "problemDescription" TEXT NOT NULL,
     "serviceAddress" TEXT NOT NULL,
+    "workerCommissionRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "workerCommission" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "isAbandoned" BOOLEAN NOT NULL DEFAULT false,
     "travelFeeAmount" DOUBLE PRECISION,
@@ -151,34 +153,10 @@ ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_jobId_fkey" FOREIGN KEY ("jobId") 
 -- AddForeignKey
 ALTER TABLE "Settlement" ADD CONSTRAINT "Settlement_technicianId_fkey" FOREIGN KEY ("technicianId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- Initial Seed Data
-INSERT INTO "User" ("id", "name", "phone", "email", "role", "active")
-VALUES 
-  ('admin-root', 'Super Admin', '0000000000', 'admin@locksmithops.com', 'SUPER_ADMIN', true),
-  ('owner-1', 'Alex Vance (Owner)', '4165550100', 'owner@torontolocksmith.com', 'OWNER', true),
-  ('tech-1', 'Dave Miller', '6475550301', 'dave@torontolocksmith.com', 'TECHNICIAN', true),
-  ('tech-2', 'Sam Chen', '6475550302', 'sam@torontolocksmith.com', 'TECHNICIAN', true)
+-- Initial admin only. Login is admin / admin123.
+INSERT INTO "User" ("id", "name", "phone", "email", "role", "active", "commissionRate")
+VALUES ('super-admin-root', 'Administrator', '0000000000', 'admin@locksmithops.com', 'SUPER_ADMIN', true, 0)
 ON CONFLICT ("phone") DO NOTHING;
-
-INSERT INTO "Customer" ("id", "name", "phone", "extension", "address")
-VALUES 
-  ('cust-1', 'Ativan', '6479510901', '762', '663 Bloor Street West, Toronto, Ontario M6G 1L1')
-ON CONFLICT ("id") DO NOTHING;
-
-INSERT INTO "Job" ("id", "jobNumber", "customerId", "dispatcherId", "technicianId", "status", "serviceType", "problemDescription", "serviceAddress", "workerCommission", "isAbandoned")
-VALUES 
-  ('job-9815', 9815, 'cust-1', 'owner-1', 'tech-1', 'IN_PROGRESS', 'Commercial Lock Change', 'Need replaced lock cylinder on the glass door at the bottom', '663 Bloor Street West, Toronto, Ontario M6G 1L1', 300.0, false)
-ON CONFLICT ("jobNumber") DO NOTHING;
-
-INSERT INTO "JobItem" ("id", "jobId", "description", "quantity", "unitCost", "unitPrice", "isPart")
-VALUES 
-  ('item-1', 'job-9815', '1 HS mortise cylinder', 1, 30.0, 30.0, true)
-ON CONFLICT ("id") DO NOTHING;
-
-INSERT INTO "Invoice" ("id", "jobId", "calculationMode", "subtotal", "partsTotal", "laborTotal", "taxRate", "taxAmount", "cardSurchargeRate", "cardSurchargeAmount", "grandTotal", "paymentStatus", "paymentMethod", "cashOwedToCompany", "settlementStatus")
-VALUES 
-  ('inv-9815', 'job-9815', 'REVERSE', 1470.59, 30.0, 1440.59, 0.13, 191.18, 0.0, 0.0, 1661.77, 'PAID', 'CASH', 1361.77, 'UNSETTLED')
-ON CONFLICT ("jobId") DO NOTHING;
 
 -- Phase 2 & 3 Additive Columns
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "preWorkSignature" TEXT;
@@ -190,5 +168,4 @@ ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "keyType" TEXT;
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "fccId" TEXT;
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "isScheduled" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "scheduledFor" TIMESTAMP(3);
-
 

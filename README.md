@@ -11,9 +11,9 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 ### 1. Dispatch Desk & Call Intake (`/dispatch`)
 - Rapid customer call logging designed for under 30 seconds.
 - Customer phone number formatting with extension parsing (e.g., `(647) 951-0901 #762`).
-- Dispatcher assigns technician and explicitly enters the **worker commission** for each job.
+- Dispatcher assigns technicians using each technician's configured commission rate.
 - Dispatches job alerts via **Twilio SMS** directly to the technician's phone.
-- **🟢 Live Sync**: Real-time auto-polling queue updating status changes across the team.
+- Refresh the page after another user changes a job; there is no background live refresh.
 - Customer receives only one simple SMS from the dispatcher-side assignment flow: technician is on the way.
 
 ### 2. Field Technician Mobile App (`/tech` & `/tech/jobs/[id]`)
@@ -74,7 +74,7 @@ npm install
 # 2. Synchronize database schema
 npx prisma db push
 
-# 3. Seed demo staff and sample jobs
+# 3. Create the initial admin account (no demo staff or jobs)
 node prisma/seed.js
 
 # 4. Start the development server

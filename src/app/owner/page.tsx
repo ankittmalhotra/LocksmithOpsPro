@@ -8,7 +8,7 @@ interface TechLedgerItem {
   name: string;
   phone: string;
   active?: boolean;
-  fixedCommission?: number;
+  commissionRate?: number;
   cashCollected: number;
   commissionsEarned: number;
   totalSettled: number;
@@ -33,7 +33,7 @@ export default function OwnerDashboardPage() {
   const [newMemberPhone, setNewMemberPhone] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'OWNER' | 'DISPATCHER' | 'TECHNICIAN'>('TECHNICIAN');
-  const [newMemberCommission, setNewMemberCommission] = useState('150.00');
+  const [newMemberCommission, setNewMemberCommission] = useState('0.00');
   const [addingMember, setAddingMember] = useState(false);
 
   // Settlement Modal State
@@ -44,8 +44,6 @@ export default function OwnerDashboardPage() {
 
   useEffect(() => {
     fetchAuthAndAnalytics();
-    const interval = setInterval(fetchAuthAndAnalytics, 6000);
-    return () => clearInterval(interval);
   }, []);
 
   const handleAddMember = async (e: React.FormEvent) => {
@@ -65,7 +63,7 @@ export default function OwnerDashboardPage() {
           phone: newMemberPhone.trim(),
           email: newMemberEmail.trim() || undefined,
           role: newMemberRole,
-          fixedCommission: newMemberRole === 'TECHNICIAN' ? parseFloat(newMemberCommission) : undefined,
+          commissionRate: newMemberRole === 'TECHNICIAN' ? parseFloat(newMemberCommission) : undefined,
         }),
       });
 
@@ -85,7 +83,7 @@ export default function OwnerDashboardPage() {
       setNewMemberName('');
       setNewMemberPhone('');
       setNewMemberEmail('');
-      setNewMemberCommission('150.00');
+      setNewMemberCommission('0.00');
       setShowAddMember(false);
       fetchAuthAndAnalytics();
     } catch (err: any) {
@@ -195,7 +193,7 @@ export default function OwnerDashboardPage() {
       const res = await fetch('/api/auth/users', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: techId, fixedCommission: parseFloat(val) }),
+        body: JSON.stringify({ userId: techId, commissionRate: parseFloat(val) }),
       });
 
       const data = await res.json();
@@ -203,7 +201,7 @@ export default function OwnerDashboardPage() {
         throw new Error(data.error || 'Failed to update commission');
       }
 
-      setSuccessMsg(data.message || 'Fixed commission updated successfully');
+      setSuccessMsg(data.message || 'Commission rate updated successfully');
       fetchAuthAndAnalytics();
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -275,11 +273,10 @@ export default function OwnerDashboardPage() {
             <span>📊</span> Owner Executive Hub & Financials
             <span className="text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span>
-              Live Sync
             </span>
           </h1>
           <p className="text-sm text-slate-600">
-            Real-time business performance, tax reporting, and contractor reconciliation.
+            Business performance, tax reporting, and contractor reconciliation.
           </p>
         </div>
 
@@ -446,7 +443,7 @@ export default function OwnerDashboardPage() {
               <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
                 <th className="py-2.5 px-3">Contractor</th>
                 <th className="py-2.5 px-3">Account Status</th>
-                <th className="py-2.5 px-3">Fixed Commission</th>
+                <th className="py-2.5 px-3">Commission Rate</th>
                 <th className="py-2.5 px-3">Total Cash Collected</th>
                 <th className="py-2.5 px-3">Earned Commissions</th>
                 <th className="py-2.5 px-3">Previously Settled</th>
@@ -455,6 +452,13 @@ export default function OwnerDashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
+              {analytics?.technicianLedger?.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="py-8 px-3 text-center text-slate-500">
+                    No technicians found. Add a technician to see them here.
+                  </td>
+                </tr>
+              )}
               {analytics?.technicianLedger?.map((tech: TechLedgerItem) => {
                 const owesCompany = tech.netCashOwedToCompany > 0;
                 const companyOwes = tech.netCashOwedToCompany < 0;
@@ -479,14 +483,16 @@ export default function OwnerDashboardPage() {
                     </td>
                     <td className="py-3 px-3">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-slate-400 font-bold">$</span>
+                        <span className="text-slate-400 font-bold">%</span>
                         <input
                           type="number"
-                          step="5"
+                          min="0"
+                          max="100"
+                          step="0.01"
                           value={
                             commissionInputs[tech.id] !== undefined
                               ? commissionInputs[tech.id]
-                              : (tech.fixedCommission ?? 150).toString()
+                              : (tech.commissionRate ?? 0).toString()
                           }
                           onChange={(e) =>
                             setCommissionInputs({ ...commissionInputs, [tech.id]: e.target.value })
@@ -739,17 +745,19 @@ export default function OwnerDashboardPage() {
               {newMemberRole === 'TECHNICIAN' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Initial Fixed Commission Rate ($) *
+                    Initial Fixed Commission Rate (%) *
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">$</span>
+                    <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">%</span>
                     <input
                       type="number"
-                      step="5"
+                      min="0"
+                      max="100"
+                      step="0.01"
                       required
                       value={newMemberCommission}
                       onChange={(e) => setNewMemberCommission(e.target.value)}
-                      placeholder="150.00"
+                      placeholder="25.00"
                       className="w-full pl-7 pr-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>

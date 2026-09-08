@@ -167,10 +167,13 @@ export default function TechJobDetailPage({
           paymentMethod,
         });
 
+  const estimatedCommission = ((job?.workerCommissionRate || 0) / 100) * liveCalculation.grandTotal;
   const liveSettlement = calculateJobSettlementPosition({
     paymentMethod,
     grandTotal: liveCalculation.grandTotal,
-    workerCommission: job?.workerCommission || 0,
+    workerCommission: job?.status === 'COMPLETED' || job?.status === 'ABANDONED_TRAVEL_FEE'
+      ? job.workerCommission || 0
+      : estimatedCommission,
   });
 
   const handleCompleteInvoice = async () => {
@@ -310,10 +313,10 @@ export default function TechJobDetailPage({
 
           <div className="text-right">
             <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold block">
-              Your Commission
+              Commission Rate
             </span>
             <span className="text-base font-black text-emerald-600">
-              ${job.workerCommission.toFixed(2)}
+              {job.workerCommissionRate.toFixed(2)}%
             </span>
           </div>
         </div>

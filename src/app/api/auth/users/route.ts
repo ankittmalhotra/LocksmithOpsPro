@@ -1,10 +1,26 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { sendEmail, buildContractorApprovedEmail } from '@/lib/resend';
-import { getTechnicianCommission, setTechnicianCommission } from '@/lib/commissions';
+import { getCurrentUser } from '@/lib/auth';
+
+function canManageTeam(role?: string) {
+  return role === 'SUPER_ADMIN' || role === 'OWNER' || role === 'DISPATCHER';
+}
+
+function parseCommissionRate(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) return undefined;
+  return rate;
+}
 
 export async function GET(request: Request) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser || !canManageTeam(currentUser.role)) {
+      return NextResponse.json({ success: false, error: 'Team access required' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const role = searchParams.get('role');
     const activeOnly = searchParams.get('activeOnly');
@@ -26,17 +42,13 @@ export async function GET(request: Request) {
         role: true,
         email: true,
         active: true,
+        commissionRate: true,
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    const users = rawUsers.map((u) => ({
-      ...u,
-      fixedCommission: getTechnicianCommission(u.phone) || getTechnicianCommission(u.id) || 150.0,
-    }));
-
-    return NextResponse.json({ success: true, users });
+    return NextResponse.json({ success: true, users: rawUsers });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
@@ -44,8 +56,13 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const currentUser = await getCurrentUser();
     const body = await request.json();
     const { name, phone, role, email, isSelfRegistration } = body;
+
+    if (!isSelfRegistration && (!currentUser || !canManageTeam(currentUser.role))) {
+      return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
+    }
 
     if (!name || !phone) {
       return NextResponse.json(
@@ -55,6 +72,11 @@ export async function POST(request: Request) {
     }
 
     const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const requestedRate = parseCommissionRate(body.commissionRate);
+
+    if (role === 'TECHNICIAN' && body.commissionRate !== undefined && requestedRate === undefined) {
+      return NextResponse.json({ success: false, error: 'Commission rate must be between 0 and 100 percent.' }, { status: 400 });
+    }
 
     // Public self-registration is strictly for TECHNICIAN / Contractor only
     // and requires Admin/Owner approval before becoming active.
@@ -72,6 +94,7 @@ export async function POST(request: Request) {
           role: 'TECHNICIAN',
           email: email || null,
           active: false, // Pending admin approval
+          commissionRate: 0,
         },
       });
 
@@ -93,41 +116,49 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!['OWNER', 'DISPATCHER', 'TECHNICIAN'].includes(role)) {
+      return NextResponse.json({ success: false, error: 'Invalid team member role' }, { status: 400 });
+    }
+
     const newUser = await prisma.user.upsert({
       where: { phone: cleanPhone },
-      update: { name, role, email: email || null, active: true },
+      update: {
+        name,
+        role,
+        email: email || null,
+        active: true,
+        ...(role === 'TECHNICIAN' && requestedRate !== undefined ? { commissionRate: requestedRate } : {}),
+      },
       create: {
         name,
         phone: cleanPhone,
         role,
         email: email || null,
         active: true,
+        commissionRate: role === 'TECHNICIAN' ? (requestedRate ?? 0) : 0,
       },
     });
 
-    if (body.fixedCommission !== undefined && !isNaN(Number(body.fixedCommission))) {
-      const comm = parseFloat(body.fixedCommission);
-      setTechnicianCommission(newUser.id, comm);
-      setTechnicianCommission(newUser.phone, comm);
-    }
-
     return NextResponse.json({
       success: true,
-      user: {
-        ...newUser,
-        fixedCommission: getTechnicianCommission(newUser.phone) || 150.0,
-      },
+      user: newUser,
     });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }
 
-// PATCH to toggle active / approve technician or update fixed commission
+// PATCH to toggle active / approve technician or update commission rate
 export async function PATCH(request: Request) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser || !canManageTeam(currentUser.role)) {
+      return NextResponse.json({ success: false, error: 'Team management access required' }, { status: 403 });
+    }
+
     const body = await request.json();
-    const { userId, active, fixedCommission } = body;
+    const { userId, active } = body;
+    const requestedRate = parseCommissionRate(body.commissionRate);
 
     if (!userId) {
       return NextResponse.json(
@@ -140,6 +171,12 @@ export async function PATCH(request: Request) {
     if (typeof active === 'boolean') {
       updateData.active = active;
     }
+    if (body.commissionRate !== undefined) {
+      if (requestedRate === undefined) {
+        return NextResponse.json({ success: false, error: 'Commission rate must be between 0 and 100 percent.' }, { status: 400 });
+      }
+      updateData.commissionRate = requestedRate;
+    }
 
     const updatedUser = Object.keys(updateData).length > 0
       ? await prisma.user.update({
@@ -150,12 +187,6 @@ export async function PATCH(request: Request) {
 
     if (!updatedUser) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
-    }
-
-    if (fixedCommission !== undefined && !isNaN(Number(fixedCommission))) {
-      const commAmount = parseFloat(fixedCommission);
-      setTechnicianCommission(updatedUser.id, commAmount);
-      setTechnicianCommission(updatedUser.phone, commAmount);
     }
 
     // If contractor is activated/approved and has an email, send email via Resend
@@ -174,17 +205,12 @@ export async function PATCH(request: Request) {
       }
     }
 
-    const currentCommission = getTechnicianCommission(updatedUser.phone) || getTechnicianCommission(updatedUser.id) || 150.0;
-
     return NextResponse.json({
       success: true,
-      user: {
-        ...updatedUser,
-        fixedCommission: currentCommission,
-      },
+      user: updatedUser,
       emailResult,
-      message: fixedCommission !== undefined
-        ? `Fixed commission for ${updatedUser.name} updated to $${currentCommission.toFixed(2)}`
+      message: body.commissionRate !== undefined
+        ? `Commission rate for ${updatedUser.name} updated to ${updatedUser.commissionRate.toFixed(2)}%`
         : active
         ? `Contractor ${updatedUser.name} approved & activated!`
         : `Contractor ${updatedUser.name} deactivated.`,
@@ -193,4 +219,3 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }
-

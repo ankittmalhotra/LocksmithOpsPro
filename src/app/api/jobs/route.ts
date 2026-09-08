@@ -52,7 +52,6 @@ export async function POST(request: Request) {
       serviceAddress,
       serviceType,
       problemDescription,
-      workerCommission,
       technicianId,
       dispatcherId,
       vehicleYear,
@@ -70,6 +69,18 @@ export async function POST(request: Request) {
         { success: false, error: 'Missing required customer or job information' },
         { status: 400 }
       );
+    }
+
+    let assignedTechnician = null;
+    if (technicianId) {
+      assignedTechnician = await prisma.user.findUnique({
+        where: { id: technicianId },
+        select: { id: true, name: true, phone: true, email: true, role: true, active: true, commissionRate: true },
+      });
+
+      if (!assignedTechnician || assignedTechnician.role !== 'TECHNICIAN' || !assignedTechnician.active) {
+        return NextResponse.json({ success: false, error: 'Selected technician is not active.' }, { status: 400 });
+      }
     }
 
     // 1. Find or create customer
@@ -118,7 +129,8 @@ export async function POST(request: Request) {
         serviceType,
         problemDescription: problemDescription || '',
         serviceAddress,
-        workerCommission: parseFloat(workerCommission || '0') || 0,
+        workerCommissionRate: assignedTechnician?.commissionRate || 0,
+        workerCommission: 0,
         vehicleYear: vehicleYear || null,
         vehicleMake: vehicleMake || null,
         vehicleModel: vehicleModel || null,
@@ -149,7 +161,7 @@ export async function POST(request: Request) {
 Customer: ${customer.name} (${customer.phone}${extStr})
 Address: ${serviceAddress}
 Service: ${serviceType}${autoDetails}
-Commission: $${job.workerCommission.toFixed(2)}
+Commission Rate: ${job.workerCommissionRate.toFixed(2)}%
 Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
 
       smsResult = await sendSMS({
@@ -173,7 +185,7 @@ Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
             customerExtension: customer.extension || undefined,
             serviceAddress,
             serviceType,
-            commission: job.workerCommission,
+            commissionRate: job.workerCommissionRate,
             problemDescription: problemDescription || undefined,
             appUrl,
           });

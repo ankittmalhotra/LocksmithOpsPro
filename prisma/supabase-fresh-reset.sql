@@ -34,6 +34,7 @@ create table "User" (
   "email" text unique,
   "role" "Role" not null default 'TECHNICIAN',
   "active" boolean not null default true,
+  "commissionRate" double precision not null default 0.0,
   "createdAt" timestamp(3) not null default current_timestamp
 );
 
@@ -59,6 +60,7 @@ create table "Job" (
   "serviceType" text not null,
   "problemDescription" text not null,
   "serviceAddress" text not null,
+  "workerCommissionRate" double precision not null default 0.0,
   "workerCommission" double precision not null default 0.0,
   "isAbandoned" boolean not null default false,
   "travelFeeAmount" double precision,

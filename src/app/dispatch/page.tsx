@@ -10,6 +10,7 @@ interface Job {
   serviceAddress: string;
   problemDescription: string;
   workerCommission: number;
+  workerCommissionRate: number;
   status: string;
   isAbandoned: boolean;
   createdAt: string;
@@ -51,7 +52,7 @@ export default function DispatchPage() {
   const [serviceAddress, setServiceAddress] = useState('');
   const [serviceType, setServiceType] = useState('Commercial Lock Change');
   const [problemDescription, setProblemDescription] = useState('');
-  const [workerCommission, setWorkerCommission] = useState('150.00');
+  const [workerCommissionRate, setWorkerCommissionRate] = useState('0.00');
   const [technicianId, setTechnicianId] = useState('');
   
   // Scheduled Booking State
@@ -70,13 +71,10 @@ export default function DispatchPage() {
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Sample technicians list
   const [technicians, setTechnicians] = useState<any[]>([]);
 
   useEffect(() => {
     fetchAuthAndJobs();
-    const interval = setInterval(fetchAuthAndJobs, 6000);
-    return () => clearInterval(interval);
   }, []);
 
   const fetchAuthAndJobs = async () => {
@@ -94,18 +92,18 @@ export default function DispatchPage() {
         setJobs(data.jobs);
       }
 
-      // Fetch only approved active registered contractors with their fixed commissions
+      // Fetch only approved active registered contractors with their commission rates.
       const usersRes = await fetch('/api/auth/users?role=TECHNICIAN&activeOnly=true');
       const usersData = await usersRes.json();
       if (usersData.success && usersData.users.length > 0) {
         setTechnicians(usersData.users);
-        if (!technicianId) {
-          const firstTech = usersData.users[0];
-          setTechnicianId(firstTech.id);
-          if (firstTech.fixedCommission) {
-            setWorkerCommission(Number(firstTech.fixedCommission).toFixed(2));
-          }
-        }
+        const selectedTech = usersData.users.find((tech: any) => tech.id === technicianId) || usersData.users[0];
+        setTechnicianId(selectedTech.id);
+        setWorkerCommissionRate(Number(selectedTech.commissionRate || 0).toFixed(2));
+      } else {
+        setTechnicians([]);
+        setTechnicianId('');
+        setWorkerCommissionRate('0.00');
       }
     } catch (err) {
       console.error('Error fetching jobs:', err);
@@ -131,7 +129,6 @@ export default function DispatchPage() {
           serviceAddress,
           serviceType,
           problemDescription,
-          workerCommission,
           technicianId,
           isScheduled,
           scheduledFor: isScheduled && scheduledFor ? scheduledFor : null,
@@ -156,7 +153,6 @@ export default function DispatchPage() {
       setCustomerExtension('');
       setServiceAddress('');
       setProblemDescription('');
-      setWorkerCommission('150.00');
       setIsScheduled(false);
       setScheduledFor('');
       setVehicleYear('');
@@ -189,7 +185,6 @@ export default function DispatchPage() {
             <span>📞</span> Dispatch Desk & Call Intake
             <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live Sync
             </span>
           </h1>
           <p className="text-sm text-slate-600">
@@ -443,21 +438,18 @@ export default function DispatchPage() {
             <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">
-                  Worker Commission ($) *
+                  Technician Commission Rate (%)
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-2 text-slate-400 font-bold">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="150.00"
-                    value={workerCommission}
-                    onChange={(e) => setWorkerCommission(e.target.value)}
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  />
+                  <span className="absolute left-3 top-2 text-slate-400 font-bold">%</span>
+                    <input
+                      type="text"
+                      readOnly
+                      value={workerCommissionRate ? `${workerCommissionRate}%` : 'Select a technician'}
+                      className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg font-bold text-slate-900 bg-slate-100 focus:outline-none"
+                    />
                 </div>
-                <span className="text-[10px] text-slate-500">Auto-filled from technician rate</span>
+                <span className="text-[10px] text-slate-500">Percentage of the completed job total</span>
               </div>
 
               <div>
@@ -466,22 +458,23 @@ export default function DispatchPage() {
                 </label>
                 <select
                   value={technicianId}
+                  required
                   onChange={(e) => {
                     const selectedId = e.target.value;
                     setTechnicianId(selectedId);
                     const found = technicians.find((t) => t.id === selectedId);
-                    if (found && found.fixedCommission !== undefined) {
-                      setWorkerCommission(Number(found.fixedCommission).toFixed(2));
+                    if (found && found.commissionRate !== undefined) {
+                      setWorkerCommissionRate(Number(found.commissionRate).toFixed(2));
                     }
                   }}
                   className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 >
                   {technicians.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name} (Fixed: ${Number(t.fixedCommission || 150).toFixed(2)})
+                      {t.name} ({Number(t.commissionRate || 0).toFixed(2)}%)
                     </option>
                   ))}
-                  {technicians.length === 0 && <option value="">Dave Miller (Tech)</option>}
+                  {technicians.length === 0 && <option value="">No active technicians available</option>}
                 </select>
               </div>
             </div>
@@ -500,7 +493,7 @@ export default function DispatchPage() {
         <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-2 border-b border-slate-100">
             <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <span>Live Jobs Board</span>
+              <span>Jobs Board</span>
               <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
                 {jobs.length} Total
               </span>
@@ -599,7 +592,7 @@ export default function DispatchPage() {
                         <span>
                           Commission:{' '}
                           <strong className="text-emerald-700">
-                            ${job.workerCommission.toFixed(2)}
+                            {job.workerCommissionRate.toFixed(2)}%
                           </strong>
                         </span>
                       </div>

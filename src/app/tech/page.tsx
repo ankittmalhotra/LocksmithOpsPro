@@ -10,6 +10,7 @@ interface Job {
   serviceAddress: string;
   problemDescription: string;
   workerCommission: number;
+  workerCommissionRate: number;
   status: string;
   createdAt: string;
   customer: {
@@ -32,7 +33,7 @@ interface Job {
 export default function TechJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTech, setSelectedTech] = useState('Dave Miller');
+  const [selectedTechId, setSelectedTechId] = useState('');
   const [techList, setTechList] = useState<any[]>([]);
 
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -49,7 +50,8 @@ export default function TechJobsPage() {
       if (authData.success && authData.user) {
         setCurrentUser(authData.user);
         if (authData.user.role === 'TECHNICIAN') {
-          setSelectedTech(authData.user.name);
+          setSelectedTechId(authData.user.id);
+          setTechList([{ id: authData.user.id, name: authData.user.name }]);
         }
       }
 
@@ -59,13 +61,15 @@ export default function TechJobsPage() {
         setJobs(data.jobs);
       }
 
-      // Fetch all registered contractors
-      const usersRes = await fetch('/api/auth/users?role=TECHNICIAN');
-      const usersData = await usersRes.json();
-      if (usersData.success && usersData.users.length > 0) {
-        setTechList(usersData.users);
-        if (!authData.user || authData.user.role !== 'TECHNICIAN') {
-          setSelectedTech(usersData.users[0].name);
+      // Managers may inspect a selected technician; technicians only see themselves.
+      if (!authData.user || authData.user.role !== 'TECHNICIAN') {
+        const usersRes = await fetch('/api/auth/users?role=TECHNICIAN');
+        const usersData = await usersRes.json();
+        if (usersData.success) {
+          setTechList(usersData.users);
+          if (usersData.users.length > 0) {
+            setSelectedTechId(usersData.users[0].id);
+          }
         }
       }
     } catch (err) {
@@ -76,7 +80,7 @@ export default function TechJobsPage() {
   };
 
   // Filter jobs for selected tech
-  const techJobs = jobs.filter((j) => (j.technician?.name || '') === selectedTech);
+  const techJobs = jobs.filter((j) => j.technician?.id === selectedTechId);
   const activeJobs = techJobs.filter((j) =>
     ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status)
   );
@@ -95,18 +99,18 @@ export default function TechJobsPage() {
           <div>
             <div className="text-xs text-slate-400 font-medium">Technician Portal</div>
             <select
-              value={selectedTech}
-              onChange={(e) => setSelectedTech(e.target.value)}
+              value={selectedTechId}
+              onChange={(e) => setSelectedTechId(e.target.value)}
               className="bg-transparent text-white font-bold text-base focus:outline-none cursor-pointer border-b border-dashed border-slate-600"
             >
               {techList.map((t) => (
-                <option key={t.id} value={t.name} className="text-slate-900">
+                <option key={t.id} value={t.id} className="text-slate-900">
                   {t.name}
                 </option>
               ))}
               {techList.length === 0 && (
-                <option value={selectedTech} className="text-slate-900">
-                  {selectedTech}
+                <option value="" className="text-slate-900">
+                  No technicians available
                 </option>
               )}
             </select>
@@ -182,7 +186,7 @@ export default function TechJobsPage() {
 
                 <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                   <div className="text-xs font-bold text-emerald-700">
-                    Your Commission: ${job.workerCommission.toFixed(2)}
+                    Commission Rate: {job.workerCommissionRate.toFixed(2)}%
                   </div>
                   <span className="text-xs font-black text-blue-600 flex items-center gap-1">
                     Open Job &rarr;
@@ -222,7 +226,7 @@ export default function TechJobsPage() {
                     </div>
                   )}
                   <div className="text-[10px] font-bold text-emerald-600 uppercase">
-                    Comm: ${job.workerCommission.toFixed(2)}
+                    Comm Earned: ${job.workerCommission.toFixed(2)}
                   </div>
                 </div>
               </div>

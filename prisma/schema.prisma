@@ -51,6 +51,8 @@ model User {
   email           String?      @unique
   role            Role         @default(TECHNICIAN)
   active          Boolean      @default(true)
+  // Percentage of the completed job total paid to the technician, e.g. 25 = 25%.
+  commissionRate  Float        @default(0.0)
   createdAt       DateTime     @default(now())
 
   dispatchedJobs  Job[]        @relation("DispatcherJobs")
@@ -87,8 +89,9 @@ model Job {
   problemDescription String
   serviceAddress     String
   
-  // Commission set by person initiating the job
-  workerCommission   Float        @default(0.0)
+  // Commission rate is snapshotted at assignment; amount is calculated at completion.
+  workerCommissionRate Float      @default(0.0)
+  workerCommission     Float      @default(0.0)
   
   // Abandoned job flag & travel fee
   isAbandoned        Boolean      @default(false)

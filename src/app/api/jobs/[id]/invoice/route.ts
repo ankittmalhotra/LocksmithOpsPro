@@ -4,6 +4,7 @@ import {
   calculateForwardInvoice,
   calculateReverseInvoice,
   calculateJobSettlementPosition,
+  roundToTwo,
   SupportedPaymentMethod,
 } from '@/lib/calculations';
 import { sendSMS } from '@/lib/twilio';
@@ -70,11 +71,16 @@ export async function POST(
       });
     }
 
-    // 3. Compute cash ledger settlement position
+    // 3. Calculate the technician's percentage commission from the final job total.
+    const workerCommission = roundToTwo(
+      calcBreakdown.grandTotal * (job.workerCommissionRate / 100)
+    );
+
+    // 4. Compute cash ledger settlement position
     const settlement = calculateJobSettlementPosition({
       paymentMethod: paymentMethod as SupportedPaymentMethod,
       grandTotal: calcBreakdown.grandTotal,
-      workerCommission: job.workerCommission,
+      workerCommission,
     });
 
     // 7. Persist Job Items
@@ -159,6 +165,7 @@ export async function POST(
       where: { id: job.id },
       data: {
         status: newStatus,
+        workerCommission,
         keyBitting: keyBitting !== undefined ? keyBitting : job.keyBitting,
         doorDetails: doorDetails !== undefined ? doorDetails : job.doorDetails,
         preWorkSignature: preWorkSignature !== undefined ? preWorkSignature : (job as any).preWorkSignature,

@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { roundToTwo } from '@/lib/calculations';
 import { getCurrentUser } from '@/lib/auth';
-import { getTechnicianCommission } from '@/lib/commissions';
 
 export async function GET() {
   try {
@@ -103,7 +102,7 @@ export async function GET() {
         name: tech.name,
         phone: tech.phone,
         active: tech.active,
-        fixedCommission: getTechnicianCommission(tech.phone) || getTechnicianCommission(tech.id) || 150.0,
+        commissionRate: tech.commissionRate,
         createdAt: tech.createdAt,
         cashCollected: roundToTwo(cashCollected),
         commissionsEarned: roundToTwo(commissionsEarned),

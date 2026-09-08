@@ -161,7 +161,7 @@ export function buildJobDispatchedEmail(params: {
   customerExtension?: string;
   serviceAddress: string;
   serviceType: string;
-  commission: number;
+  commissionRate: number;
   problemDescription?: string;
   appUrl: string;
 }): { subject: string; html: string } {
@@ -196,7 +196,7 @@ export function buildJobDispatchedEmail(params: {
                 <div class="row"><span class="label">Service:</span> <span class="val">${params.serviceType}</span></div>
                 <div class="row"><span class="label">Customer:</span> <span class="val">${params.customerName} (${params.customerPhone}${params.customerExtension ? ' ext. ' + params.customerExtension : ''})</span></div>
                 <div class="row"><span class="label">Address:</span> <span class="val">${params.serviceAddress}</span></div>
-                <div class="row"><span class="label">Commission:</span> <span class="val" style="color: #059669;">$${params.commission.toFixed(2)}</span></div>
+                <div class="row"><span class="label">Commission Rate:</span> <span class="val" style="color: #059669;">${params.commissionRate.toFixed(2)}%</span></div>
                 ${params.problemDescription ? `<div class="row"><span class="label">Notes:</span> <span class="val">${params.problemDescription}</span></div>` : ''}
               </div>
               <div style="text-align: center; margin-top: 24px;">

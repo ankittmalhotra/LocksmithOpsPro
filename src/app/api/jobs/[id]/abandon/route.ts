@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { calculateTravelFee, calculateJobSettlementPosition } from '@/lib/calculations';
+import { calculateTravelFee, calculateJobSettlementPosition, roundToTwo } from '@/lib/calculations';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 
 export async function POST(
@@ -35,10 +35,14 @@ export async function POST(
       paymentMethod,
     });
 
+    const workerCommission = roundToTwo(
+      breakdown.grandTotal * (job.workerCommissionRate / 100)
+    );
+
     const settlement = calculateJobSettlementPosition({
       paymentMethod,
       grandTotal: breakdown.grandTotal,
-      workerCommission: job.workerCommission,
+      workerCommission,
     });
 
     const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
@@ -88,6 +92,7 @@ export async function POST(
       data: {
         status: 'ABANDONED_TRAVEL_FEE',
         isAbandoned: true,
+        workerCommission,
         travelFeeAmount: fee,
         problemDescription: `${job.problemDescription}\n[ABANDONED/TRAVEL CHARGE]: ${reason}`,
         completedAt: new Date(),

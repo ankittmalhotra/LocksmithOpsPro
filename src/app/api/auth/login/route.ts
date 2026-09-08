@@ -11,9 +11,9 @@ export async function POST(request: Request) {
     const loginIdentifier = (identifier || username || phone || '').trim();
     const loginPassword = (password || '').trim();
 
-    // 1. Handle Super Admin Login (admin / Linkbook@1234)
+    // 1. Handle Super Admin Login (admin / admin123)
     if (loginIdentifier.toLowerCase() === 'admin') {
-      if (loginPassword === 'Linkbook@1234') {
+      if (loginPassword === 'admin123') {
         let adminUser = null;
         try {
           adminUser = await prisma.user.findFirst({

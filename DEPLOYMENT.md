@@ -21,8 +21,8 @@ This project is tailored specifically for **Vercel** (Frontend & Serverless API)
 3. Select the region closest to your operations (e.g., `East US (N. Virginia)` or `Central Canada`).
 4. Once the project is provisioned, go to **Project Settings** (gear icon) ➔ **Database** ➔ **Connection string**.
 5. Copy two URLs:
-   - **Transaction Pooler (Port 6543)** with Mode `Transaction` (this is your `DATABASE_URL`).
-   - **Direct Connection (Port 5432)** with Mode `Session` (this is your `DIRECT_URL`).
+   - **Transaction Pooler (Port 6543)** with Mode `Transaction` (this is your `POSTGRES_PRISMA_URL`).
+   - **Direct Connection (Port 5432)** with Mode `Session` (this is your `POSTGRES_URL_NON_POOLING`).
 
 ---
 
@@ -32,15 +32,15 @@ In `prisma/schema.prisma`, update the datasource block to:
 ```prisma
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 ```
 
 Create your local `.env` file with these values:
 ```env
-DATABASE_URL="postgresql://postgres.[PROJECT_REF]:[YOUR_PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true"
-DIRECT_URL="postgresql://postgres.[PROJECT_REF]:[YOUR_PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres"
+POSTGRES_PRISMA_URL="postgresql://postgres.[PROJECT_REF]:[YOUR_PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true"
+POSTGRES_URL_NON_POOLING="postgresql://postgres.[PROJECT_REF]:[YOUR_PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres"
 ```
 
 ---
@@ -61,8 +61,8 @@ The Prisma schema is the single source of truth for this new database. No role-c
 Required production environment variables:
 
 ```env
-DATABASE_URL="..."
-DIRECT_URL="..."
+POSTGRES_PRISMA_URL="..."
+POSTGRES_URL_NON_POOLING="..."
 SESSION_SECRET="a-long-random-secret"
 ADMIN_PASSWORD="a-strong-admin-password"
 NEXT_PUBLIC_APP_URL="https://your-domain.example"
@@ -93,8 +93,10 @@ git push -u origin main
 2. Click **"Add New..."** ➔ **"Project"**.
 3. Import your `locksmith-operations` repository.
 4. Under **Environment Variables**, add:
-   - `DATABASE_URL`: *(Your Supabase pooled connection string from Step 1)*
-   - `DIRECT_URL`: *(Your Supabase direct connection string from Step 1)*
+   - `POSTGRES_PRISMA_URL`: *(Your Supabase pooled connection string from Step 1)*
+   - `POSTGRES_URL_NON_POOLING`: *(Your Supabase direct connection string from Step 1)*
+   - `SESSION_SECRET`: *(Long random secret used to sign sessions; required in production)*
+   - `ADMIN_PASSWORD`: *(Strong password for the initial Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project-name.vercel.app` *(or your custom domain)*
    - *(Optional)* `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`

@@ -8,8 +8,8 @@ export async function GET() {
     return NextResponse.json({ success: false, error: 'Admin access required' }, { status: 403 });
   }
   const envCheck = {
-    hasDatabaseUrl: !!process.env.DATABASE_URL,
-    hasDirectUrl: !!process.env.DIRECT_URL,
+    hasPostgresPrismaUrl: !!process.env.POSTGRES_PRISMA_URL,
+    hasPostgresNonPoolingUrl: !!process.env.POSTGRES_URL_NON_POOLING,
     nodeEnv: process.env.NODE_ENV,
   };
 

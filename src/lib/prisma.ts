@@ -1,10 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 
-const databaseUrl = process.env.DATABASE_URL || process.env.DIRECT_URL;
+const databaseUrl = process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING;
 
 if (!databaseUrl) {
   throw new Error(
-    'Database is not configured. Set DATABASE_URL in the deployment environment (DIRECT_URL may be used as a fallback).'
+    'Database is not configured. Set POSTGRES_PRISMA_URL in the deployment environment (POSTGRES_URL_NON_POOLING may be used as a fallback).'
   );
 }
 

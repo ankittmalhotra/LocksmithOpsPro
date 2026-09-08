@@ -95,8 +95,8 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
 2. Set datasource in `prisma/schema.prisma` to `provider = "postgresql"` and add connection strings.
 3. Push to GitHub and import repository into [vercel.com](https://vercel.com).
 4. Set environment variables in Vercel:
-   - `DATABASE_URL`: *(Supabase Transaction Pooler URL - Port 6543)*
-   - `DIRECT_URL`: *(Supabase Direct Connection URL - Port 5432)*
+   - `POSTGRES_PRISMA_URL`: *(Supabase/Vercel pooled PostgreSQL URL)*
+   - `POSTGRES_URL_NON_POOLING`: *(Supabase/Vercel direct, non-pooling PostgreSQL URL)*
    - `SESSION_SECRET`: *(Long random secret used to sign sessions; required in production)*
    - `ADMIN_PASSWORD`: *(Strong password for the built-in Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project.vercel.app`

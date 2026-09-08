@@ -34,6 +34,7 @@ interface Job {
     name: string;
     phone: string;
   };
+  technicianName?: string;
   invoice?: {
     grandTotal: number;
     totalAmountCollected?: number;
@@ -95,6 +96,7 @@ export default function DispatchPage() {
     totalAmountCollected: '',
     taxCollected: 'yes',
     technicianId: '',
+    otherTechnicianName: '',
     technicianCommission: '0.00',
   });
 
@@ -202,6 +204,7 @@ export default function DispatchPage() {
       jobNumber: '', customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
       serviceType: MANUAL_SERVICE_TYPES[0], otherServiceType: '', description: '', paymentMethod: 'CASH',
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
+      otherTechnicianName: '',
       technicianCommission: '0.00',
     });
   };
@@ -228,7 +231,8 @@ export default function DispatchPage() {
       cogsAmount: Number(job.invoice?.cogsAmount || 0).toFixed(2),
       totalAmountCollected: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
       taxCollected: job.invoice?.taxCollected === false ? 'no' : 'yes',
-      technicianId: job.technician?.id || '',
+      technicianId: job.technician?.id || (job.technicianName ? 'OTHER' : ''),
+      otherTechnicianName: job.technicianName || '',
       technicianCommission: Number(job.workerCommission || 0).toFixed(2),
     });
     setShowManualJob(true);
@@ -353,7 +357,7 @@ export default function DispatchPage() {
                   <th className="py-2.5 px-4">Technician</th>
                   <th className="py-2.5 px-4">Payment</th>
                   <th className="py-2.5 px-4">Total Collected</th>
-                  <th className="py-2.5 px-4">COGS</th>
+                  <th className="py-2.5 px-4">COGS (Parts, etc.)</th>
                   <th className="py-2.5 px-4">Tax Status</th>
                   <th className="py-2.5 px-4 text-right">Actions</th>
                 </tr>
@@ -372,7 +376,7 @@ export default function DispatchPage() {
                       <div className="text-[10px] text-slate-500">{job.customer.phone}</div>
                     </td>
                     <td className="py-3 px-4 text-slate-600 max-w-[180px]">{job.serviceType}</td>
-                    <td className="py-3 px-4 text-slate-700">{job.technician?.name || 'Unassigned'}</td>
+                    <td className="py-3 px-4 text-slate-700">{job.technician?.name || job.technicianName || 'Unassigned'}</td>
                     <td className="py-3 px-4 font-bold text-slate-700">{(job.invoice?.paymentMethod || '—').replace('_', ' ')}</td>
                     <td className="py-3 px-4 font-black text-slate-900">${Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2)}</td>
                     <td className="py-3 px-4 text-slate-700">${Number(job.invoice?.cogsAmount || 0).toFixed(2)}</td>
@@ -778,7 +782,7 @@ export default function DispatchPage() {
                         <span>
                           Tech:{' '}
                           <strong className="text-slate-700">
-                            {job.technician?.name || 'Unassigned'}
+                            {job.technician?.name || job.technicianName || 'Unassigned'}
                           </strong>
                         </span>
                         <span>•</span>
@@ -889,8 +893,8 @@ export default function DispatchPage() {
                 <input aria-label="Total amount collected" required type="number" min="0.01" step="0.01" value={manualForm.totalAmountCollected} onChange={(e) => updateManualField('totalAmountCollected', e.target.value)} className="field-input" />
               </div>
               <div>
-                <label className="field-label">COGS amount *</label>
-                <input aria-label="COGS amount" required type="number" min="0" step="0.01" value={manualForm.cogsAmount} onChange={(e) => updateManualField('cogsAmount', e.target.value)} className="field-input" />
+                <label className="field-label">COGS (Parts, etc.) amount *</label>
+                <input aria-label="COGS (Parts, etc.) amount" required type="number" min="0" step="0.01" value={manualForm.cogsAmount} onChange={(e) => updateManualField('cogsAmount', e.target.value)} className="field-input" />
               </div>
               <div>
                 <label className="field-label">Tax collected *</label>
@@ -903,9 +907,17 @@ export default function DispatchPage() {
                 <label className="field-label">Technician name *</label>
                 <select aria-label="Technician name" required value={manualForm.technicianId} onChange={(e) => updateManualField('technicianId', e.target.value)} className="field-input bg-white">
                   <option value="" disabled>Select technician</option>
+                  <option value="OTHER">Other</option>
                   {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
+                <p className="text-[10px] text-slate-500 mt-1">Choose Other to enter a custom technician name.</p>
               </div>
+              {manualForm.technicianId === 'OTHER' && (
+                <div>
+                  <label className="field-label">Other technician name *</label>
+                  <input aria-label="Other technician name" required value={manualForm.otherTechnicianName} onChange={(e) => updateManualField('otherTechnicianName', e.target.value)} className="field-input" placeholder="Enter technician name" />
+                </div>
+              )}
               <div>
                 <label className="field-label">Technician commission *</label>
                 <input aria-label="Technician commission" required type="number" min="0" step="0.01" value={manualForm.technicianCommission} onChange={(e) => updateManualField('technicianCommission', e.target.value)} className="field-input" />

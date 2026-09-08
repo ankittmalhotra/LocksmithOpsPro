@@ -85,6 +85,8 @@ model Job {
   dispatcher   User     @relation("DispatcherJobs", fields: [dispatcherId], references: [id])
   technicianId String?
   technician   User?    @relation("TechnicianJobs", fields: [technicianId], references: [id])
+  // Used by manual jobs when the technician is not registered in the system.
+  technicianName String?
 
   status             JobStatus @default(NEW)
   isManual           Boolean   @default(false)

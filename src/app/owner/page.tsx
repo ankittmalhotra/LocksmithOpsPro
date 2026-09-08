@@ -240,7 +240,7 @@ export default function AdminDashboardPage() {
       j.customer.name,
       j.customer.phone,
       j.serviceAddress,
-      j.technician?.name || 'N/A',
+      j.technician?.name || j.technicianName || 'N/A',
       j.serviceType,
       j.status,
       j.invoice?.paymentMethod || 'N/A',
@@ -627,7 +627,7 @@ export default function AdminDashboardPage() {
                     {job.serviceAddress}
                   </td>
                   <td className="py-3 px-3 text-slate-700 font-semibold">
-                    {job.technician?.name || 'Unassigned'}
+                    {job.technician?.name || job.technicianName || 'Unassigned'}
                   </td>
                   <td className="py-3 px-3">
                     {job.invoice?.paymentMethod ? (

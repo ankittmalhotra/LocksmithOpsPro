@@ -39,7 +39,9 @@ export async function POST(request: Request) {
     const otherServiceType = typeof body.otherServiceType === 'string' ? body.otherServiceType.trim() : '';
     const serviceType = selectedServiceType === 'Other' ? otherServiceType : selectedServiceType;
     const paymentMethod = body.paymentMethod as string;
-    const technicianId = typeof body.technicianId === 'string' ? body.technicianId : '';
+    const technicianId = typeof body.technicianId === 'string' ? body.technicianId.trim() : '';
+    const otherTechnicianName = typeof body.otherTechnicianName === 'string' ? body.otherTechnicianName.trim() : '';
+    const isOtherTechnician = technicianId === 'OTHER';
 
     if (!Number.isSafeInteger(jobNumber) || jobNumber <= 0) {
       return NextResponse.json({ success: false, error: 'Job number must be a positive whole number' }, { status: 400 });
@@ -61,20 +63,25 @@ export async function POST(request: Request) {
     }
 
     const totalAmountCollected = amount(body.totalAmountCollected, 'Total amount collected', false);
-    const cogsAmount = amount(body.cogsAmount, 'COGS amount');
+    const cogsAmount = amount(body.cogsAmount, 'COGS (Parts, etc.) amount');
     const technicianCommission = amount(body.technicianCommission, 'Technician commission');
 
     const [existingJob, technician] = await Promise.all([
       prisma.job.findUnique({ where: { jobNumber }, select: { id: true } }),
-      prisma.user.findUnique({
-        where: { id: technicianId },
-        select: { id: true, name: true, role: true, active: true },
-      }),
+      isOtherTechnician || !technicianId
+        ? Promise.resolve(null)
+        : prisma.user.findUnique({
+            where: { id: technicianId },
+            select: { id: true, name: true, role: true, active: true },
+          }),
     ]);
     if (existingJob) {
       return NextResponse.json({ success: false, error: `Job #${jobNumber} already exists` }, { status: 409 });
     }
-    if (!technician || technician.role !== 'TECHNICIAN' || !technician.active) {
+    if (isOtherTechnician && !otherTechnicianName) {
+      return NextResponse.json({ success: false, error: 'A technician name is required when Other is selected' }, { status: 400 });
+    }
+    if (!isOtherTechnician && (!technician || technician.role !== 'TECHNICIAN' || !technician.active)) {
       return NextResponse.json({ success: false, error: 'Selected technician is not active' }, { status: 400 });
     }
 
@@ -103,7 +110,8 @@ export async function POST(request: Request) {
           jobNumber,
           customerId: customer.id,
           dispatcherId: currentUser.id,
-          technicianId: technician.id,
+          technicianId: technician?.id || null,
+          technicianName: isOtherTechnician ? otherTechnicianName : null,
           status: 'COMPLETED',
           isManual: true,
           serviceType,

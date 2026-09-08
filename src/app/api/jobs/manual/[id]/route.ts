@@ -77,8 +77,12 @@ export async function PATCH(
       ? invoice.paymentMethod
       : body.paymentMethod;
     const technicianId = body.technicianId === undefined
-      ? (job.technicianId || '')
-      : String(body.technicianId);
+      ? (job.technicianId || (job.technicianName ? 'OTHER' : ''))
+      : String(body.technicianId).trim();
+    const otherTechnicianName = body.otherTechnicianName === undefined
+      ? (job.technicianName || '')
+      : String(body.otherTechnicianName).trim();
+    const isOtherTechnician = technicianId === 'OTHER';
     const taxCollected = body.taxCollected === undefined
       ? invoice.taxCollected !== false
       : body.taxCollected;
@@ -109,18 +113,23 @@ export async function PATCH(
     );
     const cogsAmount = amount(
       body.cogsAmount === undefined ? invoice.cogsAmount : body.cogsAmount,
-      'COGS amount'
+      'COGS (Parts, etc.) amount'
     );
     const technicianCommission = amount(
       body.technicianCommission === undefined ? job.workerCommission : body.technicianCommission,
       'Technician commission'
     );
 
-    const technician = await prisma.user.findUnique({
-      where: { id: technicianId },
-      select: { id: true, role: true, active: true },
-    });
-    if (!technician || technician.role !== 'TECHNICIAN' || !technician.active) {
+    const technician = isOtherTechnician || !technicianId
+      ? null
+      : await prisma.user.findUnique({
+          where: { id: technicianId },
+          select: { id: true, role: true, active: true },
+        });
+    if (isOtherTechnician && !otherTechnicianName) {
+      return NextResponse.json({ success: false, error: 'A technician name is required when Other is selected' }, { status: 400 });
+    }
+    if (!isOtherTechnician && (!technician || technician.role !== 'TECHNICIAN' || !technician.active)) {
       return NextResponse.json({ success: false, error: 'Selected technician is not active' }, { status: 400 });
     }
 
@@ -187,7 +196,8 @@ export async function PATCH(
         data: {
           jobNumber,
           customerId,
-          technicianId: technician.id,
+          technicianId: technician?.id || null,
+          technicianName: isOtherTechnician ? otherTechnicianName : null,
           serviceType,
           problemDescription: description,
           serviceAddress,

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { sendSMS } from '@/lib/twilio';
 import { sendEmail, buildJobDispatchedEmail } from '@/lib/resend';
 import { getCurrentUser } from '@/lib/auth';
+import { normalizeManualJobInvoice } from '@/lib/manual-job';
 
 export async function GET(request: Request) {
   try {
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
       where.technicianId = technicianId;
     }
 
-    const jobs = await prisma.job.findMany({
+    const rawJobs = await prisma.job.findMany({
       where,
       include: {
         customer: true,
@@ -54,6 +55,7 @@ export async function GET(request: Request) {
       },
       orderBy: { createdAt: 'desc' },
     });
+    const jobs = rawJobs.map(normalizeManualJobInvoice);
 
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {

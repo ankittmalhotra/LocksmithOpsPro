@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { roundToTwo } from '@/lib/calculations';
 import { getCurrentUser } from '@/lib/auth';
+import { normalizeManualJobInvoice } from '@/lib/manual-job';
 
 export async function GET() {
   try {
@@ -14,7 +15,7 @@ export async function GET() {
     }
 
     // 1. Fetch all completed/invoiced jobs with invoices and items
-    const jobs = await prisma.job.findMany({
+    const rawJobs = await prisma.job.findMany({
       include: {
         invoice: true,
         technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
@@ -23,6 +24,7 @@ export async function GET() {
       },
       orderBy: { createdAt: 'desc' },
     });
+    const jobs = rawJobs.map(normalizeManualJobInvoice);
 
     // 2. Fetch all technicians
     const technicians = await prisma.user.findMany({

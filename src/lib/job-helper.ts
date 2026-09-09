@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { Prisma } from '@prisma/client';
+import { normalizeManualJobInvoice } from './manual-job';
 
 export const jobWithDetails = Prisma.validator<Prisma.JobDefaultArgs>()({
   include: {
@@ -32,10 +33,10 @@ export async function findJobByIdOrNumber(idOrNumber: string): Promise<JobWithDe
         items: true,
       },
     });
-    if (job) return job;
+    if (job) return normalizeManualJobInvoice(job);
   }
 
-  return prisma.job.findUnique({
+  const job = await prisma.job.findUnique({
     where: { id: idOrNumber },
     include: {
       customer: true,
@@ -45,4 +46,5 @@ export async function findJobByIdOrNumber(idOrNumber: string): Promise<JobWithDe
       items: true,
     },
   });
+  return job ? normalizeManualJobInvoice(job) : null;
 }

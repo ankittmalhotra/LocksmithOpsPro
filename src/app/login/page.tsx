@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useRef, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -16,26 +16,30 @@ function LoginFormContent() {
   // Status State
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const submittingRef = useRef(false);
 
   const handleRedirect = (role: string, targetUrl?: string) => {
     if (redirectPath) {
-      router.push(redirectPath);
+      router.replace(redirectPath);
       return;
     }
     if (targetUrl) {
-      router.push(targetUrl);
+      router.replace(targetUrl);
       return;
     }
     if (role === 'ADMIN' || role === 'DISPATCHER') {
-      router.push('/dispatch');
+      router.replace('/dispatch');
     } else {
-      router.push('/tech');
+      router.replace('/tech');
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identifier.trim()) return;
+    if (!identifier.trim() || submittingRef.current) return;
+
+    submittingRef.current = true;
+    let navigationStarted = false;
 
     try {
       setLoading(true);
@@ -56,11 +60,17 @@ function LoginFormContent() {
       }
 
       handleRedirect(data.user.role, data.redirectUrl);
-      router.refresh();
+      navigationStarted = true;
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
-      setLoading(false);
+      // Keep the submit guard active while the successful navigation is in
+      // flight. A refresh here can race with the route transition and leave
+      // the user on the login page until they submit again.
+      if (!navigationStarted) {
+        submittingRef.current = false;
+        setLoading(false);
+      }
     }
   };
 

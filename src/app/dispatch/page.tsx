@@ -37,6 +37,7 @@ interface Job {
   technicianName?: string;
   invoice?: {
     grandTotal: number;
+    taxAmount?: number;
     totalAmountCollected?: number;
     cogsAmount?: number;
     paymentStatus: string;
@@ -515,6 +516,7 @@ export default function DispatchPage() {
                   <th className="py-2.5 px-4">Payment</th>
                   <th className="py-2.5 px-4">Total Collected</th>
                   <th className="py-2.5 px-4">COGS (Parts, etc.)</th>
+                  <th className="py-2.5 px-4">HST Amount</th>
                   <th className="py-2.5 px-4">Tax Status</th>
                   <th className="py-2.5 px-4 text-right">Actions</th>
                 </tr>
@@ -522,7 +524,7 @@ export default function DispatchPage() {
               <tbody className="divide-y divide-slate-100">
                 {manualJobs.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
+                    <td colSpan={10} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
                   </tr>
                 )}
                 {manualJobs.map((job) => (
@@ -537,6 +539,7 @@ export default function DispatchPage() {
                     <td className="py-3 px-4 font-bold text-slate-700">{(job.invoice?.paymentMethod || '—').replace('_', ' ')}</td>
                     <td className="py-3 px-4 font-black text-slate-900">${Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2)}</td>
                     <td className="py-3 px-4 text-slate-700">${Number(job.invoice?.cogsAmount || 0).toFixed(2)}</td>
+                    <td className="py-3 px-4 font-black text-amber-700">${Number(job.invoice?.taxAmount || 0).toFixed(2)}</td>
                     <td className="py-3 px-4">
                       <span className={job.invoice?.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>
                         {job.invoice?.taxCollected === false ? 'Off Books' : 'On Books'}

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
-import { calculateJobSettlementPosition, roundToTwo, type SupportedPaymentMethod } from '@/lib/calculations';
+import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, type SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 
 class ManualJobInputError extends Error {}
@@ -119,6 +119,10 @@ export async function PATCH(
       body.technicianCommission === undefined ? job.workerCommission : body.technicianCommission,
       'Technician commission'
     );
+    const manualCalculation = calculateManualInvoice({
+      amountCollected: totalAmountCollected,
+      taxCollected,
+    });
 
     const technician = isOtherTechnician || !technicianId
       ? null
@@ -173,14 +177,14 @@ export async function PATCH(
         where: { jobId: job.id },
         data: {
           calculationMode: 'MANUAL',
-          subtotal: totalAmountCollected,
+          subtotal: manualCalculation.subtotal,
           partsTotal: 0,
-          laborTotal: totalAmountCollected,
-          taxRate: 0,
-          taxAmount: 0,
+          laborTotal: manualCalculation.laborTotal,
+          taxRate: manualCalculation.taxRate,
+          taxAmount: manualCalculation.taxAmount,
           cardSurchargeRate: 0,
           cardSurchargeAmount: 0,
-          grandTotal: totalAmountCollected,
+          grandTotal: manualCalculation.grandTotal,
           totalAmountCollected,
           taxCollected,
           cogsAmount,

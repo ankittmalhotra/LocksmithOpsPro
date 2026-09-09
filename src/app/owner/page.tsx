@@ -607,6 +607,7 @@ export default function AdminDashboardPage() {
                 <th className="py-2.5 px-3">Technician</th>
                 <th className="py-2.5 px-3">Payment</th>
                 <th className="py-2.5 px-3">Tax Collected</th>
+                <th className="py-2.5 px-3">HST Amount</th>
                 <th className="py-2.5 px-3">Total Collected</th>
                 <th className="py-2.5 px-3">Commission</th>
                 <th className="py-2.5 px-3 text-right">Status</th>
@@ -644,6 +645,9 @@ export default function AdminDashboardPage() {
                     ) : (
                       <span className="font-bold text-emerald-700">Yes — On Books</span>
                     )}
+                  </td>
+                  <td className="py-3 px-3 font-black text-amber-700">
+                    ${Number(job.invoice?.taxAmount || 0).toFixed(2)}
                   </td>
                   <td className="py-3 px-3 font-extrabold text-slate-900 text-sm">
                     ${(job.invoice?.grandTotal || 0).toFixed(2)}

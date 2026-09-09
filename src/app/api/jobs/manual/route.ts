@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { calculateJobSettlementPosition, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
+import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 
 class ManualJobInputError extends Error {}
@@ -65,6 +65,10 @@ export async function POST(request: Request) {
     const totalAmountCollected = amount(body.totalAmountCollected, 'Total amount collected', false);
     const cogsAmount = amount(body.cogsAmount, 'COGS (Parts, etc.) amount');
     const technicianCommission = amount(body.technicianCommission, 'Technician commission');
+    const manualCalculation = calculateManualInvoice({
+      amountCollected: totalAmountCollected,
+      taxCollected: body.taxCollected,
+    });
 
     const [existingJob, technician] = await Promise.all([
       prisma.job.findUnique({ where: { jobNumber }, select: { id: true } }),
@@ -123,14 +127,14 @@ export async function POST(request: Request) {
           invoice: {
             create: {
               calculationMode: 'MANUAL',
-              subtotal: totalAmountCollected,
+              subtotal: manualCalculation.subtotal,
               partsTotal: 0,
-              laborTotal: totalAmountCollected,
-              taxRate: 0,
-              taxAmount: 0,
+              laborTotal: manualCalculation.laborTotal,
+              taxRate: manualCalculation.taxRate,
+              taxAmount: manualCalculation.taxAmount,
               cardSurchargeRate: 0,
               cardSurchargeAmount: 0,
-              grandTotal: totalAmountCollected,
+              grandTotal: manualCalculation.grandTotal,
               totalAmountCollected,
               taxCollected: body.taxCollected,
               cogsAmount,

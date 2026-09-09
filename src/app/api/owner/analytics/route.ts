@@ -51,12 +51,12 @@ export async function GET() {
         abandonedJobsCount++;
       }
       const isOnBooks = job.invoice?.taxCollected !== false;
-      if (job.invoice && job.invoice.paymentStatus === 'PAID' && isOnBooks) {
+      if (job.invoice && job.invoice.paymentStatus === 'PAID') {
         completedJobsCount++;
         totalGrossRevenue += job.invoice.grandTotal;
-        // Manual Tax Collected is an on-books/off-books bookkeeping flag, not
-        // an Ontario HST value. Manual entries never contribute to HST totals.
-        if (!job.isManual) totalTaxHST += job.invoice.taxAmount;
+        // HST is recorded only for on-books jobs. Manual job totals are
+        // tax-inclusive, so their stored taxAmount is the extracted HST.
+        if (isOnBooks) totalTaxHST += job.invoice.taxAmount;
         totalCommissionsEarned += job.workerCommission;
 
         // Calculate wholesale parts cost (COGS)

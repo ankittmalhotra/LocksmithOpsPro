@@ -773,6 +773,10 @@ export default function TechJobDetailPage({
                 <span>Tax Collected:</span>
                 <span className="font-semibold text-white">{manualTaxCollected ? 'Yes — On Books' : 'No — Off Books'}</span>
               </div>
+              <div className="flex justify-between text-slate-300">
+                <span>Sales Tax (13%):</span>
+                <span className="font-semibold text-amber-300">${Number(job.invoice?.taxAmount || 0).toFixed(2)}</span>
+              </div>
               <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
                 <span className="font-black text-sm text-white uppercase">Recorded Total:</span>
                 <span className="text-xl font-black text-emerald-400">${manualTotalCollected.toFixed(2)}</span>

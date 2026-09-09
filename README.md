@@ -10,7 +10,7 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 
 ### 1. Dispatch Desk & Call Intake (`/dispatch`)
 - Rapid customer call logging designed for under 30 seconds.
-- Admins and Dispatchers can record completed historical jobs with **Add Manual Job**. Manual entries capture total amount collected, COGS, technician commission, payment method, and an on-books/off-books flag without sending dispatch notifications. The Dispatch Desk includes an all-entry table where Admins and Dispatchers can edit or delete manual records.
+- Admins and Dispatchers can record completed historical jobs with **Add Manual Job**. Manual entries capture a tax-inclusive total amount collected, extract Ontario's 13% HST when marked on-books, track COGS, technician commission, payment method, and an on-books/off-books flag without sending dispatch notifications. The Dispatch Desk includes an all-entry table where Admins and Dispatchers can edit or delete manual records.
 - Customer phone number formatting with extension parsing (e.g., `(647) 951-0901 #762`).
 - Dispatcher assigns technicians using each technician's configured commission rate.
 - Dispatches job alerts via **Twilio SMS** directly to the technician's phone.

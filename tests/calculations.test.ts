@@ -1,6 +1,7 @@
 import {
   calculateForwardInvoice,
   calculateReverseInvoice,
+  calculateManualInvoice,
   calculateTravelFee,
   calculateJobSettlementPosition,
 } from '../src/lib/calculations.ts';
@@ -97,6 +98,17 @@ function runTests() {
   });
   console.assert(interacCalc.cardSurchargeAmount === 0, 'Interac must not have card surcharge');
   console.log('✅ Test 5 Passed: Credit Card, Debit Card, and Interac calculations accurate');
+
+  // Test 6: Tax-inclusive manual job accounting
+  console.log('\nTest 6: Tax-inclusive Manual Job Calculation');
+  const manualOnBooks = calculateManualInvoice({ amountCollected: 1000, taxCollected: true });
+  console.assert(manualOnBooks.subtotal === 884.96, 'Manual subtotal should be 884.96');
+  console.assert(manualOnBooks.taxAmount === 115.04, 'Manual HST should be 115.04');
+  console.assert(manualOnBooks.grandTotal === 1000, 'Manual total should remain 1000.00');
+  const manualOffBooks = calculateManualInvoice({ amountCollected: 1000, taxCollected: false });
+  console.assert(manualOffBooks.subtotal === 1000, 'Off-books subtotal should remain 1000.00');
+  console.assert(manualOffBooks.taxAmount === 0, 'Off-books HST should be 0.00');
+  console.log('✅ Test 6 Passed: Manual tax-inclusive HST extraction is accurate');
 
   console.log('\n🎉 ALL CALCULATION TESTS PASSED!');
 }

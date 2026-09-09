@@ -108,6 +108,35 @@ export function calculateReverseInvoice(params: {
 }
 
 /**
+ * Manual invoice mode:
+ * The amount entered by the dispatcher is the final, tax-inclusive amount
+ * collected from the customer. When the job is on books, extract the 13% HST
+ * component from that amount. COGS is tracked separately as a direct cost.
+ */
+export function calculateManualInvoice(params: {
+  amountCollected: number;
+  taxCollected: boolean;
+}): CalculationBreakdown {
+  const grandTotal = roundToTwo(params.amountCollected);
+  const taxRate = params.taxCollected ? ONTARIO_HST_RATE : 0;
+  const subtotal = params.taxCollected
+    ? roundToTwo(grandTotal / (1 + taxRate))
+    : grandTotal;
+  const taxAmount = roundToTwo(grandTotal - subtotal);
+
+  return {
+    subtotal,
+    partsTotal: 0,
+    laborTotal: subtotal,
+    taxRate,
+    taxAmount,
+    cardSurchargeRate: 0,
+    cardSurchargeAmount: 0,
+    grandTotal,
+  };
+}
+
+/**
  * Abandoned Job Travel Fee Calculator:
  * Standard $20 or $25 travel fee + 13% HST (+ optional Stripe card fee)
  */

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+import { roundToTwo } from '@/lib/calculations';
 
 interface Job {
   id: string;
@@ -35,6 +36,11 @@ interface Job {
     phone: string;
   };
   technicianName?: string;
+  items?: Array<{
+    unitCost: number;
+    quantity: number;
+    isPart: boolean;
+  }>;
   invoice?: {
     grandTotal: number;
     taxAmount?: number;
@@ -396,6 +402,56 @@ export default function DispatchPage() {
   const manualJobs = jobs.filter((j) => j.isManual);
   const canManageManualJobs = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
   const canManageTechnicians = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
+  const financialSummary = useMemo(() => {
+    const summary = {
+      totalGrossRevenue: 0,
+      totalCashRevenue: 0,
+      totalInteracRevenue: 0,
+      totalCardRevenue: 0,
+      totalTaxHST: 0,
+      totalCommissionsEarned: 0,
+      totalPartsCost: 0,
+    };
+
+    for (const job of jobs) {
+      const invoice = job.invoice;
+      if (!invoice || invoice.paymentStatus !== 'PAID') continue;
+
+      const grossTotal = Number(invoice.grandTotal || 0);
+      const isOnBooks = invoice.taxCollected !== false;
+      const cogsAmount = Number(invoice.cogsAmount || 0);
+      const itemPartsCost = (job.items || []).reduce(
+        (sum, item) => sum + (item.isPart ? Number(item.unitCost || 0) * Number(item.quantity || 1) : 0),
+        0
+      );
+
+      summary.totalGrossRevenue += grossTotal;
+      if (isOnBooks) summary.totalTaxHST += Number(invoice.taxAmount || 0);
+      summary.totalCommissionsEarned += Number(job.workerCommission || 0);
+      summary.totalPartsCost += cogsAmount > 0 ? cogsAmount : itemPartsCost;
+
+      if (invoice.paymentMethod === 'CASH') {
+        summary.totalCashRevenue += grossTotal;
+      } else if (invoice.paymentMethod === 'INTERAC') {
+        summary.totalInteracRevenue += grossTotal;
+      } else if (['STRIPE_CARD', 'DEBIT_CARD', 'CREDIT_CARD'].includes(invoice.paymentMethod)) {
+        summary.totalCardRevenue += grossTotal;
+      }
+    }
+
+    return {
+      totalGrossRevenue: roundToTwo(summary.totalGrossRevenue),
+      totalCashRevenue: roundToTwo(summary.totalCashRevenue),
+      totalInteracRevenue: roundToTwo(summary.totalInteracRevenue),
+      totalCardRevenue: roundToTwo(summary.totalCardRevenue),
+      totalTaxHST: roundToTwo(summary.totalTaxHST),
+      totalPartsCost: roundToTwo(summary.totalPartsCost),
+      totalCommissionsEarned: roundToTwo(summary.totalCommissionsEarned),
+      netCompanyProfit: roundToTwo(
+        summary.totalGrossRevenue - summary.totalTaxHST - summary.totalCommissionsEarned - summary.totalPartsCost
+      ),
+    };
+  }, [jobs]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -430,6 +486,50 @@ export default function DispatchPage() {
           </div>
         )}
       </div>
+
+      {canManageManualJobs && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 mb-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total Gross Revenue</div>
+            <div className="text-2xl font-black text-slate-900">${financialSummary.totalGrossRevenue.toFixed(2)}</div>
+            <div className="mt-2 text-[11px] text-slate-500 space-y-0.5">
+              <div className="flex justify-between"><span>💵 Cash:</span><span className="font-semibold text-slate-700">${financialSummary.totalCashRevenue.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>💳 Card:</span><span className="font-semibold text-slate-700">${financialSummary.totalCardRevenue.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>🏦 Interac:</span><span className="font-semibold text-slate-700">${financialSummary.totalInteracRevenue.toFixed(2)}</span></div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <div className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1 flex items-center justify-between gap-2">
+              <span>Sales Tax (13%)</span>
+              <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">CRA Remittance</span>
+            </div>
+            <div className="text-2xl font-black text-amber-700">${financialSummary.totalTaxHST.toFixed(2)}</div>
+            <p className="mt-2 text-[11px] text-slate-500 leading-tight">On-books HST extracted from tax-inclusive payments.</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <div className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-1 flex items-center justify-between gap-2">
+              <span>Hardware COGS</span>
+              <span className="text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-bold">Parts Cost</span>
+            </div>
+            <div className="text-2xl font-black text-rose-700">${financialSummary.totalPartsCost.toFixed(2)}</div>
+            <p className="mt-2 text-[11px] text-slate-500 leading-tight">Wholesale hardware costs deducted from company margin.</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Tech Commissions</div>
+            <div className="text-2xl font-black text-blue-700">${financialSummary.totalCommissionsEarned.toFixed(2)}</div>
+            <p className="mt-2 text-[11px] text-slate-500 leading-tight">Total commission allocated to workers.</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm col-span-2 lg:col-span-1">
+            <div className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Net Company Profit</div>
+            <div className="text-2xl font-black text-emerald-700">${financialSummary.netCompanyProfit.toFixed(2)}</div>
+            <p className="mt-2 text-[11px] text-slate-500 leading-tight">Gross revenue less HST, contractor payouts, and wholesale parts.</p>
+          </div>
+        </div>
+      )}
 
       {currentUser && currentUser.role === 'TECHNICIAN' && (
         <div className="mb-6 p-4 rounded-2xl bg-blue-50 border-2 border-blue-200 text-blue-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">

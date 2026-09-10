@@ -122,6 +122,67 @@ export async function GET() {
       };
     });
 
+    // Build a fixed seven-day window using the same paid-invoice definition as
+    // the financial totals above. Toronto is the business timezone, so a late
+    // evening payment is grouped with the local calendar day the admin sees.
+    const analyticsTimeZone = 'America/Toronto';
+    const dateKeyFormatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: analyticsTimeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayKey = dateKeyFormatter.format(new Date());
+    const [todayYear, todayMonth, todayDay] = todayKey.split('-').map(Number);
+    const todayUtc = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay));
+    const dailyByDate = new Map<string, {
+      jobsCount: number;
+      revenue: number;
+      tax: number;
+    }>();
+
+    const last7Days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(todayUtc);
+      date.setUTCDate(todayUtc.getUTCDate() - (6 - index));
+      const dateKey = date.toISOString().slice(0, 10);
+      dailyByDate.set(dateKey, { jobsCount: 0, revenue: 0, tax: 0 });
+
+      return {
+        date: dateKey,
+        label: date.toLocaleDateString('en-CA', { weekday: 'short', timeZone: 'UTC' }),
+        dateLabel: date.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+      };
+    });
+
+    for (const job of jobs) {
+      if (!job.invoice || job.invoice.paymentStatus !== 'PAID') continue;
+
+      const activityDate = job.invoice.paidAt || job.completedAt || job.createdAt;
+      const dateKey = dateKeyFormatter.format(new Date(activityDate));
+      const daily = dailyByDate.get(dateKey);
+      if (!daily) continue;
+
+      daily.jobsCount += 1;
+      daily.revenue += job.invoice.grandTotal;
+      if (job.invoice.taxCollected !== false) daily.tax += job.invoice.taxAmount;
+    }
+
+    const dailySeries = last7Days.map((day) => {
+      const daily = dailyByDate.get(day.date)!;
+      return {
+        ...day,
+        jobsCount: daily.jobsCount,
+        revenue: roundToTwo(daily.revenue),
+        tax: roundToTwo(daily.tax),
+      };
+    });
+
+    const last7DaysJobs = dailySeries.reduce((sum, day) => sum + day.jobsCount, 0);
+    const last7DaysRevenue = roundToTwo(dailySeries.reduce((sum, day) => sum + day.revenue, 0));
+    const bestRevenueDay = last7DaysRevenue > 0
+      ? dailySeries.reduce((best, day) => (day.revenue > best.revenue ? day : best), dailySeries[0])
+      : null;
+
     const netCompanyProfit = roundToTwo(totalGrossRevenue - totalTaxHST - totalCommissionsEarned - totalPartsCost);
 
     return NextResponse.json({
@@ -139,6 +200,15 @@ export async function GET() {
         completedJobsCount,
         abandonedJobsCount,
         totalJobsCount: jobs.length,
+      },
+      last7Days: dailySeries,
+      last7DaysSummary: {
+        jobsCount: last7DaysJobs,
+        revenue: last7DaysRevenue,
+        averageTicket: last7DaysJobs > 0 ? roundToTwo(last7DaysRevenue / last7DaysJobs) : 0,
+        bestRevenueDay: bestRevenueDay
+          ? { date: bestRevenueDay.date, label: bestRevenueDay.dateLabel, revenue: bestRevenueDay.revenue }
+          : null,
       },
       technicianLedger,
       recentJobs: jobs.slice(0, 10),

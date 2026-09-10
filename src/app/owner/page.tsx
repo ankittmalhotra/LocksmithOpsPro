@@ -17,6 +17,18 @@ interface TechLedgerItem {
   settlements: any[];
 }
 
+interface DailyAnalyticsItem {
+  date: string;
+  label: string;
+  dateLabel: string;
+  jobsCount: number;
+  revenue: number;
+  tax: number;
+}
+
+const formatCompactCurrency = (value: number) =>
+  value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${Math.round(value)}`;
+
 export default function AdminDashboardPage() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -272,6 +284,10 @@ export default function AdminDashboardPage() {
   }
 
   const s = analytics?.summary || {};
+  const last7Days: DailyAnalyticsItem[] = analytics?.last7Days || [];
+  const last7DaysSummary = analytics?.last7DaysSummary || {};
+  const maxDailyJobs = Math.max(1, ...last7Days.map((day) => day.jobsCount));
+  const maxDailyRevenue = Math.max(1, ...last7Days.map((day) => day.revenue));
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -431,6 +447,99 @@ export default function AdminDashboardPage() {
           </p>
         </div>
       </div>
+
+      {/* Seven-day operating pulse */}
+      <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="seven-day-title">
+        <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 id="seven-day-title" className="flex items-center gap-2 text-base font-black text-slate-900">
+              <span>📈</span> Last 7 days
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-600">
+              Paid and completed jobs, grouped by the day payment was recorded.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px] font-bold">
+            <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-700">
+              {last7DaysSummary.jobsCount || 0} jobs
+            </span>
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
+              ${(last7DaysSummary.revenue || 0).toFixed(2)} collected
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">
+              ${(last7DaysSummary.averageTicket || 0).toFixed(2)} avg ticket
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          {/* Jobs chart */}
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Jobs per day</h3>
+                <p className="text-[11px] text-slate-500">Completed / paid jobs</p>
+              </div>
+              <span className="text-xl">🧰</span>
+            </div>
+            <div className="flex h-44 items-end gap-2 border-b border-slate-200 px-1 pt-2">
+              {last7Days.map((day) => {
+                const barHeight = day.jobsCount ? Math.max(8, (day.jobsCount / maxDailyJobs) * 100) : 3;
+                return (
+                  <div key={day.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${day.dateLabel}: ${day.jobsCount} jobs`}>
+                    <span className="text-[10px] font-black text-slate-600">{day.jobsCount || ''}</span>
+                    <div
+                      className="w-full max-w-10 rounded-t-lg bg-blue-500 transition-all hover:bg-blue-600"
+                      style={{ height: `${barHeight}%` }}
+                      role="img"
+                      aria-label={`${day.dateLabel}: ${day.jobsCount} jobs`}
+                    />
+                    <span className="text-[10px] font-bold text-slate-500">{day.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex items-center justify-between text-[10px] font-semibold text-slate-400">
+              <span>{last7Days[0]?.dateLabel || ''}</span>
+              <span>{last7Days[last7Days.length - 1]?.dateLabel || ''}</span>
+            </div>
+          </div>
+
+          {/* Revenue chart */}
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Revenue per day</h3>
+                <p className="text-[11px] text-slate-500">Gross amount collected</p>
+              </div>
+              <span className="text-xl">💰</span>
+            </div>
+            <div className="flex h-44 items-end gap-2 border-b border-slate-200 px-1 pt-2">
+              {last7Days.map((day) => {
+                const barHeight = day.revenue ? Math.max(8, (day.revenue / maxDailyRevenue) * 100) : 3;
+                return (
+                  <div key={day.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${day.dateLabel}: $${day.revenue.toFixed(2)}`}>
+                    <span className="whitespace-nowrap text-[10px] font-black text-slate-600">{day.revenue ? formatCompactCurrency(day.revenue) : ''}</span>
+                    <div
+                      className="w-full max-w-10 rounded-t-lg bg-emerald-500 transition-all hover:bg-emerald-600"
+                      style={{ height: `${barHeight}%` }}
+                      role="img"
+                      aria-label={`${day.dateLabel}: $${day.revenue.toFixed(2)} revenue`}
+                    />
+                    <span className="text-[10px] font-bold text-slate-500">{day.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex items-center justify-between text-[10px] font-semibold text-slate-400">
+              <span>{last7Days[0]?.dateLabel || ''}</span>
+              <span>
+                Best day: {last7DaysSummary.bestRevenueDay?.label || '—'} ({formatCompactCurrency(last7DaysSummary.bestRevenueDay?.revenue || 0)})
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Worker Cash-in-Hand Ledger & Settlements */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm mb-6">

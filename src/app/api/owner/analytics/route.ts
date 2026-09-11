@@ -203,6 +203,7 @@ export async function GET() {
     });
   } catch (err: any) {
     console.error('Admin analytics error:', err);
-    return NextResponse.json({ success: false, error: 'Unable to load Admin analytics' }, { status: 500 });
+    const errorCode = typeof err?.code === 'string' ? ` (${err.code})` : '';
+    return NextResponse.json({ success: false, error: `Unable to load Admin analytics${errorCode}` }, { status: 500 });
   }
 }

@@ -139,6 +139,9 @@ export default function DispatchPage() {
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs);
+        setErrorMsg('');
+      } else {
+        setErrorMsg(data.error || 'Unable to load jobs');
       }
 
       // Fetch only active technicians with their commission rates.

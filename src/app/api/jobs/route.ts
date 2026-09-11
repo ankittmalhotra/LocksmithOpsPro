@@ -56,7 +56,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {
     console.error('Error fetching jobs:', err);
-    return NextResponse.json({ success: false, error: 'Unable to load jobs' }, { status: 500 });
+    const errorCode = typeof err?.code === 'string' ? ` (${err.code})` : '';
+    return NextResponse.json({ success: false, error: `Unable to load jobs${errorCode}` }, { status: 500 });
   }
 }
 

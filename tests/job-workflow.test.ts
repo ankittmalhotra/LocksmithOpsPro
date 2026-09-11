@@ -79,11 +79,11 @@ test('open statuses may be mutated and terminal statuses may not', () => {
   assert.equal(canMutateJob(undefined), false);
 });
 
-test('operational transitions allow forward progress and cancellation only', () => {
+test('operational transitions allow forward progress and require dedicated closeout for cancellation', () => {
   assert.equal(canTransitionJobStatus('NEW', 'DISPATCHED'), true);
   assert.equal(canTransitionJobStatus('DISPATCHED', 'ON_SITE'), true);
   assert.equal(canTransitionJobStatus('ON_SITE', 'IN_PROGRESS'), true);
-  assert.equal(canTransitionJobStatus('IN_PROGRESS', 'CANCELLED'), true);
+  assert.equal(canTransitionJobStatus('IN_PROGRESS', 'CANCELLED'), false);
   assert.equal(canTransitionJobStatus('IN_PROGRESS', 'DISPATCHED'), false);
   assert.equal(canTransitionJobStatus('CANCELLED', 'NEW'), false);
   assert.equal(canTransitionJobStatus('UNKNOWN', 'NEW'), false);

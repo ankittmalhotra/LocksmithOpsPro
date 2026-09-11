@@ -22,7 +22,19 @@ export interface CalculationBreakdown {
   grandTotal: number;
 }
 
-export type SupportedPaymentMethod = 'CASH' | 'INTERAC' | 'STRIPE_CARD' | 'CREDIT_CARD' | 'DEBIT_CARD';
+export const SUPPORTED_PAYMENT_METHODS = [
+  'CASH',
+  'INTERAC',
+  'STRIPE_CARD',
+  'DEBIT_CARD',
+  'CREDIT_CARD',
+] as const;
+
+// Closeout is intentionally narrower than calculation support until a card
+// processor reference can be persisted and audited by this application.
+export const SUPPORTED_CLOSEOUT_PAYMENT_METHODS = ['CASH', 'INTERAC'] as const;
+
+export type SupportedPaymentMethod = (typeof SUPPORTED_PAYMENT_METHODS)[number];
 
 export function isCardPaymentMethod(method?: string): boolean {
   return method === 'STRIPE_CARD' || method === 'CREDIT_CARD' || method === 'DEBIT_CARD';

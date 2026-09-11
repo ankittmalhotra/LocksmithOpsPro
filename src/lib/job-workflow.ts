@@ -82,11 +82,13 @@ export function buildJobCloseoutClaimWhere(job: {
  * requests.
  */
 export const JOB_STATUS_TRANSITIONS: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
-  NEW: ['NEW', 'DISPATCHED', 'CANCELLED'],
-  DISPATCHED: ['DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS', 'CANCELLED'],
-  EN_ROUTE: ['EN_ROUTE', 'ON_SITE', 'IN_PROGRESS', 'CANCELLED'],
-  ON_SITE: ['ON_SITE', 'IN_PROGRESS', 'CANCELLED'],
-  IN_PROGRESS: ['IN_PROGRESS', 'CANCELLED'],
+  // Cancellation is retained as a legacy terminal enum value, but new
+  // requests must use the dedicated abandonment/financial closeout flow.
+  NEW: ['NEW', 'DISPATCHED'],
+  DISPATCHED: ['DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'],
+  EN_ROUTE: ['EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'],
+  ON_SITE: ['ON_SITE', 'IN_PROGRESS'],
+  IN_PROGRESS: ['IN_PROGRESS'],
   ABANDONED_TRAVEL_FEE: [],
   INVOICED: [],
   COMPLETED: [],

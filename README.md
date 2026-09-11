@@ -61,8 +61,8 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 - **Framework**: [Next.js 15](https://nextjs.org/) (App Router, React 19, TypeScript)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **Database & ORM**: [Prisma ORM](https://www.prisma.io/) with PostgreSQL (Supabase) / SQLite (Local)
-- **Payments**: Cash and Interac are currently supported. Stripe is reserved for a future release.
-- **Messaging**: [Twilio](https://www.twilio.com/) Programmable SMS API
+- **Payments**: Cash and Interac are supported for job closeout. Card methods remain reserved until processor references can be captured and audited.
+- **Messaging**: Device SMS hand-off through the user's native Messages app; the portal does not use Twilio or claim delivery.
 - **Deployment**: [Vercel](https://vercel.com/) (Frontend & Serverless API) + [Supabase](https://supabase.com/) (Managed PostgreSQL)
 
 ---
@@ -99,8 +99,13 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    - `POSTGRES_URL_NON_POOLING`: *(Supabase/Vercel direct, non-pooling PostgreSQL URL)*
    - `ADMIN_PASSWORD`: *(Strong password for the built-in Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project.vercel.app`
-   - *(Optional)* `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+
+5. Before deploying a version that includes dispatcher edit concurrency, apply the
+   one-time schema change from `prisma/job-updated-at-migration.sql` against the
+   production database. This adds `Job.updatedAt`, which prevents stale dispatcher
+   forms from overwriting a newer edit. Verify the column exists before serving the
+   new application build.
 
 Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.md).
 

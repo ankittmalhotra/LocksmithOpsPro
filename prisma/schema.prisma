@@ -122,6 +122,8 @@ model Job {
   scheduledFor DateTime?
 
   createdAt    DateTime  @default(now())
+  // Optimistic concurrency token for dispatcher edits.
+  updatedAt    DateTime  @updatedAt
   dispatchedAt DateTime?
   completedAt  DateTime?
 

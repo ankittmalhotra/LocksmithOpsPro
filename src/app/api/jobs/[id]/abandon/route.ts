@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { calculateTravelFee, calculateJobSettlementPosition, roundToTwo } from '@/lib/calculations';
+import { calculateTravelFee, calculateJobSettlementPosition, roundToTwo, SUPPORTED_CLOSEOUT_PAYMENT_METHODS, SupportedPaymentMethod } from '@/lib/calculations';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
 import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
@@ -23,20 +23,26 @@ export async function POST(
       );
     }
 
-    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
+    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'DISPATCHER' && currentUser.role !== 'TECHNICIAN') {
       return NextResponse.json(
-        { success: false, error: 'Forbidden: Admin or assigned technician access required' },
+        { success: false, error: 'Forbidden: Dispatcher, admin, or assigned technician access required' },
         { status: 403 }
       );
     }
 
     const { id } = await params;
     const body = await request.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: 'Invalid abandonment request' }, { status: 400 });
+    }
     const {
       travelFeeAmount = 25,
       paymentMethod = 'CASH',
       reason = 'Customer canceled on site',
     } = body;
+    if (typeof reason !== 'string' || reason.trim().length > 500) {
+      return NextResponse.json({ success: false, error: 'Abandonment reason is invalid.' }, { status: 400 });
+    }
 
     const job = await findJobByIdOrNumber(id);
 
@@ -58,17 +64,22 @@ export async function POST(
       );
     }
 
-    if (paymentMethod !== 'CASH' && paymentMethod !== 'INTERAC') {
+    // Card processing is not integrated with this portal yet. Do not mark a
+    // card travel-fee payment as PAID without a processor confirmation.
+    if (!(SUPPORTED_CLOSEOUT_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
       return NextResponse.json(
-        { success: false, error: 'Only Cash and Interac payments are currently supported.' },
+        { success: false, error: 'Card payments are not available until payment processing is integrated. Use Cash or Interac.' },
         { status: 400 }
       );
     }
 
-    const fee = parseFloat(travelFeeAmount) || 25;
+    const fee = Number(travelFeeAmount);
+    if (!Number.isFinite(fee) || fee <= 0 || fee > 10000) {
+      return NextResponse.json({ success: false, error: 'Travel fee must be greater than zero.' }, { status: 400 });
+    }
     const breakdown = calculateTravelFee({
       travelFeeAmount: fee,
-      paymentMethod,
+      paymentMethod: paymentMethod as SupportedPaymentMethod,
     });
 
     const workerCommission = roundToTwo(
@@ -76,12 +87,12 @@ export async function POST(
     );
 
     const settlement = calculateJobSettlementPosition({
-      paymentMethod,
+      paymentMethod: paymentMethod as SupportedPaymentMethod,
       grandTotal: breakdown.grandTotal,
       workerCommission,
     });
 
-    const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
+    const isPaid = true;
 
     // Claim the open job and persist the invoice/closeout atomically. The
     // conditional status/rate predicate makes concurrent closeout requests
@@ -111,7 +122,7 @@ export async function POST(
       await tx.job.update({
         where: { id: job.id },
         data: {
-          problemDescription: `${claimedJob.problemDescription}\n[ABANDONED/TRAVEL CHARGE]: ${reason}`,
+          problemDescription: `${claimedJob.problemDescription}\n[ABANDONED/TRAVEL CHARGE]: ${reason.trim()}`,
         },
       });
 
@@ -128,8 +139,9 @@ export async function POST(
         cardSurchargeRate: breakdown.cardSurchargeRate,
         cardSurchargeAmount: breakdown.cardSurchargeAmount,
         grandTotal: breakdown.grandTotal,
+        totalAmountCollected: breakdown.grandTotal,
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
-        paymentMethod,
+        paymentMethod: paymentMethod as 'CASH' | 'INTERAC',
         cashOwedToCompany: settlement.cashOwedToCompany,
         smsSent: false,
         stripeSessionId: null,
@@ -146,8 +158,9 @@ export async function POST(
         cardSurchargeRate: breakdown.cardSurchargeRate,
         cardSurchargeAmount: breakdown.cardSurchargeAmount,
         grandTotal: breakdown.grandTotal,
+        totalAmountCollected: breakdown.grandTotal,
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
-        paymentMethod,
+        paymentMethod: paymentMethod as 'CASH' | 'INTERAC',
         cashOwedToCompany: settlement.cashOwedToCompany,
         smsSent: false,
         stripeSessionId: null,
@@ -185,7 +198,7 @@ export async function POST(
         jobNumber: job.jobNumber,
         technicianName: updatedJob?.technician?.name || job.technician?.name,
         amountReceived: breakdown.grandTotal,
-        paymentMethod: paymentMethod === 'CASH' ? 'Cash' : 'Interac',
+        paymentMethod: paymentMethod.replace('_', ' '),
       });
       dispatcherNotification = notification.draft;
       dispatcherNotificationWarnings = notification.warnings;

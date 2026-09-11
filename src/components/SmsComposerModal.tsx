@@ -19,7 +19,25 @@ export default function SmsComposerModal({
   title = 'SMS ready to send',
   onClose,
 }: SmsComposerModalProps) {
-  if (!draft) return null;
+  if (!draft && warnings.length === 0) return null;
+
+  if (!draft) {
+    return (
+      <div className="fixed inset-x-4 bottom-4 z-[60] sm:left-auto sm:max-w-md" role="alert">
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-xl text-xs text-amber-900">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-black mb-1">SMS draft unavailable</div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            </div>
+            <button type="button" onClick={onClose} className="text-amber-700 hover:text-amber-950 text-lg" aria-label="Dismiss SMS warning">×</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const allWarnings = [...draft.warnings, ...warnings].filter(
     (warning, index, items) => items.indexOf(warning) === index

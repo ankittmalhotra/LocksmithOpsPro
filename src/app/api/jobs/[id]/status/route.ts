@@ -12,7 +12,6 @@ const VALID_STATUSES = [
   'EN_ROUTE',
   'ON_SITE',
   'IN_PROGRESS',
-  'CANCELLED',
 ] as const;
 
 const DISPATCHER_STATUSES = [
@@ -21,7 +20,6 @@ const DISPATCHER_STATUSES = [
   'EN_ROUTE',
   'ON_SITE',
   'IN_PROGRESS',
-  'CANCELLED',
 ] as const;
 
 const TECHNICIAN_STATUSES = [

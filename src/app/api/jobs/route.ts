@@ -112,6 +112,25 @@ export async function POST(request: Request) {
       );
     }
 
+    if (typeof isScheduled !== 'boolean') {
+      return NextResponse.json(
+        { success: false, error: 'isScheduled must be a boolean.' },
+        { status: 400 }
+      );
+    }
+    if (isScheduled && !scheduledFor) {
+      return NextResponse.json(
+        { success: false, error: 'Scheduled jobs require a scheduled time.' },
+        { status: 400 }
+      );
+    }
+    if (scheduledFor && Number.isNaN(new Date(scheduledFor).getTime())) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid scheduled time.' },
+        { status: 400 }
+      );
+    }
+
     let assignedTechnician = null;
     let assignedTechnicianPhone: string | null = null;
     if (technicianId) {

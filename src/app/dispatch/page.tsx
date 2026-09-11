@@ -1193,9 +1193,12 @@ export default function DispatchPage() {
                         </span>
                       )}
 
-                      <span className="px-3 py-1 rounded-lg bg-slate-100 text-slate-500 text-xs font-semibold" title="Technicians open jobs from the Technician Portal">
-                        Technician Portal only
-                      </span>
+                      <Link
+                        href={`/dispatch/jobs/${job.id}`}
+                        className="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-black transition"
+                      >
+                        View / Edit
+                      </Link>
                     </div>
                   </div>
                 );

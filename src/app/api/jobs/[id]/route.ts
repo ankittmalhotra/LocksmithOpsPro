@@ -20,7 +20,6 @@ const DISPATCHER_STATUSES = [
   'EN_ROUTE',
   'ON_SITE',
   'IN_PROGRESS',
-  'CANCELLED',
 ] as const;
 
 const DISPATCHER_UPDATE_FIELDS = [
@@ -28,6 +27,20 @@ const DISPATCHER_UPDATE_FIELDS = [
   'status',
   'isScheduled',
   'scheduledFor',
+  'serviceType',
+  'problemDescription',
+  'serviceAddress',
+  'vehicleYear',
+  'vehicleMake',
+  'vehicleModel',
+  'vehicleVin',
+  'keyType',
+  'fccId',
+  'keyBitting',
+  'doorDetails',
+  'customerName',
+  'customerPhone',
+  'customerExtension',
 ] as const;
 
 const ADMIN_UPDATE_FIELDS = [
@@ -49,7 +62,7 @@ const ADMIN_UPDATE_FIELDS = [
 ] as const;
 
 const VALID_JOB_STATUSES = [
-  'NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS', 'CANCELLED',
+  'NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS',
 ] as const;
 
 export async function GET(
@@ -138,22 +151,44 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Invalid job update' }, { status: 400 });
     }
 
+    const expectedUpdatedAt = body.expectedUpdatedAt;
+    if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(new Date(expectedUpdatedAt).getTime())) {
+      return NextResponse.json(
+        { success: false, error: 'A current job version is required. Reload the job and try again.' },
+        { status: 409 }
+      );
+    }
+    const expectedUpdatedAtDate = new Date(expectedUpdatedAt);
+
     const allowedFields = currentUser.role === 'ADMIN' ? ADMIN_UPDATE_FIELDS : DISPATCHER_UPDATE_FIELDS;
     const unsupportedFields = Object.keys(body).filter(
-      (key) => !(allowedFields as readonly string[]).includes(key)
+      (key) => key !== 'expectedUpdatedAt' && !(allowedFields as readonly string[]).includes(key)
     );
     if (unsupportedFields.length > 0) {
       return NextResponse.json({ success: false, error: 'Unsupported job update field' }, { status: 403 });
     }
 
     const updateData: any = {};
+    const customerUpdateData: { name?: string; phone?: string; extension?: string | null } = {};
     for (const field of allowedFields) {
       if (Object.prototype.hasOwnProperty.call(body, field)) {
-        updateData[field] = field === 'technicianId'
+        if (field === 'customerName') customerUpdateData.name = body[field];
+        else if (field === 'customerPhone') customerUpdateData.phone = body[field];
+        else if (field === 'customerExtension') customerUpdateData.extension = body[field] || null;
+        else updateData[field] = field === 'technicianId'
           ? normalizeTechnicianId(body[field])
           : body[field];
       }
     }
+
+    for (const [field, value] of Object.entries(customerUpdateData)) {
+      if (field !== 'customerExtension' && (typeof value !== 'string' || !value.trim())) {
+        return NextResponse.json({ success: false, error: `${field === 'name' ? 'Customer name' : 'Customer phone'} is required` }, { status: 400 });
+      }
+    }
+    if (customerUpdateData.name) customerUpdateData.name = customerUpdateData.name.trim();
+    if (customerUpdateData.phone) customerUpdateData.phone = customerUpdateData.phone.trim();
+    if (customerUpdateData.extension) customerUpdateData.extension = customerUpdateData.extension.trim();
 
     let selectedTechnicianCommissionRate = 0;
     let technicianChanged = false;
@@ -221,7 +256,23 @@ export async function PATCH(
       }
     }
 
-    if (Object.keys(updateData).length === 0) {
+    const resultingIsScheduled = Object.prototype.hasOwnProperty.call(updateData, 'isScheduled')
+      ? updateData.isScheduled
+      : targetJob.isScheduled;
+    const resultingScheduledFor = Object.prototype.hasOwnProperty.call(updateData, 'scheduledFor')
+      ? updateData.scheduledFor
+      : targetJob.scheduledFor;
+    if (resultingIsScheduled && !resultingScheduledFor) {
+      return NextResponse.json({ success: false, error: 'Scheduled jobs require a scheduled time.' }, { status: 400 });
+    }
+    if (resultingIsScheduled === false && !Object.prototype.hasOwnProperty.call(updateData, 'scheduledFor')) {
+      updateData.scheduledFor = null;
+    }
+    if (updateData.status === 'DISPATCHED' && !targetJob.dispatchedAt) {
+      updateData.dispatchedAt = new Date();
+    }
+
+    if (Object.keys(updateData).length === 0 && Object.keys(customerUpdateData).length === 0) {
       return NextResponse.json({ success: false, error: 'No job fields supplied' }, { status: 400 });
     }
 
@@ -247,16 +298,92 @@ export async function PATCH(
         ) {
           return null;
         }
+        if (technicianChanged) {
+          const assignedTechnicianWithPhone = await tx.user.findUnique({
+            where: { id: requestedTechnicianId },
+            select: { phone: true },
+          });
+          if (!assignedTechnicianWithPhone) return null;
+          try {
+            normalizeNanpPhone(assignedTechnicianWithPhone.phone);
+          } catch {
+            return null;
+          }
+        }
         updateData.workerCommissionRate = assignedTechnician
           ? Math.round(assignedTechnician.commissionRate * 100) / 100
           : 0;
       }
 
+      let updateExistingCustomer = false;
+      if (Object.keys(customerUpdateData).length > 0) {
+        const existingCustomer = await tx.customer.findUnique({
+          where: { id: targetJob.customerId },
+          select: { name: true, phone: true, extension: true },
+        });
+        if (!existingCustomer) return null;
+
+        const nextCustomer = {
+          name: customerUpdateData.name ?? existingCustomer.name,
+          phone: customerUpdateData.phone ?? existingCustomer.phone,
+          extension: customerUpdateData.extension === undefined
+            ? existingCustomer.extension
+            : customerUpdateData.extension,
+        };
+        const linkedJobCount = await tx.job.count({ where: { customerId: targetJob.customerId } });
+        if (linkedJobCount === 1) {
+          updateExistingCustomer = true;
+        } else {
+          const matchingCustomer = await tx.customer.findFirst({
+            where: { phone: nextCustomer.phone, id: { not: targetJob.customerId } },
+            select: { id: true },
+          });
+          const customer = matchingCustomer || await tx.customer.create({
+            data: {
+              name: nextCustomer.name,
+              phone: nextCustomer.phone,
+              extension: nextCustomer.extension,
+              address: targetJob.serviceAddress,
+            },
+            select: { id: true },
+          });
+          updateData.customerId = customer.id;
+        }
+      }
+
+      const jobMutationData = Object.keys(updateData).length > 0
+        ? updateData
+        : { updatedAt: new Date() };
       const claimed = await tx.job.updateMany({
-        where: { id: targetJob.id, status: targetJob.status },
-        data: updateData,
+        where: {
+          id: targetJob.id,
+          status: targetJob.status,
+          updatedAt: expectedUpdatedAtDate,
+        },
+        data: jobMutationData,
       });
       if (claimed.count !== 1) return null;
+
+      if (updateExistingCustomer) {
+        // Relation predicate keeps a customer-only edit from being applied
+        // after a concurrent closeout has made the job terminal.  If the job
+        // update above claimed the row, a concurrent closeout cannot win this
+        // transaction without causing this predicate to fail and rolling the
+        // whole edit back.
+        const customerUpdate = await tx.customer.updateMany({
+          where: {
+            id: targetJob.customerId,
+            jobs: {
+              some: {
+                id: targetJob.id,
+                status: updateData.status || targetJob.status,
+              },
+            },
+          },
+          data: customerUpdateData,
+        });
+        if (customerUpdate.count !== 1) return null;
+      }
 
       return tx.job.findUnique({
         where: { id: targetJob.id },

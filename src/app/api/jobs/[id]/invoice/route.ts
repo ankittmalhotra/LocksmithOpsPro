@@ -5,6 +5,7 @@ import {
   calculateReverseInvoice,
   calculateJobSettlementPosition,
   roundToTwo,
+  SUPPORTED_CLOSEOUT_PAYMENT_METHODS,
   SupportedPaymentMethod,
 } from '@/lib/calculations';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
@@ -15,6 +16,15 @@ import {
   canMutateJob,
   isOpenJobStatus,
 } from '@/lib/job-workflow';
+
+function parseCloseoutNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
 
 export async function POST(
   request: Request,
@@ -29,15 +39,18 @@ export async function POST(
       );
     }
 
-    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
+    if (currentUser.role !== 'ADMIN' && currentUser.role !== 'DISPATCHER' && currentUser.role !== 'TECHNICIAN') {
       return NextResponse.json(
-        { success: false, error: 'Forbidden: Admin or assigned technician access required' },
+        { success: false, error: 'Forbidden: Dispatcher, admin, or assigned technician access required' },
         { status: 403 }
       );
     }
 
     const { id } = await params;
     const body = await request.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: 'Invalid closeout request' }, { status: 400 });
+    }
 
     const {
       calculationMode = 'FORWARD',
@@ -51,6 +64,55 @@ export async function POST(
       customerSignature,
       proofPhotoUrl,
     } = body;
+
+    if (calculationMode !== 'FORWARD' && calculationMode !== 'REVERSE') {
+      return NextResponse.json({ success: false, error: 'Invalid calculation mode.' }, { status: 400 });
+    }
+    if (!Array.isArray(parts)) {
+      return NextResponse.json({ success: false, error: 'Parts must be an array.' }, { status: 400 });
+    }
+
+    if (parts.length > 100) {
+      return NextResponse.json({ success: false, error: 'A closeout may contain at most 100 parts.' }, { status: 400 });
+    }
+
+    const normalizedParts: Array<{ description: string; quantity: number; unitPrice: number; unitCost: number }> = [];
+    for (const part of parts) {
+      if (!part || typeof part !== 'object' || Array.isArray(part)) {
+        return NextResponse.json({ success: false, error: 'Each part must be an object.' }, { status: 400 });
+      }
+      const description = typeof part.description === 'string' ? part.description.trim() : '';
+      const quantity = part.quantity === undefined || part.quantity === null
+        ? 1
+        : parseCloseoutNumber(part.quantity);
+      const unitPrice = parseCloseoutNumber(part.unitPrice);
+      const unitCost = part.unitCost === undefined || part.unitCost === null || part.unitCost === ''
+        ? 0
+        : parseCloseoutNumber(part.unitCost);
+      if (!description || quantity === null || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+        return NextResponse.json({ success: false, error: 'Each part needs a description and quantity from 1 to 1000.' }, { status: 400 });
+      }
+      if (unitPrice === null || unitPrice < 0 || unitPrice > 1_000_000) {
+        return NextResponse.json({ success: false, error: 'Each part price must be a finite non-negative amount.' }, { status: 400 });
+      }
+      if (unitCost === null || unitCost < 0 || unitCost > 1_000_000) {
+        return NextResponse.json({ success: false, error: 'Each part cost must be a finite non-negative amount.' }, { status: 400 });
+      }
+      normalizedParts.push({ description, quantity, unitPrice, unitCost });
+    }
+
+    const receivedAmount = amountReceived === undefined || amountReceived === null
+      ? 0
+      : parseCloseoutNumber(amountReceived);
+    const labor = laborAmount === undefined || laborAmount === null
+      ? 0
+      : parseCloseoutNumber(laborAmount);
+    if (receivedAmount === null || receivedAmount < 0 || receivedAmount > 1_000_000) {
+      return NextResponse.json({ success: false, error: 'Amount received must be a finite non-negative amount.' }, { status: 400 });
+    }
+    if (labor === null || labor < 0 || labor > 1_000_000) {
+      return NextResponse.json({ success: false, error: 'Labor amount must be a finite non-negative amount.' }, { status: 400 });
+    }
 
     const job = await findJobByIdOrNumber(id);
 
@@ -72,10 +134,11 @@ export async function POST(
       );
     }
 
-    // Customer card/Stripe payments are intentionally disabled for now.
-    if (paymentMethod !== 'CASH' && paymentMethod !== 'INTERAC') {
+    // Card processing is not integrated with this portal yet. Do not mark a
+    // card payment as PAID without a processor confirmation/reference.
+    if (!(SUPPORTED_CLOSEOUT_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
       return NextResponse.json(
-        { success: false, error: 'Only Cash and Interac payments are currently supported.' },
+        { success: false, error: 'Card payments are not available until payment processing is integrated. Use Cash or Interac.' },
         { status: 400 }
       );
     }
@@ -83,27 +146,31 @@ export async function POST(
     const isPaid = true;
 
     // 1. Calculate parts total
-    const partsTotal = parts.reduce((sum: number, p: any) => {
-      const price = parseFloat(p.unitPrice || '0') * (parseInt(p.quantity || '1', 10) || 1);
-      return sum + price;
+    const partsTotal = normalizedParts.reduce((sum, part) => {
+      return sum + part.unitPrice * part.quantity;
     }, 0);
+    if (!Number.isFinite(partsTotal) || partsTotal > 1_000_000) {
+      return NextResponse.json({ success: false, error: 'Parts total is outside the allowed range.' }, { status: 400 });
+    }
 
     // 2. Perform forward or reverse calculation
     let calcBreakdown;
     if (calculationMode === 'REVERSE') {
-      const received = parseFloat(amountReceived || '0');
       calcBreakdown = calculateReverseInvoice({
-        amountReceived: received,
+        amountReceived: receivedAmount,
         partsTotal,
         paymentMethod: paymentMethod as SupportedPaymentMethod,
       });
     } else {
-      const labor = parseFloat(laborAmount || '0');
       calcBreakdown = calculateForwardInvoice({
         laborAmount: labor,
         partsTotal,
         paymentMethod: paymentMethod as SupportedPaymentMethod,
       });
+    }
+
+    if (!Number.isFinite(calcBreakdown.grandTotal) || calcBreakdown.grandTotal <= 0) {
+      return NextResponse.json({ success: false, error: 'Closeout total must be greater than zero.' }, { status: 400 });
     }
 
     // 3. Calculate the technician's percentage commission from the final job total.
@@ -166,14 +233,14 @@ export async function POST(
         });
       }
 
-      for (const p of parts) {
-        if (p.description && parseFloat(p.unitPrice || '0') > 0) {
+      for (const p of normalizedParts) {
+        if (p.description && p.unitPrice > 0) {
           itemsToCreate.push({
             jobId: job.id,
             description: p.description,
-            quantity: parseInt(p.quantity || '1', 10),
-            unitPrice: parseFloat(p.unitPrice || '0'),
-            unitCost: parseFloat(p.unitCost || '0'),
+            quantity: p.quantity,
+            unitPrice: p.unitPrice,
+            unitCost: p.unitCost,
             isPart: true,
           });
         }
@@ -183,8 +250,8 @@ export async function POST(
         await tx.jobItem.createMany({ data: itemsToCreate });
       }
 
-    // 5. Upsert Invoice. Stripe fields remain available for the future, but
-    // are intentionally not populated while customer card payments are off.
+    // 5. Upsert Invoice. Only payment methods with an in-portal closeout
+    // contract are accepted until a processor reference is persisted.
       const dbPaymentMethod = paymentMethod as 'CASH' | 'INTERAC';
       const invoice = await tx.invoice.upsert({
       where: { jobId: job.id },
@@ -199,6 +266,7 @@ export async function POST(
         cardSurchargeRate: calcBreakdown.cardSurchargeRate,
         cardSurchargeAmount: calcBreakdown.cardSurchargeAmount,
         grandTotal: calcBreakdown.grandTotal,
+        totalAmountCollected: calcBreakdown.grandTotal,
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
         paymentMethod: dbPaymentMethod,
         cashOwedToCompany: settlement.cashOwedToCompany,
@@ -217,6 +285,7 @@ export async function POST(
         cardSurchargeRate: calcBreakdown.cardSurchargeRate,
         cardSurchargeAmount: calcBreakdown.cardSurchargeAmount,
         grandTotal: calcBreakdown.grandTotal,
+        totalAmountCollected: calcBreakdown.grandTotal,
         paymentStatus: isPaid ? 'PAID' : 'PENDING',
         paymentMethod: dbPaymentMethod,
         cashOwedToCompany: settlement.cashOwedToCompany,
@@ -259,7 +328,7 @@ export async function POST(
         jobNumber: job.jobNumber,
         technicianName: updatedJob?.technician?.name || job.technician?.name,
         amountReceived: calcBreakdown.grandTotal,
-        paymentMethod: paymentMethod === 'CASH' ? 'Cash' : 'Interac',
+        paymentMethod: paymentMethod.replace('_', ' '),
       });
       dispatcherNotification = notification.draft;
       dispatcherNotificationWarnings = notification.warnings;

@@ -9,6 +9,7 @@ import {
   normalizeNanpPhone,
 } from '@/lib/sms-draft';
 import { parseTorontoDateTime } from '@/lib/timezone';
+import { findJobsWithDetails } from '@/lib/job-helper';
 
 export async function GET(request: Request) {
   try {
@@ -49,17 +50,7 @@ export async function GET(request: Request) {
       where.technicianId = technicianId;
     }
 
-    const rawJobs = await prisma.job.findMany({
-      where,
-      include: {
-        customer: true,
-        dispatcher: { select: { id: true, name: true, phone: true } },
-        technician: { select: { id: true, name: true, phone: true } },
-        invoice: true,
-        items: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const rawJobs = await findJobsWithDetails({ where, orderBy: { createdAt: 'desc' } });
     const jobs = rawJobs.map(normalizeManualJobInvoice);
 
     return NextResponse.json({ success: true, jobs });

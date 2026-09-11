@@ -3,6 +3,11 @@ import { prisma } from '@/lib/prisma';
 import { calculateTravelFee, calculateJobSettlementPosition, roundToTwo } from '@/lib/calculations';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
+import {
+  buildJobCloseoutClaimWhere,
+  canMutateJob,
+  isOpenJobStatus,
+} from '@/lib/job-workflow';
 
 export async function POST(
   request: Request,
@@ -45,6 +50,13 @@ export async function POST(
       );
     }
 
+    if (!canMutateJob(job.status) || !isOpenJobStatus(job.status)) {
+      return NextResponse.json(
+        { success: false, error: 'Closed jobs cannot be abandoned again' },
+        { status: 409 }
+      );
+    }
+
     if (paymentMethod !== 'CASH' && paymentMethod !== 'INTERAC') {
       return NextResponse.json(
         { success: false, error: 'Only Cash and Interac payments are currently supported.' },
@@ -69,7 +81,40 @@ export async function POST(
     });
 
     const isPaid = paymentMethod === 'CASH' || paymentMethod === 'INTERAC';
-    await prisma.invoice.upsert({
+
+    // Claim the open job and persist the invoice/closeout atomically. The
+    // conditional status/rate predicate makes concurrent closeout requests
+    // race-safe and prevents a second request from rewriting settled data.
+    const closeout = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.job.updateMany({
+        where: buildJobCloseoutClaimWhere(job),
+        data: {
+          status: 'ABANDONED_TRAVEL_FEE',
+          isAbandoned: true,
+          workerCommission,
+          travelFeeAmount: fee,
+          completedAt: new Date(),
+        },
+      });
+      if (claimed.count !== 1) return null;
+
+      // Merge the abandonment note with the row claimed in this transaction,
+      // not the request's initial snapshot, so a concurrent dispatcher edit
+      // is preserved.
+      const claimedJob = await tx.job.findUnique({
+        where: { id: job.id },
+        select: { problemDescription: true },
+      });
+      if (!claimedJob) return null;
+
+      await tx.job.update({
+        where: { id: job.id },
+        data: {
+          problemDescription: `${claimedJob.problemDescription}\n[ABANDONED/TRAVEL CHARGE]: ${reason}`,
+        },
+      });
+
+      const invoice = await tx.invoice.upsert({
       where: { jobId: job.id },
       create: {
         jobId: job.id,
@@ -108,24 +153,28 @@ export async function POST(
         stripePaymentUrl: null,
         paidAt: isPaid ? new Date() : null,
       },
+      });
+
+      const updatedJob = await tx.job.findUnique({
+        where: { id: job.id },
+        include: {
+          customer: true,
+          technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
+          invoice: true,
+        },
+      });
+
+      return { invoice, updatedJob };
     });
 
-    const updatedJob = await prisma.job.update({
-      where: { id: job.id },
-      data: {
-        status: 'ABANDONED_TRAVEL_FEE',
-        isAbandoned: true,
-        workerCommission,
-        travelFeeAmount: fee,
-        problemDescription: `${job.problemDescription}\n[ABANDONED/TRAVEL CHARGE]: ${reason}`,
-        completedAt: new Date(),
-      },
-      include: {
-        customer: true,
-        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
-        invoice: true,
-      },
-    });
+    if (!closeout) {
+      return NextResponse.json(
+        { success: false, error: 'Job was already closed or changed. Reload and try again.' },
+        { status: 409 }
+      );
+    }
+
+    const { updatedJob } = closeout;
 
     return NextResponse.json({
       success: true,

@@ -10,6 +10,11 @@ import {
 import { sendSMS } from '@/lib/twilio';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
+import {
+  buildJobCloseoutClaimWhere,
+  canMutateJob,
+  isOpenJobStatus,
+} from '@/lib/job-workflow';
 
 export async function POST(
   request: Request,
@@ -60,6 +65,13 @@ export async function POST(
       );
     }
 
+    if (!canMutateJob(job.status) || !isOpenJobStatus(job.status)) {
+      return NextResponse.json(
+        { success: false, error: 'Closed jobs cannot be invoiced again' },
+        { status: 409 }
+      );
+    }
+
     // Customer card/Stripe payments are intentionally disabled for now.
     if (paymentMethod !== 'CASH' && paymentMethod !== 'INTERAC') {
       return NextResponse.json(
@@ -106,42 +118,75 @@ export async function POST(
       workerCommission,
     });
 
-    // 7. Persist Job Items
-    await prisma.jobItem.deleteMany({ where: { jobId: job.id } });
-    const itemsToCreate = [];
-
-    if (calcBreakdown.laborTotal > 0) {
-      itemsToCreate.push({
-        jobId: job.id,
-        description: 'Locksmith Service / Labor',
-        quantity: 1,
-        unitPrice: calcBreakdown.laborTotal,
-        unitCost: 0,
-        isPart: false,
+    // The conditional claim makes closeout idempotent and prevents two
+    // concurrent requests (invoice vs. abandon, or double-clicks) from both
+    // rewriting the invoice/items. All writes remain in one transaction so a
+    // failed item or invoice write cannot leave a partially closed job.
+    const closeout = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.job.updateMany({
+        where: buildJobCloseoutClaimWhere(job),
+        data: {
+          status: 'COMPLETED',
+          workerCommission,
+          completedAt: new Date(),
+        },
       });
-    }
+      if (claimed.count !== 1) return null;
 
-    for (const p of parts) {
-      if (p.description && parseFloat(p.unitPrice || '0') > 0) {
+      // The initial read is used only to build the optimistic claim. Read the
+      // claimed row again before merging optional completion details so a
+      // concurrent dispatcher edit cannot be overwritten by stale fallback
+      // values from the request's original snapshot.
+      const claimedJob = await tx.job.findUnique({ where: { id: job.id } });
+      if (!claimedJob) return null;
+
+      await tx.job.update({
+        where: { id: job.id },
+        data: {
+          keyBitting: keyBitting !== undefined ? keyBitting : claimedJob.keyBitting,
+          doorDetails: doorDetails !== undefined ? doorDetails : claimedJob.doorDetails,
+          preWorkSignature: preWorkSignature !== undefined ? preWorkSignature : claimedJob.preWorkSignature,
+          customerSignature: customerSignature !== undefined ? customerSignature : claimedJob.customerSignature,
+          proofPhotoUrl: proofPhotoUrl !== undefined ? proofPhotoUrl : claimedJob.proofPhotoUrl,
+        },
+      });
+
+      // 7. Persist Job Items
+      await tx.jobItem.deleteMany({ where: { jobId: job.id } });
+      const itemsToCreate = [];
+
+      if (calcBreakdown.laborTotal > 0) {
         itemsToCreate.push({
           jobId: job.id,
-          description: p.description,
-          quantity: parseInt(p.quantity || '1', 10),
-          unitPrice: parseFloat(p.unitPrice || '0'),
-          unitCost: parseFloat(p.unitCost || '0'),
-          isPart: true,
+          description: 'Locksmith Service / Labor',
+          quantity: 1,
+          unitPrice: calcBreakdown.laborTotal,
+          unitCost: 0,
+          isPart: false,
         });
       }
-    }
 
-    if (itemsToCreate.length > 0) {
-      await prisma.jobItem.createMany({ data: itemsToCreate });
-    }
+      for (const p of parts) {
+        if (p.description && parseFloat(p.unitPrice || '0') > 0) {
+          itemsToCreate.push({
+            jobId: job.id,
+            description: p.description,
+            quantity: parseInt(p.quantity || '1', 10),
+            unitPrice: parseFloat(p.unitPrice || '0'),
+            unitCost: parseFloat(p.unitCost || '0'),
+            isPart: true,
+          });
+        }
+      }
+
+      if (itemsToCreate.length > 0) {
+        await tx.jobItem.createMany({ data: itemsToCreate });
+      }
 
     // 5. Upsert Invoice. Stripe fields remain available for the future, but
     // are intentionally not populated while customer card payments are off.
-    const dbPaymentMethod = paymentMethod as 'CASH' | 'INTERAC';
-    const invoice = await prisma.invoice.upsert({
+      const dbPaymentMethod = paymentMethod as 'CASH' | 'INTERAC';
+      const invoice = await tx.invoice.upsert({
       where: { jobId: job.id },
       create: {
         jobId: job.id,
@@ -182,27 +227,29 @@ export async function POST(
       },
     });
 
-    // 6. Update Job Status
-    const newStatus = isPaid ? 'COMPLETED' : 'INVOICED';
-    const updatedJob = await prisma.job.update({
-      where: { id: job.id },
-      data: {
-        status: newStatus,
-        workerCommission,
-        keyBitting: keyBitting !== undefined ? keyBitting : job.keyBitting,
-        doorDetails: doorDetails !== undefined ? doorDetails : job.doorDetails,
-        preWorkSignature: preWorkSignature !== undefined ? preWorkSignature : (job as any).preWorkSignature,
-        customerSignature: customerSignature !== undefined ? customerSignature : job.customerSignature,
-        proofPhotoUrl: proofPhotoUrl !== undefined ? proofPhotoUrl : job.proofPhotoUrl,
-        ...(isPaid ? { completedAt: new Date() } : {}),
-      },
-      include: {
-        customer: true,
-        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
-        invoice: true,
-        items: true,
-      },
+      // The claim above owns the terminal transition; fetch the complete
+      // response shape after all dependent writes have succeeded.
+      const updatedJob = await tx.job.findUnique({
+        where: { id: job.id },
+        include: {
+          customer: true,
+          technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
+          invoice: true,
+          items: true,
+        },
+      });
+
+      return { invoice, updatedJob };
     });
+
+    if (!closeout) {
+      return NextResponse.json(
+        { success: false, error: 'Job was already closed or changed. Reload and try again.' },
+        { status: 409 }
+      );
+    }
+
+    const { invoice, updatedJob } = closeout;
 
     // Technician completion notification to the dispatcher only.
     // No customer notification is sent from the technician device.

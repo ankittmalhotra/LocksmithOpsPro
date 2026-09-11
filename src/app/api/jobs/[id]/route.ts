@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
+import {
+  canMutateJob,
+  canTransitionJobStatus,
+  FINANCIAL_TERMINAL_JOB_STATUSES,
+  normalizeTechnicianId,
+} from '@/lib/job-workflow';
 
 const DISPATCHER_STATUSES = [
   'NEW',
@@ -24,10 +30,6 @@ const ADMIN_UPDATE_FIELDS = [
   'serviceType',
   'problemDescription',
   'serviceAddress',
-  'workerCommissionRate',
-  'workerCommission',
-  'isAbandoned',
-  'travelFeeAmount',
   'keyBitting',
   'doorDetails',
   'proofPhotoUrl',
@@ -42,8 +44,7 @@ const ADMIN_UPDATE_FIELDS = [
 ] as const;
 
 const VALID_JOB_STATUSES = [
-  'NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS',
-  'ABANDONED_TRAVEL_FEE', 'INVOICED', 'COMPLETED', 'CANCELLED',
+  'NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS', 'CANCELLED',
 ] as const;
 
 export async function GET(
@@ -120,6 +121,13 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Job not found' }, { status: 404 });
     }
 
+    if (!canMutateJob(targetJob.status)) {
+      return NextResponse.json(
+        { success: false, error: 'Closed jobs cannot be edited' },
+        { status: 409 }
+      );
+    }
+
     const body = await request.json();
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ success: false, error: 'Invalid job update' }, { status: 400 });
@@ -135,9 +143,14 @@ export async function PATCH(
 
     const updateData: any = {};
     for (const field of allowedFields) {
-      if (Object.prototype.hasOwnProperty.call(body, field)) updateData[field] = body[field];
+      if (Object.prototype.hasOwnProperty.call(body, field)) {
+        updateData[field] = field === 'technicianId'
+          ? normalizeTechnicianId(body[field])
+          : body[field];
+      }
     }
 
+    let selectedTechnicianCommissionRate = 0;
     if (Object.prototype.hasOwnProperty.call(updateData, 'technicianId')) {
       const requestedTechnicianId = updateData.technicianId;
       if (requestedTechnicianId !== null && typeof requestedTechnicianId !== 'string') {
@@ -146,34 +159,36 @@ export async function PATCH(
       if (requestedTechnicianId) {
         const assignedTechnician = await prisma.user.findUnique({
           where: { id: requestedTechnicianId },
-          select: { role: true, active: true },
+          select: { role: true, active: true, commissionRate: true },
         });
         if (!assignedTechnician || assignedTechnician.role !== 'TECHNICIAN' || !assignedTechnician.active) {
           return NextResponse.json({ success: false, error: 'Selected technician is not active.' }, { status: 400 });
         }
+        if (!Number.isFinite(assignedTechnician.commissionRate) || assignedTechnician.commissionRate < 0) {
+          return NextResponse.json({ success: false, error: 'Selected technician has an invalid commission rate.' }, { status: 400 });
+        }
+        selectedTechnicianCommissionRate = Math.round(assignedTechnician.commissionRate * 100) / 100;
       }
+      // Clearing an assignment also clears the assignment-time commission
+      // snapshot.  Closeout endpoints own the calculated commission amount.
+      updateData.workerCommissionRate = selectedTechnicianCommissionRate;
     }
 
     if (Object.prototype.hasOwnProperty.call(updateData, 'status')) {
       if (typeof updateData.status !== 'string' || !(VALID_JOB_STATUSES as readonly string[]).includes(updateData.status)) {
         return NextResponse.json({ success: false, error: 'Invalid job status' }, { status: 400 });
       }
+      if (!canTransitionJobStatus(targetJob.status, updateData.status)) {
+        return NextResponse.json({ success: false, error: 'Invalid job status transition' }, { status: 409 });
+      }
+      if ((FINANCIAL_TERMINAL_JOB_STATUSES as readonly string[]).includes(updateData.status)) {
+        return NextResponse.json({ success: false, error: 'Financial terminal statuses require the dedicated closeout action' }, { status: 409 });
+      }
       if (currentUser.role === 'DISPATCHER' && !(DISPATCHER_STATUSES as readonly string[]).includes(updateData.status)) {
         return NextResponse.json({ success: false, error: 'Dispatchers may only set operational job statuses' }, { status: 403 });
       }
     }
 
-    for (const field of ['workerCommissionRate', 'workerCommission', 'travelFeeAmount']) {
-      if (Object.prototype.hasOwnProperty.call(updateData, field)) {
-        const value = Number(updateData[field]);
-        if (!Number.isFinite(value) || value < 0) return NextResponse.json({ success: false, error: `Invalid ${field}` }, { status: 400 });
-        updateData[field] = Math.round(value * 100) / 100;
-      }
-    }
-
-    if (Object.prototype.hasOwnProperty.call(updateData, 'isAbandoned') && typeof updateData.isAbandoned !== 'boolean') {
-      return NextResponse.json({ success: false, error: 'isAbandoned must be a boolean' }, { status: 400 });
-    }
     if (Object.prototype.hasOwnProperty.call(updateData, 'isScheduled') && typeof updateData.isScheduled !== 'boolean') {
       return NextResponse.json({ success: false, error: 'isScheduled must be a boolean' }, { status: 400 });
     }
@@ -190,15 +205,55 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'No job fields supplied' }, { status: 400 });
     }
 
-    const updated = await prisma.job.update({
-      where: { id: targetJob.id },
-      data: updateData,
-      include: {
-        customer: true,
-        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
-        invoice: true,
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      // Conditional update prevents a stale dispatcher form from overwriting
+      // a concurrent closeout or status change.  The technician lookup and
+      // commission snapshot happen in this same transaction.
+      if (Object.prototype.hasOwnProperty.call(updateData, 'technicianId')) {
+        const requestedTechnicianId = updateData.technicianId;
+        const assignedTechnician = requestedTechnicianId
+          ? await tx.user.findUnique({
+              where: { id: requestedTechnicianId },
+              select: { role: true, active: true, commissionRate: true },
+            })
+          : null;
+        if (
+          requestedTechnicianId &&
+          (!assignedTechnician ||
+            assignedTechnician.role !== 'TECHNICIAN' ||
+            !assignedTechnician.active ||
+            !Number.isFinite(assignedTechnician.commissionRate) ||
+            assignedTechnician.commissionRate < 0)
+        ) {
+          return null;
+        }
+        updateData.workerCommissionRate = assignedTechnician
+          ? Math.round(assignedTechnician.commissionRate * 100) / 100
+          : 0;
+      }
+
+      const claimed = await tx.job.updateMany({
+        where: { id: targetJob.id, status: targetJob.status },
+        data: updateData,
+      });
+      if (claimed.count !== 1) return null;
+
+      return tx.job.findUnique({
+        where: { id: targetJob.id },
+        include: {
+          customer: true,
+          technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
+          invoice: true,
+        },
+      });
     });
+
+    if (!updated) {
+      return NextResponse.json(
+        { success: false, error: 'Job changed while it was being edited. Reload and try again.' },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({ success: true, job: updated });
   } catch (err: any) {

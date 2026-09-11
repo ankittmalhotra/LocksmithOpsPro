@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { sendSMS } from '@/lib/twilio';
 import { getCurrentUser } from '@/lib/auth';
+import { canMutateJob, canTransitionJobStatus } from '@/lib/job-workflow';
 import type { JobStatus } from '@prisma/client';
 
 const VALID_STATUSES = [
@@ -11,7 +12,6 @@ const VALID_STATUSES = [
   'EN_ROUTE',
   'ON_SITE',
   'IN_PROGRESS',
-  'COMPLETED',
   'CANCELLED',
 ] as const;
 
@@ -65,6 +65,13 @@ export async function POST(
       );
     }
 
+    if (!canMutateJob(targetJob.status)) {
+      return NextResponse.json(
+        { success: false, error: 'Closed jobs cannot have their status changed' },
+        { status: 409 }
+      );
+    }
+
     const { status } = await request.json();
 
     if (typeof status !== 'string' || !(VALID_STATUSES as readonly string[]).includes(status)) {
@@ -91,25 +98,46 @@ export async function POST(
       );
     }
 
-    const job = await prisma.job.update({
-      where: { id: targetJob.id },
-      data: {
-        status: status as JobStatus,
-        ...(status === 'DISPATCHED' && !targetJob.dispatchedAt ? { dispatchedAt: new Date() } : {}),
-        ...(status === 'COMPLETED' ? { completedAt: new Date() } : {}),
-      },
-      include: {
-        customer: true,
-        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
-        dispatcher: { select: { id: true, name: true, phone: true, email: true, active: true } },
-        invoice: true,
-      },
+    if (!canTransitionJobStatus(targetJob.status, status)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid job status transition' },
+        { status: 409 }
+      );
+    }
+
+    const statusChanged = targetJob.status !== status;
+    const job = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.job.updateMany({
+        where: { id: targetJob.id, status: targetJob.status },
+        data: {
+          status: status as JobStatus,
+          ...(status === 'DISPATCHED' && !targetJob.dispatchedAt ? { dispatchedAt: new Date() } : {}),
+        },
+      });
+      if (claimed.count !== 1) return null;
+
+      return tx.job.findUnique({
+        where: { id: targetJob.id },
+        include: {
+          customer: true,
+          technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
+          dispatcher: { select: { id: true, name: true, phone: true, email: true, active: true } },
+          invoice: true,
+        },
+      });
     });
+
+    if (!job) {
+      return NextResponse.json(
+        { success: false, error: 'Job changed while its status was being updated. Reload and try again.' },
+        { status: 409 }
+      );
+    }
 
     const techName = job.technician?.name || 'Your technician';
 
     // 1. When Technician Acknowledges & Dispatches
-    if (status === 'DISPATCHED') {
+    if (statusChanged && status === 'DISPATCHED') {
       // The technician device only notifies the dispatcher. Customer SMS is
       // sent once by the dispatcher-side assignment flow in /api/jobs.
       const dispatcherPhone = job.dispatcher?.phone || targetJob.dispatcher?.phone;

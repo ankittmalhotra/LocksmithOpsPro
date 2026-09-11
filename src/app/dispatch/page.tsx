@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
@@ -14,6 +14,7 @@ interface Job {
   serviceType: string;
   serviceAddress: string;
   problemDescription: string;
+  jobReceivedTimeSlot?: string | null;
   workerCommission: number;
   workerCommissionRate: number;
   status: string;
@@ -111,6 +112,7 @@ export default function DispatchPage() {
     customerExtension: '',
     serviceAddress: '',
     serviceType: MANUAL_SERVICE_TYPES[0],
+    jobReceivedTimeSlot: '',
     otherServiceType: '',
     description: '',
     paymentMethod: 'CASH',
@@ -320,7 +322,7 @@ export default function DispatchPage() {
   const resetManualJob = () => {
     setManualForm({
       jobNumber: '', customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
-      serviceType: MANUAL_SERVICE_TYPES[0], otherServiceType: '', description: '', paymentMethod: 'CASH',
+      serviceType: MANUAL_SERVICE_TYPES[0], jobReceivedTimeSlot: '', otherServiceType: '', description: '', paymentMethod: 'CASH',
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
       otherTechnicianName: '',
       technicianCommission: '0.00',
@@ -343,6 +345,7 @@ export default function DispatchPage() {
       customerExtension: job.customer.extension || '',
       serviceAddress: job.serviceAddress,
       serviceType: knownType ? job.serviceType : 'Other',
+      jobReceivedTimeSlot: job.jobReceivedTimeSlot || '',
       otherServiceType: knownType ? '' : job.serviceType,
       description: job.problemDescription,
       paymentMethod: job.invoice?.paymentMethod || 'CASH',
@@ -624,6 +627,7 @@ export default function DispatchPage() {
                   <th className="py-2.5 px-4">Job #</th>
                   <th className="py-2.5 px-4">Customer</th>
                   <th className="py-2.5 px-4">Type</th>
+                  <th className="py-2.5 px-4">Received Time</th>
                   <th className="py-2.5 px-4">Technician</th>
                   <th className="py-2.5 px-4">Payment</th>
                   <th className="py-2.5 px-4">Total Collected</th>
@@ -636,7 +640,7 @@ export default function DispatchPage() {
               <tbody className="divide-y divide-slate-100">
                 {manualJobs.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
+                    <td colSpan={11} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
                   </tr>
                 )}
                 {manualJobs.map((job) => (
@@ -647,6 +651,7 @@ export default function DispatchPage() {
                       <div className="text-[10px] text-slate-500">{job.customer.phone}</div>
                     </td>
                     <td className="py-3 px-4 text-slate-600 max-w-[180px]">{job.serviceType}</td>
+                    <td className="py-3 px-4 text-slate-600 whitespace-nowrap">{job.jobReceivedTimeSlot || '—'}</td>
                     <td className="py-3 px-4 text-slate-700">{job.technician?.name || job.technicianName || 'Unassigned'}</td>
                     <td className="py-3 px-4 font-bold text-slate-700">{(job.invoice?.paymentMethod || '—').replace('_', ' ')}</td>
                     <td className="py-3 px-4 font-black text-slate-900">${Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2)}</td>
@@ -1232,6 +1237,13 @@ export default function DispatchPage() {
               <div>
                 <label className="field-label">Customer name *</label>
                 <input aria-label="Customer name" required value={manualForm.customerName} onChange={(e) => updateManualField('customerName', e.target.value)} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Job received time</label>
+                <select aria-label="Job received time" value={manualForm.jobReceivedTimeSlot} onChange={(e) => updateManualField('jobReceivedTimeSlot', e.target.value)} className="field-input bg-white">
+                  <option value="">Not recorded</option>
+                  {MANUAL_JOB_RECEIVED_TIME_SLOTS.map((slot) => <option key={slot} value={slot}>{slot}</option>)}
+                </select>
               </div>
               <div>
                 <label className="field-label">Customer phone number *</label>

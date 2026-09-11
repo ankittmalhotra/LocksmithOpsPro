@@ -18,6 +18,22 @@ export const MANUAL_PAYMENT_METHODS = [
   'CREDIT_CARD',
 ] as const;
 
+/** Two-hour intake windows used by the manual completed-job form. */
+export const MANUAL_JOB_RECEIVED_TIME_SLOTS = [
+  '12:00 AM - 02:00 AM',
+  '02:00 AM - 04:00 AM',
+  '04:00 AM - 06:00 AM',
+  '06:00 AM - 08:00 AM',
+  '08:00 AM - 10:00 AM',
+  '10:00 AM - 12:00 PM',
+  '12:00 PM - 02:00 PM',
+  '02:00 PM - 04:00 PM',
+  '04:00 PM - 06:00 PM',
+  '06:00 PM - 08:00 PM',
+  '08:00 PM - 10:00 PM',
+  '10:00 PM - 12:00 AM',
+] as const;
+
 export type ManualPaymentMethod = (typeof MANUAL_PAYMENT_METHODS)[number];
 
 /**

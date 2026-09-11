@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, type SupportedPaymentMethod } from '@/lib/calculations';
-import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 
@@ -75,6 +75,9 @@ export async function PATCH(
       ? (existingTypeIsKnown ? '' : job.serviceType)
       : String(body.otherServiceType).trim();
     const serviceType = selectedServiceType === 'Other' ? otherServiceType : selectedServiceType;
+    const jobReceivedTimeSlot = body.jobReceivedTimeSlot === undefined
+      ? (job.jobReceivedTimeSlot || '')
+      : String(body.jobReceivedTimeSlot).trim();
     const paymentMethod = body.paymentMethod === undefined
       ? invoice.paymentMethod
       : body.paymentMethod;
@@ -100,6 +103,9 @@ export async function PATCH(
     }
     if (!serviceType) {
       return NextResponse.json({ success: false, error: 'A job type is required when Other is selected' }, { status: 400 });
+    }
+    if (jobReceivedTimeSlot && !(MANUAL_JOB_RECEIVED_TIME_SLOTS as readonly string[]).includes(jobReceivedTimeSlot)) {
+      return NextResponse.json({ success: false, error: 'Invalid job received time window' }, { status: 400 });
     }
     if (!(MANUAL_PAYMENT_METHODS as readonly string[]).includes(paymentMethod as string)) {
       return NextResponse.json({ success: false, error: 'Invalid payment method' }, { status: 400 });
@@ -207,6 +213,7 @@ export async function PATCH(
           serviceType,
           problemDescription: description,
           serviceAddress,
+          jobReceivedTimeSlot: jobReceivedTimeSlot || null,
           workerCommissionRate: 0,
           workerCommission: technicianCommission,
           status: 'COMPLETED',

@@ -13,9 +13,9 @@ export const jobWithDetails = Prisma.validator<Prisma.JobDefaultArgs>()({
 });
 
 // Keep one shared include shape for list, analytics, and detail reads.  The
-// explicit fallback below is intentionally limited to the additive
-// Job.updatedAt migration so an older production database can still boot
-// while that one-time migration is being applied.
+// explicit fallback below is intentionally limited to additive Job columns so
+// an older production database can still boot while one-time migrations are
+// being applied.
 export const jobDetailsInclude = {
   customer: true,
   dispatcher: { select: { id: true, name: true, phone: true } },
@@ -63,9 +63,19 @@ const legacyJobSelect = {
   items: true,
 } as const;
 
-function isMissingUpdatedAtError(error: unknown): boolean {
+function isMissingJobCompatibilityColumnError(error: unknown): boolean {
   const candidate = error as { code?: string; message?: string } | null;
-  return candidate?.code === 'P2022' && /updatedAt/i.test(candidate.message || '');
+  return candidate?.code === 'P2022' && /(updatedAt|jobReceivedTimeSlot)/i.test(candidate.message || '');
+}
+
+function normalizeLegacyJob<T extends { createdAt: Date }>(job: T) {
+  return {
+    ...job,
+    // The fallback is only used while additive production columns are being
+    // applied. Existing records have no received-time value to backfill.
+    updatedAt: job.createdAt,
+    jobReceivedTimeSlot: null,
+  };
 }
 
 function isMissingSettlementTableError(error: unknown): boolean {
@@ -79,19 +89,18 @@ type JobReadArgs = {
 };
 
 /**
- * Reads jobs using the current schema and falls back only when the additive
- * updatedAt column is missing.  The fallback aliases createdAt as updatedAt
- * so older records remain readable; applying the migration restores true
- * optimistic-concurrency timestamps for edits.
+ * Reads jobs using the current schema and falls back only when an additive
+ * compatibility column is missing. The fallback aliases createdAt as
+ * updatedAt so older records remain readable while migrations are applied.
  */
 export async function findJobsWithDetails(args: JobReadArgs = {}) {
   try {
     return await prisma.job.findMany({ ...args, include: jobDetailsInclude });
   } catch (error) {
-    if (!isMissingUpdatedAtError(error)) throw error;
+    if (!isMissingJobCompatibilityColumnError(error)) throw error;
 
     const legacyJobs = await prisma.job.findMany({ ...args, select: legacyJobSelect });
-    return legacyJobs.map((job) => ({ ...job, updatedAt: job.createdAt }));
+    return legacyJobs.map(normalizeLegacyJob);
   }
 }
 
@@ -127,9 +136,9 @@ export async function findJobByIdOrNumber(idOrNumber: string): Promise<JobWithDe
       const job = await prisma.job.findUnique({ where: { jobNumber: idOrNumber }, include: jobDetailsInclude });
       if (job) return normalizeManualJobInvoice(job as JobWithDetails);
     } catch (error) {
-      if (!isMissingUpdatedAtError(error)) throw error;
+      if (!isMissingJobCompatibilityColumnError(error)) throw error;
       const job = await prisma.job.findUnique({ where: { jobNumber: idOrNumber }, select: legacyJobSelect });
-      if (job) return normalizeManualJobInvoice({ ...job, updatedAt: job.createdAt } as JobWithDetails);
+      if (job) return normalizeManualJobInvoice(normalizeLegacyJob(job) as JobWithDetails);
     }
   }
 
@@ -137,8 +146,8 @@ export async function findJobByIdOrNumber(idOrNumber: string): Promise<JobWithDe
     const job = await prisma.job.findUnique({ where: { id: idOrNumber }, include: jobDetailsInclude });
     return job ? normalizeManualJobInvoice(job as JobWithDetails) : null;
   } catch (error) {
-    if (!isMissingUpdatedAtError(error)) throw error;
+    if (!isMissingJobCompatibilityColumnError(error)) throw error;
     const job = await prisma.job.findUnique({ where: { id: idOrNumber }, select: legacyJobSelect });
-    return job ? normalizeManualJobInvoice({ ...job, updatedAt: job.createdAt } as JobWithDetails) : null;
+    return job ? normalizeManualJobInvoice(normalizeLegacyJob(job) as JobWithDetails) : null;
   }
 }

@@ -77,22 +77,24 @@ model Customer {
 }
 
 model Job {
-  id           String   @id @default(uuid())
-  jobNumber    String   @unique
-  customerId   String
-  customer     Customer @relation(fields: [customerId], references: [id])
-  dispatcherId String
-  dispatcher   User     @relation("DispatcherJobs", fields: [dispatcherId], references: [id])
-  technicianId String?
-  technician   User?    @relation("TechnicianJobs", fields: [technicianId], references: [id])
+  id             String   @id @default(uuid())
+  jobNumber      String   @unique
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id])
+  dispatcherId   String
+  dispatcher     User     @relation("DispatcherJobs", fields: [dispatcherId], references: [id])
+  technicianId   String?
+  technician     User?    @relation("TechnicianJobs", fields: [technicianId], references: [id])
   // Used by manual jobs when the technician is not registered in the system.
   technicianName String?
 
-  status             JobStatus @default(NEW)
-  isManual           Boolean   @default(false)
-  serviceType        String // e.g., "Commercial Lock Change", "Lockout"
-  problemDescription String
-  serviceAddress     String
+  status              JobStatus @default(NEW)
+  isManual            Boolean   @default(false)
+  serviceType         String // e.g., "Commercial Lock Change", "Lockout"
+  problemDescription  String
+  serviceAddress      String
+  // Optional two-hour intake window for manually recorded completed jobs.
+  jobReceivedTimeSlot String?
 
   // Commission rate is snapshotted at assignment; amount is calculated at completion.
   workerCommissionRate Float @default(0.0)

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
-import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 
@@ -40,6 +40,7 @@ export async function POST(request: Request) {
     const selectedServiceType = typeof body.serviceType === 'string' ? body.serviceType.trim() : '';
     const otherServiceType = typeof body.otherServiceType === 'string' ? body.otherServiceType.trim() : '';
     const serviceType = selectedServiceType === 'Other' ? otherServiceType : selectedServiceType;
+    const jobReceivedTimeSlot = typeof body.jobReceivedTimeSlot === 'string' ? body.jobReceivedTimeSlot.trim() : '';
     const paymentMethod = body.paymentMethod as string;
     const technicianId = typeof body.technicianId === 'string' ? body.technicianId.trim() : '';
     const otherTechnicianName = typeof body.otherTechnicianName === 'string' ? body.otherTechnicianName.trim() : '';
@@ -56,6 +57,9 @@ export async function POST(request: Request) {
     }
     if (!serviceType) {
       return NextResponse.json({ success: false, error: 'A job type is required when Other is selected' }, { status: 400 });
+    }
+    if (jobReceivedTimeSlot && !(MANUAL_JOB_RECEIVED_TIME_SLOTS as readonly string[]).includes(jobReceivedTimeSlot)) {
+      return NextResponse.json({ success: false, error: 'Invalid job received time window' }, { status: 400 });
     }
     if (!(MANUAL_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
       return NextResponse.json({ success: false, error: 'Invalid payment method' }, { status: 400 });
@@ -123,6 +127,7 @@ export async function POST(request: Request) {
           serviceType,
           problemDescription: description,
           serviceAddress,
+          jobReceivedTimeSlot: jobReceivedTimeSlot || null,
           workerCommissionRate: 0,
           workerCommission: technicianCommission,
           completedAt: new Date(),

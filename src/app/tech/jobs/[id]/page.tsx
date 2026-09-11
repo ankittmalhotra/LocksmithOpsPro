@@ -12,6 +12,8 @@ import {
 } from '@/lib/calculations';
 import SignaturePad from '@/components/SignaturePad';
 import { LOCKSMITH_CATALOG } from '@/lib/catalog';
+import SmsComposerModal from '@/components/SmsComposerModal';
+import type { SmsDraft } from '@/lib/sms-draft';
 
 interface PartItem {
   description: string;
@@ -32,6 +34,8 @@ export default function TechJobDetailPage({
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
+  const [dispatcherSmsDraft, setDispatcherSmsDraft] = useState<SmsDraft | null>(null);
+  const [dispatcherSmsWarnings, setDispatcherSmsWarnings] = useState<string[]>([]);
 
   // Status updates
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -132,11 +136,16 @@ export default function TechJobDetailPage({
         body: JSON.stringify({ status: newStatus }),
       });
       const data = await res.json();
-      if (data.success) {
-        setJob(data.job);
-        setActionSuccess(`Status updated to ${newStatus}`);
-        setTimeout(() => setActionSuccess(''), 3000);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update job status');
       }
+      setJob(data.job);
+      setDispatcherSmsDraft(data.dispatcherNotification || null);
+      setDispatcherSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
+      setActionSuccess(data.dispatcherNotification
+        ? `Status updated to ${newStatus}. Dispatcher SMS draft is ready for review.`
+        : `Status updated to ${newStatus}.`);
+      setTimeout(() => setActionSuccess(''), 3000);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -205,8 +214,10 @@ export default function TechJobDetailPage({
       }
 
       setJob(data.job);
+      setDispatcherSmsDraft(data.dispatcherNotification || null);
+      setDispatcherSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
       const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
-      setActionSuccess(`✅ Job closed! ${methodStr} of $${data.breakdown.grandTotal.toFixed(2)} recorded. Dispatcher notified.`);
+      setActionSuccess(`✅ Job closed! ${methodStr} of $${data.breakdown.grandTotal.toFixed(2)} recorded.${data.dispatcherNotification ? ' Dispatcher SMS draft is ready for review.' : ''}`);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -234,7 +245,9 @@ export default function TechJobDetailPage({
 
       setShowAbandonModal(false);
       setJob(data.job);
-      setActionSuccess(`Job marked abandoned. Travel fee of $${data.breakdown.grandTotal.toFixed(2)} recorded.`);
+      setDispatcherSmsDraft(data.dispatcherNotification || null);
+      setDispatcherSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
+      setActionSuccess(`Job marked abandoned. Travel fee of $${data.breakdown.grandTotal.toFixed(2)} recorded.${data.dispatcherNotification ? ' Dispatcher SMS draft is ready for review.' : ''}`);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -258,7 +271,7 @@ export default function TechJobDetailPage({
     );
   }
 
-  const isClosed = job.status === 'COMPLETED' || job.status === 'ABANDONED_TRAVEL_FEE';
+  const isClosed = ['COMPLETED', 'ABANDONED_TRAVEL_FEE', 'CANCELLED', 'INVOICED'].includes(job.status);
   const isManualJob = Boolean(job.isManual || job.invoice?.calculationMode === 'MANUAL');
   const manualTotalCollected = Number(job.invoice?.totalAmountCollected ?? job.invoice?.grandTotal ?? 0);
   const manualTaxCollected = job.invoice?.taxCollected !== false;
@@ -358,7 +371,7 @@ export default function TechJobDetailPage({
             <span>🚨</span> New Dispatch Assignment
           </div>
           <p className="text-xs text-amber-800 mb-3 leading-relaxed">
-            Click below to acknowledge this call. The dispatcher will be notified. The customer receives the on-the-way SMS from the dispatcher assignment flow only.
+            Click below to acknowledge this call. This updates the job in the portal and prepares an SMS draft for the dispatcher to review and send from this device.
           </p>
           <button
             type="button"
@@ -384,8 +397,8 @@ export default function TechJobDetailPage({
             </button>
           </div>
 
-          <div className="grid grid-cols-3 gap-1.5">
-            {(['DISPATCHED', 'ON_SITE', 'IN_PROGRESS'] as const).map((st) => (
+          <div className="grid grid-cols-4 gap-1.5">
+            {(['DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'] as const).map((st) => (
               <button
                 key={st}
                 disabled={updatingStatus}
@@ -396,7 +409,7 @@ export default function TechJobDetailPage({
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
-                {st === 'DISPATCHED' ? 'Dispatched' : st.replace('_', ' ')}
+                {st === 'DISPATCHED' ? 'Dispatched' : st === 'EN_ROUTE' ? 'En Route' : st.replace('_', ' ')}
               </button>
             ))}
           </div>
@@ -755,7 +768,7 @@ export default function TechJobDetailPage({
               </div>
 
               <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                ✅ System records ${paymentMethod === 'CASH' ? 'cash received' : 'Interac transfer received'}. The dispatcher is notified with the completed job and amount received. No customer notification is sent from this device.
+                ✅ System records ${paymentMethod === 'CASH' ? 'cash received' : 'Interac transfer received'}. After saving, you can review and send a dispatcher SMS from this device. No customer notification is sent from this portal.
               </p>
             </div>
           </>
@@ -833,7 +846,7 @@ export default function TechJobDetailPage({
           >
             {submittingInvoice
               ? 'Processing...'
-              : `💵 Confirm ${paymentMethod === 'CASH' ? 'Cash' : 'Interac'} ($${liveCalculation.grandTotal.toFixed(2)}) & Notify Dispatcher`}
+              : `💵 Save & Close Job — ${paymentMethod === 'CASH' ? 'Cash' : 'Interac'} ($${liveCalculation.grandTotal.toFixed(2)})`}
           </button>
         )}
       </div>
@@ -927,6 +940,15 @@ export default function TechJobDetailPage({
           </div>
         </div>
       )}
+      <SmsComposerModal
+        draft={dispatcherSmsDraft}
+        warnings={dispatcherSmsWarnings}
+        title="Dispatcher SMS"
+        onClose={() => {
+          setDispatcherSmsDraft(null);
+          setDispatcherSmsWarnings([]);
+        }}
+      />
     </div>
   );
 }

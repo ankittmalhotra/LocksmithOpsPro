@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { roundToTwo } from '@/lib/calculations';
+import SmsComposerModal from '@/components/SmsComposerModal';
+import type { SmsDraft } from '@/lib/sms-draft';
 
 interface Job {
   id: string;
@@ -83,6 +85,8 @@ export default function DispatchPage() {
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [smsDraft, setSmsDraft] = useState<SmsDraft | null>(null);
+  const [smsWarnings, setSmsWarnings] = useState<string[]>([]);
 
   const [showAddTechnician, setShowAddTechnician] = useState(false);
   const [newTechnicianName, setNewTechnicianName] = useState('');
@@ -190,7 +194,9 @@ export default function DispatchPage() {
         throw new Error(data.error || 'Failed to dispatch job');
       }
 
-      setSuccessMsg(`✅ Job #${data.job.jobNumber} created! Technician and customer on-the-way notifications sent.`);
+      setSuccessMsg(`✅ Job #${data.job.jobNumber} created. Technician SMS draft is ready for review.`);
+      setSmsDraft(data.smsDraft || null);
+      setSmsWarnings(Array.isArray(data.smsDraftWarnings) ? data.smsDraftWarnings : []);
       // Reset form
       setCustomerName('');
       setCustomerPhone('');
@@ -1187,12 +1193,9 @@ export default function DispatchPage() {
                         </span>
                       )}
 
-                      <Link
-                        href={`/tech/jobs/${job.jobNumber}`}
-                        className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
-                      >
-                        Open as Tech &rarr;
-                      </Link>
+                      <span className="px-3 py-1 rounded-lg bg-slate-100 text-slate-500 text-xs font-semibold" title="Technicians open jobs from the Technician Portal">
+                        Technician Portal only
+                      </span>
                     </div>
                   </div>
                 );
@@ -1298,6 +1301,15 @@ export default function DispatchPage() {
           </div>
         </div>
       )}
+      <SmsComposerModal
+        draft={smsDraft}
+        warnings={smsWarnings}
+        title="Technician assignment SMS"
+        onClose={() => {
+          setSmsDraft(null);
+          setSmsWarnings([]);
+        }}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import Link from 'next/link';
 
 interface Job {
   id: string;
-  jobNumber: number;
+  jobNumber: string;
   serviceType: string;
   serviceAddress: string;
   problemDescription: string;

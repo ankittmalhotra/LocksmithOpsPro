@@ -4,6 +4,7 @@ import { sendSMS } from '@/lib/twilio';
 import { sendEmail, buildJobDispatchedEmail } from '@/lib/resend';
 import { getCurrentUser } from '@/lib/auth';
 import { normalizeManualJobInvoice } from '@/lib/manual-job';
+import { nextJobNumber } from '@/lib/job-number';
 
 export async function GET(request: Request) {
   try {
@@ -137,16 +138,15 @@ export async function POST(request: Request) {
     }
 
     // 2. Generate sequential Job Number
-    const highestJob = await prisma.job.findFirst({
-      orderBy: { jobNumber: 'desc' },
+    const existingJobNumbers = await prisma.job.findMany({
       select: { jobNumber: true },
     });
-    const nextJobNumber = (highestJob?.jobNumber || 9815) + 1;
+    const generatedJobNumber = nextJobNumber(existingJobNumbers.map((job) => job.jobNumber));
 
     // 3. Create the Job in NEW status awaiting technician acknowledgment
     const job = await prisma.job.create({
       data: {
-        jobNumber: nextJobNumber,
+        jobNumber: generatedJobNumber,
         customerId: customer.id,
         // Dispatch ownership always comes from the authenticated session.
         dispatcherId: currentUser.id,

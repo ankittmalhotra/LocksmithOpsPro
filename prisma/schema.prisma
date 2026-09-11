@@ -78,7 +78,7 @@ model Customer {
 
 model Job {
   id           String   @id @default(uuid())
-  jobNumber    Int      @unique
+  jobNumber    String   @unique
   customerId   String
   customer     Customer @relation(fields: [customerId], references: [id])
   dispatcherId String

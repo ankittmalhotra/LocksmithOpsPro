@@ -33,7 +33,7 @@ async function runE2E() {
   const workerComm = 300.0;
   const newJob = await prisma.job.create({
     data: {
-      jobNumber: 9816,
+      jobNumber: '9816',
       customerId: customer.id,
       dispatcherId: dispatcher.id,
       technicianId: tech.id,

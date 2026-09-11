@@ -18,7 +18,7 @@ async function runProductionE2E() {
   console.log('\n[Test 1] Universal Job Resolution by Number vs UUID');
   const jobByNumber = await findJobByIdOrNumber('9815');
   console.assert(jobByNumber !== null, 'Job #9815 must exist in database');
-  console.assert(jobByNumber?.jobNumber === 9815, 'Job number must be 9815');
+  console.assert(jobByNumber?.jobNumber === '9815', 'Job number must be 9815');
   console.log(`✅ findJobByIdOrNumber('9815') resolved: Job #${jobByNumber?.jobNumber} (${jobByNumber?.serviceType})`);
 
   const jobByUUID = await findJobByIdOrNumber(jobByNumber!.id);

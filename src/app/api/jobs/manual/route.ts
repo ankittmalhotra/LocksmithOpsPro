@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+import { normalizeJobNumber } from '@/lib/job-number';
 
 class ManualJobInputError extends Error {}
 
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ success: false, error: 'Invalid manual job payload' }, { status: 400 });
     }
-    const jobNumber = Number(body.jobNumber);
+    const jobNumber = normalizeJobNumber(body.jobNumber);
     const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : '';
     const rawPhone = typeof body.customerPhone === 'string' ? body.customerPhone : '';
     const customerPhone = rawPhone.replace(/[^0-9]/g, '');
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
     const otherTechnicianName = typeof body.otherTechnicianName === 'string' ? body.otherTechnicianName.trim() : '';
     const isOtherTechnician = technicianId === 'OTHER';
 
-    if (!Number.isSafeInteger(jobNumber) || jobNumber <= 0) {
+    if (!jobNumber) {
       return NextResponse.json({ success: false, error: 'Job number must be a positive whole number' }, { status: 400 });
     }
     if (!customerName || customerPhone.length < 7 || !serviceAddress || !description) {

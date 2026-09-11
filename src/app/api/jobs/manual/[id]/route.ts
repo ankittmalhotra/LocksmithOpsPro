@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, type SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
+import { normalizeJobNumber } from '@/lib/job-number';
 
 class ManualJobInputError extends Error {}
 
@@ -56,7 +57,7 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Invalid manual job update' }, { status: 400 });
     }
 
-    const jobNumber = body.jobNumber === undefined ? job.jobNumber : Number(body.jobNumber);
+    const jobNumber = body.jobNumber === undefined ? job.jobNumber : normalizeJobNumber(body.jobNumber);
     const customerName = body.customerName === undefined ? job.customer.name : String(body.customerName).trim();
     const rawPhone = body.customerPhone === undefined ? job.customer.phone : String(body.customerPhone);
     const customerPhone = rawPhone.replace(/[^0-9]/g, '');
@@ -87,7 +88,7 @@ export async function PATCH(
       ? invoice.taxCollected !== false
       : body.taxCollected;
 
-    if (!Number.isSafeInteger(jobNumber) || jobNumber <= 0) {
+    if (!jobNumber) {
       return NextResponse.json({ success: false, error: 'Job number must be a positive whole number' }, { status: 400 });
     }
     if (!customerName || customerPhone.length < 7 || !serviceAddress || !description) {

@@ -7,7 +7,7 @@ import { roundToTwo } from '@/lib/calculations';
 
 interface Job {
   id: string;
-  jobNumber: number;
+  jobNumber: string;
   serviceType: string;
   serviceAddress: string;
   problemDescription: string;
@@ -1215,7 +1215,7 @@ export default function DispatchPage() {
             <form onSubmit={handleManualJob} className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-sm">
               <div>
                 <label className="field-label">Job number *</label>
-                <input aria-label="Job number" required type="number" min="1" step="1" value={manualForm.jobNumber} onChange={(e) => updateManualField('jobNumber', e.target.value)} className="field-input" />
+                <input aria-label="Job number" required type="text" inputMode="numeric" pattern="[0-9]+" value={manualForm.jobNumber} onChange={(e) => updateManualField('jobNumber', e.target.value)} className="field-input" />
               </div>
               <div>
                 <label className="field-label">Customer name *</label>

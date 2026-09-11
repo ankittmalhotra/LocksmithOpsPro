@@ -155,7 +155,7 @@ export function buildContractorApprovedEmail(contractorName: string, appUrl: str
 
 export function buildJobDispatchedEmail(params: {
   technicianName: string;
-  jobNumber: number;
+  jobNumber: string;
   customerName: string;
   customerPhone: string;
   customerExtension?: string;
@@ -212,7 +212,7 @@ export function buildJobDispatchedEmail(params: {
 
 export function buildInvoiceReceiptEmail(params: {
   customerName: string;
-  jobNumber: number;
+  jobNumber: string;
   serviceType: string;
   subtotal: number;
   taxAmount: number;

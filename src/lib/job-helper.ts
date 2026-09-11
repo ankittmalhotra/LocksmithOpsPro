@@ -15,16 +15,15 @@ export const jobWithDetails = Prisma.validator<Prisma.JobDefaultArgs>()({
 export type JobWithDetails = Prisma.JobGetPayload<typeof jobWithDetails>;
 
 /**
- * Resolves a job by either its unique UUID string or its integer jobNumber.
+ * Resolves a job by either its unique UUID string or its string jobNumber.
  * Fully typed with customer, dispatcher, technician, invoice, and items.
  */
 export async function findJobByIdOrNumber(idOrNumber: string): Promise<JobWithDetails | null> {
   const isNumeric = /^\d+$/.test(idOrNumber);
 
   if (isNumeric) {
-    const jobNumber = parseInt(idOrNumber, 10);
     const job = await prisma.job.findUnique({
-      where: { jobNumber },
+      where: { jobNumber: idOrNumber },
       include: {
         customer: true,
         dispatcher: { select: { id: true, name: true, phone: true } },

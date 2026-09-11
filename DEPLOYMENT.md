@@ -58,6 +58,8 @@ node prisma/seed.js
 
 The Prisma schema is the single source of truth for this new database. No role-consolidation or manual-job SQL migration is required when production starts empty. Set a strong `ADMIN_PASSWORD` in production; it also signs login cookies, and the application fails closed when it is missing.
 
+For an existing database, apply schema changes before deploying application code. The job-number identifier migration is available at `prisma/job-number-string-migration.sql`; run it once against the production database, or use `npx prisma db push` after verifying the diff.
+
 Required production environment variables:
 
 ```env

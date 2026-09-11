@@ -7,7 +7,7 @@
 
 interface CreatePaymentLinkParams {
   jobId: string;
-  jobNumber: number;
+  jobNumber: string;
   customerName: string;
   customerPhone: string;
   grandTotal: number;

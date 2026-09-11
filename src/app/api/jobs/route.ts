@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { sendSMS } from '@/lib/twilio';
 import { sendEmail, buildJobDispatchedEmail } from '@/lib/resend';
 import { getCurrentUser } from '@/lib/auth';
 import { normalizeManualJobInvoice } from '@/lib/manual-job';
 import { nextJobNumber } from '@/lib/job-number';
+import {
+  buildTechnicianAssignmentDraft,
+  normalizeNanpPhone,
+} from '@/lib/sms-draft';
 
 export async function GET(request: Request) {
   try {
@@ -110,6 +113,7 @@ export async function POST(request: Request) {
     }
 
     let assignedTechnician = null;
+    let assignedTechnicianPhone: string | null = null;
     if (technicianId) {
       assignedTechnician = await prisma.user.findUnique({
         where: { id: technicianId },
@@ -118,6 +122,15 @@ export async function POST(request: Request) {
 
       if (!assignedTechnician || assignedTechnician.role !== 'TECHNICIAN' || !assignedTechnician.active) {
         return NextResponse.json({ success: false, error: 'Selected technician is not active.' }, { status: 400 });
+      }
+
+      try {
+        assignedTechnicianPhone = normalizeNanpPhone(assignedTechnician.phone);
+      } catch {
+        return NextResponse.json(
+          { success: false, error: 'Selected technician has an invalid phone number for SMS.' },
+          { status: 400 }
+        );
       }
     }
 
@@ -172,36 +185,32 @@ export async function POST(request: Request) {
       },
     });
 
-    // 5. If assigned to a technician, send the technician the job link.
-    // The dispatcher-side assignment flow also sends the only customer SMS:
-    // a simple "technician is on the way" notification.
-    let smsResult = null;
-    let customerSmsResult = null;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // 5. If assigned to a technician, prepare a device-SMS draft.  The
+    // dispatcher must review and send it from the native Messages app.
+    let smsDraft = null;
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
 
-    if (job.technician?.phone) {
-      const extStr = customer.extension ? ` #${customer.extension}` : '';
-      const autoDetails = job.vehicleMake ? `\nVehicle: ${job.vehicleYear || ''} ${job.vehicleMake} ${job.vehicleModel || ''} (${job.keyType || 'Key'})` : '';
-      const scheduleDetails = job.isScheduled && job.scheduledFor ? `\n📅 Scheduled: ${new Date(job.scheduledFor).toLocaleString()}` : '';
-      const smsBody = `🚨 NEW JOB ASSIGNMENT #${job.jobNumber}${scheduleDetails}
-Customer: ${customer.name} (${customer.phone}${extStr})
-Address: ${serviceAddress}
-Service: ${serviceType}${autoDetails}
-Commission Rate: ${job.workerCommissionRate.toFixed(2)}%
-Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
-
-      smsResult = await sendSMS({
-        to: job.technician.phone,
-        body: smsBody,
-      });
-
-      customerSmsResult = await sendSMS({
-        to: customer.phone,
-        body: `Hello ${customer.name}, your locksmith technician ${job.technician.name} is on the way for Job #${job.jobNumber}.`,
+    if (job.technician?.phone && assignedTechnicianPhone) {
+      smsDraft = buildTechnicianAssignmentDraft(assignedTechnicianPhone, {
+        jobNumber: job.jobNumber,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        customerExtension: customer.extension,
+        serviceAddress,
+        serviceType,
+        problemDescription: problemDescription || undefined,
+        vehicleYear,
+        vehicleMake,
+        vehicleModel,
+        keyType,
+        isScheduled: job.isScheduled,
+        scheduledFor: job.scheduledFor,
+        technicianName: job.technician.name,
+        appUrl,
       });
 
       // Send dispatch notification email via Resend if technician has email configured
-      if (job.technician.email) {
+      if (job.technician.email && appUrl && smsDraft.warnings.length === 0) {
         try {
           const emailData = buildJobDispatchedEmail({
             technicianName: job.technician.name,
@@ -230,8 +239,12 @@ Please open & acknowledge: ${appUrl}/tech/jobs/${job.jobNumber}`;
     return NextResponse.json({
       success: true,
       job,
-      smsResult,
-      customerSmsResult,
+      smsDraft,
+      smsDraftWarnings: smsDraft?.warnings || [],
+      // Kept for clients that still expect these response keys.  No SMS is
+      // sent by the server, and customer SMS is intentionally not prepared.
+      smsResult: null,
+      customerSmsResult: null,
     });
   } catch (err: any) {
     console.error('Error creating job:', err);

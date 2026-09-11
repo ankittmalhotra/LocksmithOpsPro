@@ -3,6 +3,11 @@ import { prisma } from '@/lib/prisma';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
 import {
+  buildTechnicianUpdateDraft,
+  normalizeNanpPhone,
+  technicianAssignmentChanged,
+} from '@/lib/sms-draft';
+import {
   canMutateJob,
   canTransitionJobStatus,
   FINANCIAL_TERMINAL_JOB_STATUSES,
@@ -151,15 +156,17 @@ export async function PATCH(
     }
 
     let selectedTechnicianCommissionRate = 0;
+    let technicianChanged = false;
     if (Object.prototype.hasOwnProperty.call(updateData, 'technicianId')) {
       const requestedTechnicianId = updateData.technicianId;
       if (requestedTechnicianId !== null && typeof requestedTechnicianId !== 'string') {
         return NextResponse.json({ success: false, error: 'Invalid technician' }, { status: 400 });
       }
       if (requestedTechnicianId) {
+        technicianChanged = technicianAssignmentChanged(targetJob.technicianId, requestedTechnicianId);
         const assignedTechnician = await prisma.user.findUnique({
           where: { id: requestedTechnicianId },
-          select: { role: true, active: true, commissionRate: true },
+          select: { role: true, active: true, commissionRate: true, phone: true },
         });
         if (!assignedTechnician || assignedTechnician.role !== 'TECHNICIAN' || !assignedTechnician.active) {
           return NextResponse.json({ success: false, error: 'Selected technician is not active.' }, { status: 400 });
@@ -167,7 +174,20 @@ export async function PATCH(
         if (!Number.isFinite(assignedTechnician.commissionRate) || assignedTechnician.commissionRate < 0) {
           return NextResponse.json({ success: false, error: 'Selected technician has an invalid commission rate.' }, { status: 400 });
         }
+        if (technicianChanged) {
+          try {
+            normalizeNanpPhone(assignedTechnician.phone);
+          } catch {
+            return NextResponse.json(
+              { success: false, error: 'Selected technician has an invalid phone number for SMS.' },
+              { status: 400 }
+            );
+          }
+        }
         selectedTechnicianCommissionRate = Math.round(assignedTechnician.commissionRate * 100) / 100;
+      }
+      if (!requestedTechnicianId) {
+        technicianChanged = technicianAssignmentChanged(targetJob.technicianId, null);
       }
       // Clearing an assignment also clears the assignment-time commission
       // snapshot.  Closeout endpoints own the calculated commission amount.
@@ -255,7 +275,38 @@ export async function PATCH(
       );
     }
 
-    return NextResponse.json({ success: true, job: updated });
+    let smsDraft = null;
+    let smsDraftWarnings: string[] = [];
+    if (technicianChanged) {
+      if (updated.technician?.phone) {
+        try {
+          smsDraft = buildTechnicianUpdateDraft(updated.technician.phone, {
+            jobNumber: updated.jobNumber,
+            customerName: updated.customer.name,
+            customerPhone: updated.customer.phone,
+            customerExtension: updated.customer.extension,
+            serviceAddress: updated.serviceAddress,
+            serviceType: updated.serviceType,
+            problemDescription: updated.problemDescription,
+            vehicleYear: updated.vehicleYear,
+            vehicleMake: updated.vehicleMake,
+            vehicleModel: updated.vehicleModel,
+            keyType: updated.keyType,
+            isScheduled: updated.isScheduled,
+            scheduledFor: updated.scheduledFor,
+            technicianName: updated.technician.name,
+            appUrl: process.env.NEXT_PUBLIC_APP_URL,
+          });
+          smsDraftWarnings = smsDraft.warnings;
+        } catch {
+          smsDraftWarnings = ['Technician SMS draft unavailable: technician phone number is invalid.'];
+        }
+      } else {
+        smsDraftWarnings = ['Technician SMS draft unavailable: technician phone number is missing.'];
+      }
+    }
+
+    return NextResponse.json({ success: true, job: updated, smsDraft, smsDraftWarnings });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: 'Unable to update job' }, { status: 500 });
   }

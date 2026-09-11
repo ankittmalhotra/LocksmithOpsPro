@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
-import { sendSMS } from '@/lib/twilio';
 import { getCurrentUser } from '@/lib/auth';
 import { canMutateJob, canTransitionJobStatus } from '@/lib/job-workflow';
+import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
 import type { JobStatus } from '@prisma/client';
 
 const VALID_STATUSES = [
@@ -106,6 +106,7 @@ export async function POST(
     }
 
     const statusChanged = targetJob.status !== status;
+
     const job = await prisma.$transaction(async (tx) => {
       const claimed = await tx.job.updateMany({
         where: { id: targetJob.id, status: targetJob.status },
@@ -134,20 +135,25 @@ export async function POST(
       );
     }
 
-    const techName = job.technician?.name || 'Your technician';
-
-    // 1. When Technician Acknowledges & Dispatches
-    if (statusChanged && status === 'DISPATCHED') {
-      // The technician device only notifies the dispatcher. Customer SMS is
-      // sent once by the dispatcher-side assignment flow in /api/jobs.
-      const dispatcherPhone = job.dispatcher?.phone || targetJob.dispatcher?.phone;
-      if (dispatcherPhone) {
-        const dispatcherSms = `Technician ${techName} has acknowledged and is dispatched to Job #${job.jobNumber} (${job.serviceAddress}).`;
-        await sendSMS({ to: dispatcherPhone, body: dispatcherSms });
-      }
+    let dispatcherNotification = null;
+    let dispatcherNotificationWarnings: string[] = [];
+    if (currentUser.role === 'TECHNICIAN' && statusChanged && status === 'DISPATCHED') {
+      const notification = tryBuildDispatcherNotificationDraft(job.dispatcher?.phone, {
+        kind: 'DISPATCHED',
+        jobNumber: job.jobNumber,
+        technicianName: job.technician?.name,
+        serviceAddress: job.serviceAddress,
+      });
+      dispatcherNotification = notification.draft;
+      dispatcherNotificationWarnings = notification.warnings;
     }
 
-    return NextResponse.json({ success: true, job });
+    return NextResponse.json({
+      success: true,
+      job,
+      dispatcherNotification,
+      dispatcherNotificationWarnings,
+    });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: 'Unable to update job status' }, { status: 500 });
   }

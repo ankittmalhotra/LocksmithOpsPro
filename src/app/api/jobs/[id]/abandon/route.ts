@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { calculateTravelFee, calculateJobSettlementPosition, roundToTwo } from '@/lib/calculations';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
+import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
 import {
   buildJobCloseoutClaimWhere,
   canMutateJob,
@@ -176,6 +177,20 @@ export async function POST(
 
     const { updatedJob } = closeout;
 
+    let dispatcherNotification = null;
+    let dispatcherNotificationWarnings: string[] = [];
+    if (!job.isManual) {
+      const notification = tryBuildDispatcherNotificationDraft(job.dispatcher?.phone, {
+        kind: 'ABANDONED',
+        jobNumber: job.jobNumber,
+        technicianName: updatedJob?.technician?.name || job.technician?.name,
+        amountReceived: breakdown.grandTotal,
+        paymentMethod: paymentMethod === 'CASH' ? 'Cash' : 'Interac',
+      });
+      dispatcherNotification = notification.draft;
+      dispatcherNotificationWarnings = notification.warnings;
+    }
+
     return NextResponse.json({
       success: true,
       job: updatedJob,
@@ -183,6 +198,8 @@ export async function POST(
       settlement,
       stripeLink: null,
       smsResult: null,
+      dispatcherNotification,
+      dispatcherNotificationWarnings,
     });
   } catch (err: any) {
     console.error('Abandon fee error:', err);

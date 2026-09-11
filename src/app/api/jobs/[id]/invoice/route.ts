@@ -7,9 +7,9 @@ import {
   roundToTwo,
   SupportedPaymentMethod,
 } from '@/lib/calculations';
-import { sendSMS } from '@/lib/twilio';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
+import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
 import {
   buildJobCloseoutClaimWhere,
   canMutateJob,
@@ -251,15 +251,18 @@ export async function POST(
 
     const { invoice, updatedJob } = closeout;
 
-    // Technician completion notification to the dispatcher only.
-    // No customer notification is sent from the technician device.
     let dispatcherNotification = null;
-    if (job.dispatcher?.phone && !job.isManual) {
-      const methodLabel = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
-      dispatcherNotification = await sendSMS({
-        to: job.dispatcher.phone,
-        body: `Job #${job.jobNumber} is complete. ${job.technician?.name || 'Technician'} received $${calcBreakdown.grandTotal.toFixed(2)} via ${methodLabel}.`,
+    let dispatcherNotificationWarnings: string[] = [];
+    if (!job.isManual) {
+      const notification = tryBuildDispatcherNotificationDraft(job.dispatcher?.phone, {
+        kind: 'COMPLETED',
+        jobNumber: job.jobNumber,
+        technicianName: updatedJob?.technician?.name || job.technician?.name,
+        amountReceived: calcBreakdown.grandTotal,
+        paymentMethod: paymentMethod === 'CASH' ? 'Cash' : 'Interac',
       });
+      dispatcherNotification = notification.draft;
+      dispatcherNotificationWarnings = notification.warnings;
     }
 
     return NextResponse.json({
@@ -270,6 +273,7 @@ export async function POST(
       settlement,
       stripeLink: null,
       dispatcherNotification,
+      dispatcherNotificationWarnings,
     });
   } catch (err: any) {
     console.error('Invoice creation error:', err);

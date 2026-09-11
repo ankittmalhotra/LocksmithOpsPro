@@ -98,6 +98,8 @@ git push -u origin main
    - `POSTGRES_URL_NON_POOLING`: *(Your Supabase direct connection string from Step 1)*
    - `ADMIN_PASSWORD`: *(Strong password for the initial Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project-name.vercel.app` *(or your custom domain)*
+   - `RESEND_API_KEY`: *(Resend API key from the Omnibroker workspace)*
+   - `RESEND_FROM_EMAIL`: *(A verified Omnibroker sender address, for example `LockOps <notifications@your-domain.com>`)*
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 5. Click **"Deploy"**.
 
@@ -118,3 +120,7 @@ Vercel will run `prisma generate && next build` automatically. Within 60 seconds
 - The portal prepares an `sms:` link and message preview for the dispatcher or technician.
 - The user must review the draft, open the native Messages app, and tap Send. The portal cannot verify delivery.
 - No Twilio credentials are required or used by active job routes.
+
+### Revenue email
+- Manual-job creation, manual revenue edits, normal job completion, and abandoned-job travel-fee closeout send an accounting summary through Resend to `mail2mws@gmail.com`.
+- Email delivery failure does not roll back the job or revenue mutation; the API response includes `revenueEmail.success` and an error when available.

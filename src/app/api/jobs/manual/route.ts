@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
+import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 
 class ManualJobInputError extends Error {}
 
@@ -156,7 +157,13 @@ export async function POST(request: Request) {
       return created;
     });
 
-    return NextResponse.json({ success: true, job, message: `Manual Job #${job.jobNumber} recorded successfully.` }, { status: 201 });
+    const revenueEmail = await sendRevenueChangeEmail(job, 'CREATED');
+    return NextResponse.json({
+      success: true,
+      job,
+      message: `Manual Job #${job.jobNumber} recorded successfully.`,
+      revenueEmail: { success: revenueEmail.success, error: revenueEmail.error },
+    }, { status: 201 });
   } catch (err: any) {
     if (err instanceof ManualJobInputError) {
       return NextResponse.json({ success: false, error: err.message }, { status: 400 });

@@ -63,6 +63,7 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 - **Database & ORM**: [Prisma ORM](https://www.prisma.io/) with PostgreSQL (Supabase) / SQLite (Local)
 - **Payments**: Cash and Interac are supported for job closeout. Card methods remain reserved until processor references can be captured and audited.
 - **Messaging**: Device SMS hand-off through the user's native Messages app; the portal does not use Twilio or claim delivery.
+- **Revenue email**: Completed-job revenue changes are sent through Resend to `mail2mws@gmail.com`.
 - **Deployment**: [Vercel](https://vercel.com/) (Frontend & Serverless API) + [Supabase](https://supabase.com/) (Managed PostgreSQL)
 
 ---

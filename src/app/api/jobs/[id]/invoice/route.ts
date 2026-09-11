@@ -16,6 +16,7 @@ import {
   canMutateJob,
   isOpenJobStatus,
 } from '@/lib/job-workflow';
+import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 
 function parseCloseoutNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -326,6 +327,10 @@ export async function POST(
 
     const { invoice, updatedJob } = closeout;
 
+    const revenueEmail = updatedJob?.invoice
+      ? await sendRevenueChangeEmail(updatedJob, 'COMPLETED')
+      : null;
+
     let dispatcherNotification = null;
     let dispatcherNotificationWarnings: string[] = [];
     if (!job.isManual) {
@@ -349,6 +354,7 @@ export async function POST(
       stripeLink: null,
       dispatcherNotification,
       dispatcherNotificationWarnings,
+      revenueEmail: revenueEmail ? { success: revenueEmail.success, error: revenueEmail.error } : null,
     });
   } catch (err: any) {
     console.error('Invoice creation error:', err);

@@ -9,6 +9,7 @@ import {
   canMutateJob,
   isOpenJobStatus,
 } from '@/lib/job-workflow';
+import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 
 export async function POST(
   request: Request,
@@ -190,6 +191,10 @@ export async function POST(
 
     const { updatedJob } = closeout;
 
+    const revenueEmail = updatedJob?.invoice
+      ? await sendRevenueChangeEmail(updatedJob, 'ABANDONED')
+      : null;
+
     let dispatcherNotification = null;
     let dispatcherNotificationWarnings: string[] = [];
     if (!job.isManual) {
@@ -213,6 +218,7 @@ export async function POST(
       smsResult: null,
       dispatcherNotification,
       dispatcherNotificationWarnings,
+      revenueEmail: revenueEmail ? { success: revenueEmail.success, error: revenueEmail.error } : null,
     });
   } catch (err: any) {
     console.error('Abandon fee error:', err);

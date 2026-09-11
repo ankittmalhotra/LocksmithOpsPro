@@ -217,7 +217,7 @@ export default function TechJobDetailPage({
       setDispatcherSmsDraft(data.dispatcherNotification || null);
       setDispatcherSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
       const methodStr = paymentMethod === 'CASH' ? 'Cash' : 'Interac';
-      setActionSuccess(`✅ Job closed! ${methodStr} of $${data.breakdown.grandTotal.toFixed(2)} recorded.${data.dispatcherNotification ? ' Dispatcher SMS draft is ready for review.' : ''}`);
+      setActionSuccess(`✅ Job closed! ${methodStr} of $${data.breakdown.grandTotal.toFixed(2)} recorded.${data.dispatcherNotification ? ' Dispatcher SMS draft is ready for review.' : ''}${data.revenueEmail?.success === false ? ` Revenue email failed: ${data.revenueEmail.error || 'check Resend configuration.'}` : ''}`);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -247,7 +247,7 @@ export default function TechJobDetailPage({
       setJob(data.job);
       setDispatcherSmsDraft(data.dispatcherNotification || null);
       setDispatcherSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
-      setActionSuccess(`Job marked abandoned. Travel fee of $${data.breakdown.grandTotal.toFixed(2)} recorded.${data.dispatcherNotification ? ' Dispatcher SMS draft is ready for review.' : ''}`);
+      setActionSuccess(`Job marked abandoned. Travel fee of $${data.breakdown.grandTotal.toFixed(2)} recorded.${data.dispatcherNotification ? ' Dispatcher SMS draft is ready for review.' : ''}${data.revenueEmail?.success === false ? ` Revenue email failed: ${data.revenueEmail.error || 'check Resend configuration.'}` : ''}`);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {

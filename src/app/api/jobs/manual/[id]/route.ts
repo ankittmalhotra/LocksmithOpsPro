@@ -5,6 +5,7 @@ import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, type SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
+import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 
 class ManualJobInputError extends Error {}
 
@@ -215,10 +216,29 @@ export async function PATCH(
       });
     });
 
+    const previousRevenue = {
+      totalAmountCollected: Number(invoice.totalAmountCollected || invoice.grandTotal || 0),
+      cogsAmount: Number(invoice.cogsAmount || 0),
+      taxCollected: invoice.taxCollected !== false,
+      paymentMethod: invoice.paymentMethod,
+      technicianCommission: Number(job.workerCommission || 0),
+    };
+    const revenueChanged = previousRevenue.totalAmountCollected !== totalAmountCollected
+      || previousRevenue.cogsAmount !== cogsAmount
+      || previousRevenue.taxCollected !== taxCollected
+      || previousRevenue.paymentMethod !== payment
+      || previousRevenue.technicianCommission !== technicianCommission;
+    let revenueEmail: { success: boolean; error?: string } | null = null;
+    if (revenueChanged) {
+      const result = await sendRevenueChangeEmail(updatedJob, 'UPDATED');
+      revenueEmail = { success: result.success, error: result.error };
+    }
+
     return NextResponse.json({
       success: true,
       job: updatedJob,
       message: `Manual Job #${updatedJob.jobNumber} updated successfully.`,
+      revenueEmail,
     });
   } catch (err: any) {
     if (err instanceof ManualJobInputError) {

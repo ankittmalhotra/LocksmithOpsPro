@@ -257,7 +257,7 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
       setSmsDraft(data.dispatcherNotification || null);
       setSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
       const label = kind === 'complete' ? 'completed' : 'abandoned';
-      setSuccessMsg(data.dispatcherNotification ? `Job ${label}. Dispatcher SMS draft is ready for review.` : `Job ${label} successfully.`);
+      setSuccessMsg(data.dispatcherNotification ? `Job ${label}. Dispatcher SMS draft is ready for review.${data.revenueEmail?.success === false ? ` Revenue email failed: ${data.revenueEmail.error || 'check Resend configuration.'}` : ''}` : `Job ${label} successfully.${data.revenueEmail?.success === false ? ` Revenue email failed: ${data.revenueEmail.error || 'check Resend configuration.'}` : ''}`);
     } catch (error: any) {
       setErrorMsg(error.message || 'Unable to close job');
     } finally {

@@ -299,7 +299,9 @@ export default function DispatchPage() {
       }
 
       if (technicianId === technician.id) setTechnicianId('');
-      setSuccessMsg(`✅ ${data.message}`);
+      setSuccessMsg(data.revenueEmail?.success === false
+        ? `✅ ${data.message} Revenue email failed: ${data.revenueEmail.error || 'check Resend configuration.'}`
+        : `✅ ${data.message}`);
       fetchAuthAndJobs();
     } catch (err: any) {
       setErrorMsg(err.message);

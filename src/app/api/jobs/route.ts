@@ -8,6 +8,7 @@ import {
   buildTechnicianAssignmentDraft,
   normalizeNanpPhone,
 } from '@/lib/sms-draft';
+import { parseTorontoDateTime } from '@/lib/timezone';
 
 export async function GET(request: Request) {
   try {
@@ -124,7 +125,8 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    if (scheduledFor && Number.isNaN(new Date(scheduledFor).getTime())) {
+    const parsedScheduledFor = scheduledFor ? parseTorontoDateTime(scheduledFor) : null;
+    if (scheduledFor && !parsedScheduledFor) {
       return NextResponse.json(
         { success: false, error: 'Invalid scheduled time.' },
         { status: 400 }
@@ -196,7 +198,7 @@ export async function POST(request: Request) {
         keyType: keyType || null,
         fccId: fccId || null,
         isScheduled: !!isScheduled,
-        scheduledFor: scheduledFor ? new Date(scheduledFor) : null,
+        scheduledFor: isScheduled ? parsedScheduledFor : null,
       },
       include: {
         customer: true,

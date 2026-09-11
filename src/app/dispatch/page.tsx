@@ -6,6 +6,7 @@ import { MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
+import { torontoDateTimeToIso } from '@/lib/timezone';
 
 interface Job {
   id: string;
@@ -179,7 +180,7 @@ export default function DispatchPage() {
           problemDescription,
           technicianId,
           isScheduled,
-          scheduledFor: isScheduled && scheduledFor ? scheduledFor : null,
+          scheduledFor: isScheduled && scheduledFor ? torontoDateTimeToIso(scheduledFor) : null,
           vehicleYear: vehicleYear || null,
           vehicleMake: vehicleMake || null,
           vehicleModel: vehicleModel || null,

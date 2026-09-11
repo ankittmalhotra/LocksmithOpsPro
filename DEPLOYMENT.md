@@ -98,7 +98,6 @@ git push -u origin main
    - `POSTGRES_URL_NON_POOLING`: *(Your Supabase direct connection string from Step 1)*
    - `ADMIN_PASSWORD`: *(Strong password for the initial Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project-name.vercel.app` *(or your custom domain)*
-   - *(Optional)* `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 5. Click **"Deploy"**.
 
@@ -115,5 +114,7 @@ Vercel will run `prisma generate && next build` automatically. Within 60 seconds
 3. Select event: `checkout.session.completed`.
 4. Copy the Signing Secret into Vercel as `STRIPE_WEBHOOK_SECRET`.
 
-### Twilio Messaging
-- When you add your Twilio credentials to Vercel, SMS dispatch alerts to contractors and payment links to clients will be transmitted live via your Twilio phone number.
+### Device SMS
+- The portal prepares an `sms:` link and message preview for the dispatcher or technician.
+- The user must review the draft, open the native Messages app, and tap Send. The portal cannot verify delivery.
+- No Twilio credentials are required or used by active job routes.

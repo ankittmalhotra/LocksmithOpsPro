@@ -2,7 +2,7 @@
 
 **Mobile-First Cloud Operations Management Platform for Locksmith Firms**
 
-Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fast call intake (<30s), technician SMS dispatch, one simple customer "technician is on the way" SMS, Ontario 13% HST calculations, contractor cash-in-hand reconciliation, digital signature capture, and proof-of-work photo attachment.
+Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare technician SMS drafts for review on the user's device, Ontario 13% HST calculations, contractor cash-in-hand reconciliation, digital signature capture, and proof-of-work photo attachment.
 
 ---
 
@@ -13,9 +13,9 @@ Replacing legacy WhatsApp dispatching with an automated end-to-end workflow: Fas
 - Admins and Dispatchers can record completed historical jobs with **Add Manual Job**. Manual entries capture a tax-inclusive total amount collected, extract Ontario's 13% HST when marked on-books, track COGS, technician commission, payment method, and an on-books/off-books flag without sending dispatch notifications. The Dispatch Desk includes an all-entry table where Admins and Dispatchers can edit or delete manual records.
 - Customer phone number formatting with extension parsing (e.g., `(647) 951-0901 #762`).
 - Dispatcher assigns technicians using each technician's configured commission rate.
-- Dispatches job alerts via **Twilio SMS** directly to the technician's phone.
+- Prepares technician assignment SMS drafts for the user's native Messages app; the portal does not send or verify SMS delivery.
 - Refresh the page after another user changes a job; there is no background live refresh.
-- Customer receives only one simple SMS from the dispatcher-side assignment flow: technician is on the way.
+- Customer SMS is not sent by the portal; customer communication remains a user-controlled device action.
 
 ### 2. Field Technician Mobile App (`/tech` & `/tech/jobs/[id]`)
 - Mobile-first interface designed for one-hand operation on mobile phones.

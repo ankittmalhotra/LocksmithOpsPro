@@ -172,6 +172,12 @@ export async function POST(
     if (!Number.isFinite(calcBreakdown.grandTotal) || calcBreakdown.grandTotal <= 0) {
       return NextResponse.json({ success: false, error: 'Closeout total must be greater than zero.' }, { status: 400 });
     }
+    if (calculationMode === 'REVERSE' && calcBreakdown.partsTotal > calcBreakdown.subtotal) {
+      return NextResponse.json(
+        { success: false, error: 'Parts total cannot exceed the collected amount before tax.' },
+        { status: 400 }
+      );
+    }
 
     // 3. Calculate the technician's percentage commission from the final job total.
     const workerCommission = roundToTwo(

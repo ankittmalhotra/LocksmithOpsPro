@@ -8,6 +8,47 @@ import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { torontoDateTimeToIso } from '@/lib/timezone';
 
+const PHONE_INPUT_PATTERN = '(?=.*[0-9])[0-9()+\\-\\s]{7,}';
+
+function sanitizePhoneInput(value: string) {
+  return value.replace(/[^0-9()+\-\s]/g, '');
+}
+
+function phoneDigitCount(value: string) {
+  return value.replace(/\D/g, '').length;
+}
+
+function validateManualForm(form: Record<string, string>) {
+  if (!/^\d+$/.test(form.jobNumber.trim()) || BigInt(form.jobNumber.trim() || '0') <= 0n) {
+    return 'Job number must be a positive whole number.';
+  }
+  if (!form.customerName.trim() || !form.serviceAddress.trim() || !form.description.trim()) {
+    return 'Customer name, address, and description are required.';
+  }
+  if (phoneDigitCount(form.customerPhone) < 7) {
+    return 'Enter a valid customer phone number with at least 7 digits.';
+  }
+  if (form.serviceType === 'Other' && !form.otherServiceType.trim()) {
+    return 'Enter the other job type.';
+  }
+  if (!Number.isFinite(Number(form.totalAmountCollected)) || Number(form.totalAmountCollected) <= 0) {
+    return 'Total amount collected must be greater than 0.';
+  }
+  if (!Number.isFinite(Number(form.cogsAmount)) || Number(form.cogsAmount) < 0) {
+    return 'COGS must be a valid non-negative amount.';
+  }
+  if (!Number.isFinite(Number(form.technicianCommission)) || Number(form.technicianCommission) < 0) {
+    return 'Technician commission must be a valid non-negative amount.';
+  }
+  if (!form.technicianId) {
+    return 'Select a technician or choose Other.';
+  }
+  if (form.technicianId === 'OTHER' && !form.otherTechnicianName.trim()) {
+    return 'Enter the other technician name.';
+  }
+  return null;
+}
+
 interface Job {
   id: string;
   jobNumber: string;
@@ -168,6 +209,11 @@ export default function DispatchPage() {
 
   const handleQuickIntake = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (phoneDigitCount(customerPhone) < 7) {
+      setErrorMsg('Enter a valid customer phone number with at least 7 digits.');
+      setSuccessMsg('');
+      return;
+    }
     setSubmitting(true);
     setErrorMsg('');
     setSuccessMsg('');
@@ -361,6 +407,12 @@ export default function DispatchPage() {
 
   const handleManualJob = async (e: React.FormEvent) => {
     e.preventDefault();
+    const validationError = validateManualForm(manualForm);
+    if (validationError) {
+      setErrorMsg(validationError);
+      setSuccessMsg('');
+      return;
+    }
     setManualSubmitting(true);
     setErrorMsg('');
     setSuccessMsg('');
@@ -827,11 +879,17 @@ export default function DispatchPage() {
                 <input
                   type="text"
                   required
+                  inputMode="tel"
+                  minLength={7}
+                  maxLength={25}
+                  pattern={PHONE_INPUT_PATTERN}
+                  title="Enter a phone number containing at least 7 digits."
                   placeholder="(647) 951-0901"
                   value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  onChange={(e) => setCustomerPhone(sanitizePhoneInput(e.target.value))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-900"
                 />
+                <p className="mt-1 text-[10px] text-slate-500">Use at least 7 digits; letters are removed automatically.</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1232,7 +1290,7 @@ export default function DispatchPage() {
             <form onSubmit={handleManualJob} className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-sm">
               <div>
                 <label className="field-label">Job number *</label>
-                <input aria-label="Job number" required type="text" inputMode="numeric" pattern="[0-9]+" value={manualForm.jobNumber} onChange={(e) => updateManualField('jobNumber', e.target.value)} className="field-input" />
+                <input aria-label="Job number" required type="text" inputMode="numeric" pattern="[0-9]+" title="Enter a positive whole-number job number." value={manualForm.jobNumber} onChange={(e) => updateManualField('jobNumber', e.target.value.replace(/\D/g, ''))} className="field-input" />
               </div>
               <div>
                 <label className="field-label">Customer name *</label>
@@ -1247,7 +1305,8 @@ export default function DispatchPage() {
               </div>
               <div>
                 <label className="field-label">Customer phone number *</label>
-                <input aria-label="Customer phone number" required value={manualForm.customerPhone} onChange={(e) => updateManualField('customerPhone', e.target.value)} className="field-input" />
+                <input aria-label="Customer phone number" required type="tel" inputMode="tel" minLength={7} maxLength={25} pattern={PHONE_INPUT_PATTERN} title="Enter a phone number containing at least 7 digits." value={manualForm.customerPhone} onChange={(e) => updateManualField('customerPhone', sanitizePhoneInput(e.target.value))} className="field-input" />
+                <p className="mt-1 text-[10px] text-slate-500">Use at least 7 digits; letters are removed automatically.</p>
               </div>
               <div>
                 <label className="field-label">Extension (optional)</label>

@@ -68,6 +68,11 @@ function isMissingUpdatedAtError(error: unknown): boolean {
   return candidate?.code === 'P2022' && /updatedAt/i.test(candidate.message || '');
 }
 
+function isMissingSettlementTableError(error: unknown): boolean {
+  const candidate = error as { code?: string; message?: string } | null;
+  return candidate?.code === 'P2021' && /settlement/i.test(candidate.message || '');
+}
+
 type JobReadArgs = {
   where?: Prisma.JobWhereInput;
   orderBy?: Prisma.JobOrderByWithRelationInput | Prisma.JobOrderByWithRelationInput[];
@@ -87,6 +92,24 @@ export async function findJobsWithDetails(args: JobReadArgs = {}) {
 
     const legacyJobs = await prisma.job.findMany({ ...args, select: legacyJobSelect });
     return legacyJobs.map((job) => ({ ...job, updatedAt: job.createdAt }));
+  }
+}
+
+/**
+ * Loads technicians for the admin ledger.  Settlement was part of the
+ * original schema, but an older database may not have that table yet; in
+ * that case the ledger remains usable with zero prior handovers.
+ */
+export async function findTechniciansWithSettlements() {
+  try {
+    return await prisma.user.findMany({
+      where: { role: 'TECHNICIAN' },
+      include: { settlements: true },
+    });
+  } catch (error) {
+    if (!isMissingSettlementTableError(error)) throw error;
+    const technicians = await prisma.user.findMany({ where: { role: 'TECHNICIAN' } });
+    return technicians.map((technician) => ({ ...technician, settlements: [] }));
   }
 }
 

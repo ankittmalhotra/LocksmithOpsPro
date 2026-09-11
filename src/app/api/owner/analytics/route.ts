@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { roundToTwo } from '@/lib/calculations';
 import { getCurrentUser } from '@/lib/auth';
 import { normalizeManualJobInvoice } from '@/lib/manual-job';
-import { findJobsWithDetails } from '@/lib/job-helper';
+import { findJobsWithDetails, findTechniciansWithSettlements } from '@/lib/job-helper';
 
 export async function GET() {
   try {
@@ -20,12 +20,7 @@ export async function GET() {
     const jobs = rawJobs.map(normalizeManualJobInvoice);
 
     // 2. Fetch all technicians
-    const technicians = await prisma.user.findMany({
-      where: { role: 'TECHNICIAN' },
-      include: {
-        settlements: true,
-      },
-    });
+    const technicians = await findTechniciansWithSettlements();
 
     let totalGrossRevenue = 0;
     let totalCashRevenue = 0;

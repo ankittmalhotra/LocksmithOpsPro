@@ -10,7 +10,7 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 
 ### 1. Dispatch Desk & Call Intake (`/dispatch`)
 - Rapid customer call logging designed for under 30 seconds.
-- Admins and Dispatchers can record completed historical jobs with **Add Manual Job**. Manual entries capture a tax-inclusive total amount collected, extract Ontario's 13% HST when marked on-books, track COGS, technician commission, payment method, and an on-books/off-books flag without sending dispatch notifications. The Dispatch Desk includes an all-entry table where Admins and Dispatchers can edit or delete manual records.
+- Admins and Dispatchers can record completed historical jobs with **Add Manual Job**. Manual entries capture a Toronto-local job date (defaulting to today), store `createdAt`, `completedAt`, and `paidAt` at 12:00 AM Toronto time, capture a tax-inclusive total amount collected, extract Ontario's 13% HST when marked on-books, track COGS, technician commission, payment method, and an on-books/off-books flag without sending dispatch notifications. Existing manual jobs are not backfilled. The Dispatch Desk includes an all-entry table where Admins and Dispatchers can edit or delete manual records.
 - Customer phone number formatting with extension parsing (e.g., `(647) 951-0901 #762`).
 - Dispatcher assigns technicians using each technician's configured commission rate.
 - Prepares technician assignment SMS drafts for the user's native Messages app; the portal does not send or verify SMS delivery.
@@ -102,11 +102,12 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    - `NEXT_PUBLIC_APP_URL`: `https://your-project.vercel.app`
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 
-5. Before deploying a version that includes dispatcher edit concurrency, apply the
-   one-time schema change from `prisma/job-updated-at-migration.sql` against the
-   production database. This adds `Job.updatedAt`, which prevents stale dispatcher
-   forms from overwriting a newer edit. Verify the column exists before serving the
-   new application build.
+5. Before deploying a version that includes dispatcher edits or manual-job intake
+   windows, apply both one-time additive migrations against the production database:
+   `prisma/job-updated-at-migration.sql` and
+   `prisma/manual-job-received-time-migration.sql`. These add `Job.updatedAt` for
+   edit concurrency and `Job.jobReceivedTimeSlot` for manual-job intake windows.
+   Verify both columns exist before serving the new application build.
 
 Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.md).
 

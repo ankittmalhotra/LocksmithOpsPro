@@ -60,6 +60,13 @@ The Prisma schema is the single source of truth for this new database. No role-c
 
 For an existing database, apply schema changes before deploying application code. The job-number identifier migration is available at `prisma/job-number-string-migration.sql`; run it once against the production database, or use `npx prisma db push` after verifying the diff.
 
+Before deploying a build that uses the additive dispatcher-edit and manual-job fields, apply both compatibility migrations to an existing production database:
+
+- `prisma/job-updated-at-migration.sql` adds `Job.updatedAt` for dispatcher edit concurrency.
+- `prisma/manual-job-received-time-migration.sql` adds `Job.jobReceivedTimeSlot` for the manual-job intake window.
+
+These migrations are additive and preserve existing job business data. Existing rows receive a migration-time default for the new non-null `updatedAt` column, while existing `jobReceivedTimeSlot` values remain `NULL` until a manual job is edited or recorded with a time window. Verify both columns exist before serving the new application build.
+
 Required production environment variables:
 
 ```env

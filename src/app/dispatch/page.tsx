@@ -6,7 +6,7 @@ import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manu
 import { roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
-import { formatTorontoDateInput, torontoDateTimeToIso } from '@/lib/timezone';
+import { formatTorontoDateInput, parseTorontoDateOnly, torontoDateTimeToIso } from '@/lib/timezone';
 
 const PHONE_INPUT_PATTERN = '(?=.*[0-9])[0-9()+\\-\\s]{7,}';
 
@@ -19,6 +19,9 @@ function phoneDigitCount(value: string) {
 }
 
 function validateManualForm(form: Record<string, string>) {
+  if (!parseTorontoDateOnly(form.jobDate)) {
+    return 'Job date must be a valid date.';
+  }
   if (!/^\d+$/.test(form.jobNumber.trim()) || BigInt(form.jobNumber.trim() || '0') <= 0n) {
     return 'Job number must be a positive whole number.';
   }

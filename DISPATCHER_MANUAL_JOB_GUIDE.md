@@ -16,6 +16,7 @@ Use **Add Manual Job** to record a completed or historical job. Manual jobs are 
 | Field | Enter this | Why it matters |
 |---|---|---|
 | **Job number** | Unique numeric ID; enter digits only | Identifies the job; leading zeroes and large values are supported; duplicates are rejected |
+| **Job date** | Date the completed job occurred; defaults to today's Toronto date | Stores `createdAt`, `completedAt`, and `paidAt` at 12:00 AM Toronto time; existing jobs are not backfilled |
 | **Customer name** | Customer's full name | Makes the job easy to find |
 | **Customer phone** | Complete phone number | Identifies and supports contact with the customer |
 | **Extension** *(optional)* | Office or phone extension | Helps reach the right person |
@@ -26,7 +27,7 @@ Use **Add Manual Job** to record a completed or historical job. Manual jobs are 
 | **Payment method** | Cash, Interac, Debit Card, or Credit Card | Records how the customer paid |
 | **Total collected** | Full amount received | Records job revenue |
 | **COGS / parts amount** | Cost of parts or direct job costs | Records the job's direct cost |
-| **Tax collected** | Choose **Yes - on books** or **No - off books** | Records bookkeeping status; it does not calculate tax |
+| **Tax collected** | Choose **Yes - on books** or **No - off books** | Records tax status and calculates the stored Ontario HST/tax fields accordingly |
 | **Technician** | Technician who completed the job | Connects the job to the technician |
 | **Other technician name** | Name, only when **Other** is selected | Records a technician not in the list |
 | **Technician commission** | Amount owed to the technician | Supports payout and reporting |
@@ -34,6 +35,7 @@ Use **Add Manual Job** to record a completed or historical job. Manual jobs are 
 ## Check Before Saving
 
 - Job number is unique.
+- The job date is correct. It defaults to today's date in the Toronto business timezone.
 - Customer name, phone, address, and description are complete.
 - The correct service type and payment method are selected.
 - The amount collected is greater than `$0`.

@@ -1,11 +1,10 @@
 'use client';
 
 import { useRef, useState, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 function LoginFormContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectPath = searchParams.get('redirect');
 
@@ -19,19 +18,18 @@ function LoginFormContent() {
   const submittingRef = useRef(false);
 
   const handleRedirect = (role: string, targetUrl?: string) => {
-    if (redirectPath) {
-      router.replace(redirectPath);
-      return;
+    let destination = '/tech';
+    const requestedDestination = redirectPath || targetUrl;
+    if (requestedDestination?.startsWith('/') && !requestedDestination.startsWith('//')) {
+      destination = requestedDestination;
+    } else if (role === 'ADMIN' || role === 'DISPATCHER') {
+      destination = '/dispatch';
     }
-    if (targetUrl) {
-      router.replace(targetUrl);
-      return;
-    }
-    if (role === 'ADMIN' || role === 'DISPATCHER') {
-      router.replace('/dispatch');
-    } else {
-      router.replace('/tech');
-    }
+
+    // A full navigation makes the browser send the new session cookie with
+    // the destination request. It also avoids leaving the login form stuck
+    // when an App Router RSC transition fails or never completes.
+    window.location.replace(destination);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -40,6 +38,8 @@ function LoginFormContent() {
 
     submittingRef.current = true;
     let navigationStarted = false;
+    const requestController = new AbortController();
+    const requestTimeout = window.setTimeout(() => requestController.abort(), 15_000);
 
     try {
       setLoading(true);
@@ -48,25 +48,31 @@ function LoginFormContent() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: requestController.signal,
         body: JSON.stringify({
           identifier: identifier.trim(),
           password: password.trim() || undefined,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Authentication failed. Please check your credentials.');
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json') ? await res.json() : null;
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'Authentication service unavailable. Please try again.');
       }
 
       handleRedirect(data.user.role, data.redirectUrl);
       navigationStarted = true;
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(
+        err?.name === 'AbortError'
+          ? 'Login request timed out. Please try again.'
+          : err.message || 'Authentication service unavailable. Please try again.'
+      );
     } finally {
-      // Keep the submit guard active while the successful navigation is in
-      // flight. A refresh here can race with the route transition and leave
-      // the user on the login page until they submit again.
+      window.clearTimeout(requestTimeout);
+      // Keep the submit guard active while the successful document navigation
+      // is in flight.
       if (!navigationStarted) {
         submittingRef.current = false;
         setLoading(false);

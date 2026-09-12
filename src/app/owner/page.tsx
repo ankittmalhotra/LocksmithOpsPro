@@ -29,10 +29,45 @@ interface DailyAnalyticsItem {
 const formatCompactCurrency = (value: number) =>
   value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${Math.round(value)}`;
 
+function AnimatedMetric({
+  value,
+  resetKey,
+  format,
+}: {
+  value: number;
+  resetKey: number;
+  format: (value: number) => string;
+}) {
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    const target = Number.isFinite(value) ? value : 0;
+    const durationMs = 650;
+    const startedAt = performance.now();
+    let frameId = 0;
+
+    setDisplayValue(0);
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / durationMs);
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+      setDisplayValue(target * easedProgress);
+      if (progress < 1) {
+        frameId = requestAnimationFrame(animate);
+      }
+    };
+
+    frameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameId);
+  }, [value, resetKey]);
+
+  return <>{format(displayValue)}</>;
+}
+
 export default function AdminDashboardPage() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [analyticsRefreshVersion, setAnalyticsRefreshVersion] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [approvingId, setApprovingId] = useState<string | null>(null);
@@ -111,17 +146,18 @@ export default function AdminDashboardPage() {
   const fetchAuthAndAnalytics = async () => {
     try {
       setLoading(true);
-      const authRes = await fetch('/api/auth/me');
+      const authRes = await fetch('/api/auth/me', { cache: 'no-store' });
       const authData = await authRes.json();
       if (authData.success && authData.user) {
         setCurrentUser(authData.user);
       }
 
-      const res = await fetch('/api/owner/analytics');
+      const res = await fetch('/api/owner/analytics', { cache: 'no-store' });
       const data = await res.json();
       if (data.success) {
         setErrorMsg('');
         setAnalytics(data);
+        setAnalyticsRefreshVersion((version) => version + 1);
       } else {
         setErrorMsg(data.error || 'Failed to fetch analytics');
       }
@@ -314,9 +350,11 @@ export default function AdminDashboardPage() {
           </button>
           <button
             onClick={fetchAuthAndAnalytics}
-            className="px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-xs"
+            disabled={loading}
+            aria-label={loading ? 'Refreshing admin analytics' : 'Refresh admin analytics'}
+            className="px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-xs disabled:cursor-wait disabled:opacity-70"
           >
-            🔄 Refresh
+            <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span> {loading ? 'Refreshing…' : 'Refresh'}
           </button>
           <button
             onClick={handleExportCSV}
@@ -365,25 +403,25 @@ export default function AdminDashboardPage() {
             Total Gross Revenue
           </div>
           <div className="text-2xl font-black text-slate-900">
-            ${(s.totalGrossRevenue || 0).toFixed(2)}
+            <AnimatedMetric value={Number(s.totalGrossRevenue || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
           </div>
           <div className="mt-2 text-[11px] text-slate-500 space-y-0.5">
             <div className="flex justify-between">
               <span>💵 Cash:</span>
               <span className="font-semibold text-slate-700">
-                ${(s.totalCashRevenue || 0).toFixed(2)}
+                <AnimatedMetric value={Number(s.totalCashRevenue || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
               </span>
             </div>
             <div className="flex justify-between">
               <span>💳 Card (future):</span>
               <span className="font-semibold text-slate-700">
-                ${(s.totalCardRevenue || 0).toFixed(2)}
+                <AnimatedMetric value={Number(s.totalCardRevenue || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
               </span>
             </div>
             <div className="flex justify-between">
               <span>🏦 Interac:</span>
               <span className="font-semibold text-slate-700">
-                ${(s.totalInteracRevenue || 0).toFixed(2)}
+                <AnimatedMetric value={Number(s.totalInteracRevenue || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
               </span>
             </div>
           </div>
@@ -398,7 +436,7 @@ export default function AdminDashboardPage() {
             </span>
           </div>
           <div className="text-2xl font-black text-amber-700">
-            ${(s.totalTaxHST || 0).toFixed(2)}
+            <AnimatedMetric value={Number(s.totalTaxHST || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
           </div>
           <p className="mt-2 text-[11px] text-slate-500 leading-tight">
             Taxes collected from all invoices ready for CRA filing (Reg #83921 4092 RT0001).
@@ -414,7 +452,7 @@ export default function AdminDashboardPage() {
             </span>
           </div>
           <div className="text-2xl font-black text-rose-700">
-            ${(s.totalPartsCost || 0).toFixed(2)}
+            <AnimatedMetric value={Number(s.totalPartsCost || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
           </div>
           <p className="mt-2 text-[11px] text-slate-500 leading-tight">
             Wholesale locks, cylinders & hardware costs deducted from company net margin.
@@ -427,7 +465,7 @@ export default function AdminDashboardPage() {
             Tech Commissions
           </div>
           <div className="text-2xl font-black text-blue-700">
-            ${(s.totalCommissionsEarned || 0).toFixed(2)}
+            <AnimatedMetric value={Number(s.totalCommissionsEarned || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
           </div>
           <p className="mt-2 text-[11px] text-slate-500 leading-tight">
             Total commission allocated to workers by dispatchers for completed jobs.
@@ -440,7 +478,7 @@ export default function AdminDashboardPage() {
             Net Company Profit
           </div>
           <div className="text-2xl font-black text-emerald-700">
-            ${(s.netCompanyProfit || 0).toFixed(2)}
+            <AnimatedMetric value={Number(s.netCompanyProfit || 0)} resetKey={analyticsRefreshVersion} format={(value) => `$${value.toFixed(2)}`} />
           </div>
           <p className="mt-2 text-[11px] text-slate-500 leading-tight">
             True net profit after deducting Ontario HST, contractor payouts, and wholesale parts.

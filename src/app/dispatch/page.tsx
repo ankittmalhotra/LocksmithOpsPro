@@ -684,6 +684,7 @@ export default function DispatchPage() {
               <thead>
                 <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
                   <th className="py-2.5 px-4">Job #</th>
+                  <th className="py-2.5 px-4">Date</th>
                   <th className="py-2.5 px-4">Customer</th>
                   <th className="py-2.5 px-4">Type</th>
                   <th className="py-2.5 px-4">Received Time</th>
@@ -699,12 +700,15 @@ export default function DispatchPage() {
               <tbody className="divide-y divide-slate-100">
                 {manualJobs.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
+                    <td colSpan={12} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
                   </tr>
                 )}
                 {manualJobs.map((job) => (
                   <tr key={job.id} className="hover:bg-slate-50/80">
                     <td className="py-3 px-4 font-black text-slate-900">#{job.jobNumber}</td>
+                    <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+                      {formatTorontoDateInput(job.completedAt || job.invoice?.paidAt || job.createdAt) || '—'}
+                    </td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-800">{job.customer.name}</div>
                       <div className="text-[10px] text-slate-500">{job.customer.phone}</div>

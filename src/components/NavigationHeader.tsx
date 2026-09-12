@@ -15,6 +15,7 @@ interface UserSession {
 export default function NavigationHeader() {
   const router = useRouter();
   const pathname = usePathname();
+  const showAppNavigation = pathname !== '/login';
   const [user, setUser] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -61,7 +62,7 @@ export default function NavigationHeader() {
 
         {/* Navigation Links based on the current app role */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm font-semibold">
-          {(!user || user.role === 'ADMIN' || user.role === 'DISPATCHER') && (
+          {showAppNavigation && (!user || user.role === 'ADMIN' || user.role === 'DISPATCHER') && (
             <Link
               href="/dispatch"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -75,7 +76,7 @@ export default function NavigationHeader() {
             </Link>
           )}
 
-          {(!user || user.role === 'ADMIN') && (
+          {showAppNavigation && (!user || user.role === 'ADMIN') && (
             <>
               <Link
                 href="/owner"
@@ -91,7 +92,7 @@ export default function NavigationHeader() {
             </>
           )}
 
-          {(!user || user.role === 'ADMIN' || user.role === 'TECHNICIAN') && (
+          {showAppNavigation && (!user || user.role === 'ADMIN' || user.role === 'TECHNICIAN') && (
             <Link
               href="/tech"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${

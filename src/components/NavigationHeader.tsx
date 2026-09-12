@@ -15,7 +15,6 @@ interface UserSession {
 export default function NavigationHeader() {
   const router = useRouter();
   const pathname = usePathname();
-  const showAppNavigation = pathname !== '/login';
   const [user, setUser] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -46,6 +45,10 @@ export default function NavigationHeader() {
     router.refresh();
   };
 
+  if (pathname === '/' || pathname === '/login') {
+    return null;
+  }
+
   return (
     <header className="sticky top-0 z-50 bg-slate-900 text-white shadow-md border-b border-slate-800">
       <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -62,7 +65,7 @@ export default function NavigationHeader() {
 
         {/* Navigation Links based on the current app role */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm font-semibold">
-          {showAppNavigation && (!user || user.role === 'ADMIN' || user.role === 'DISPATCHER') && (
+          {(!user || user.role === 'ADMIN' || user.role === 'DISPATCHER') && (
             <Link
               href="/dispatch"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -76,7 +79,7 @@ export default function NavigationHeader() {
             </Link>
           )}
 
-          {showAppNavigation && (!user || user.role === 'ADMIN') && (
+          {(!user || user.role === 'ADMIN') && (
             <>
               <Link
                 href="/owner"
@@ -92,7 +95,7 @@ export default function NavigationHeader() {
             </>
           )}
 
-          {showAppNavigation && (!user || user.role === 'ADMIN' || user.role === 'TECHNICIAN') && (
+          {(!user || user.role === 'ADMIN' || user.role === 'TECHNICIAN') && (
             <Link
               href="/tech"
               className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${

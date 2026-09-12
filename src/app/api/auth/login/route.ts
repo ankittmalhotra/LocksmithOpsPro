@@ -3,8 +3,10 @@ import { prisma } from '@/lib/prisma';
 import { setSessionCookie } from '@/lib/auth';
 import type { AppRole } from '@/lib/session';
 import { verifyPassword } from '@/lib/password';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const body = await request.json();
     const { phone, username, password, identifier } = body;
@@ -118,7 +120,9 @@ export async function POST(request: Request) {
       message: `Logged in as ${user.name} (${user.role})`,
     });
   } catch (err: any) {
-    console.error('Login error:', err);
-    return NextResponse.json({ success: false, error: 'Authentication service unavailable' }, { status: 500 });
+    logCaughtRequestError(request, '/api/auth/login', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Authentication service unavailable') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/auth/login', handlePOST);

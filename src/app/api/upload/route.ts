@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { getCurrentUser } from '@/lib/auth';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const user = await getCurrentUser();
     if (!user || (user.role !== 'ADMIN' && user.role !== 'TECHNICIAN')) {
@@ -50,7 +52,9 @@ export async function POST(request: Request) {
       size: file.size,
     });
   } catch (err: any) {
-    console.error('File upload error:', err);
-    return NextResponse.json({ success: false, error: 'File upload failed' }, { status: 500 });
+    logCaughtRequestError(request, '/api/upload', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'File upload failed') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/upload', handlePOST);

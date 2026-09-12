@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { withRequestLogging } from '@/lib/request-logger';
 
-export async function POST() {
+async function handlePOST() {
   // Stripe customer payments are disabled for now. Keep this endpoint closed
   // so a browser cannot simulate a successful payment.
   return NextResponse.json(
@@ -8,3 +9,5 @@ export async function POST() {
     { status: 410 }
   );
 }
+
+export const POST = withRequestLogging('/api/webhooks/stripe', handlePOST);

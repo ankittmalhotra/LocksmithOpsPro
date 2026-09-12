@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { sendEmail } from '@/lib/resend';
 import { getCurrentUser } from '@/lib/auth';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const user = await getCurrentUser();
     if (!user || user.role !== 'ADMIN') {
@@ -39,6 +41,9 @@ export async function POST(request: Request) {
       hasApiKey: !!process.env.RESEND_API_KEY,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Test email failed' }, { status: 500 });
+    logCaughtRequestError(request, '/api/email/test', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Test email failed') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/email/test', handlePOST);

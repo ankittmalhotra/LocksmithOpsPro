@@ -17,6 +17,8 @@ import {
   isOpenJobStatus,
 } from '@/lib/job-workflow';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
 function parseCloseoutNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -27,7 +29,7 @@ function parseCloseoutNumber(value: unknown): number | null {
   return null;
 }
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -357,7 +359,9 @@ export async function POST(
       revenueEmail: revenueEmail ? { success: revenueEmail.success, error: revenueEmail.error } : null,
     });
   } catch (err: any) {
-    console.error('Invoice creation error:', err);
-    return NextResponse.json({ success: false, error: 'Unable to complete invoice' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/[id]/invoice', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to complete invoice') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/jobs/[id]/invoice', handlePOST);

@@ -5,6 +5,8 @@ import { getCurrentUser } from '@/lib/auth';
 import { canMutateJob, canTransitionJobStatus } from '@/lib/job-workflow';
 import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
 import type { JobStatus } from '@prisma/client';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
 const VALID_STATUSES = [
   'NEW',
@@ -29,7 +31,7 @@ const TECHNICIAN_STATUSES = [
   'IN_PROGRESS',
 ] as const;
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -153,6 +155,9 @@ export async function POST(
       dispatcherNotificationWarnings,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to update job status' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/[id]/status', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to update job status') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/jobs/[id]/status', handlePOST);

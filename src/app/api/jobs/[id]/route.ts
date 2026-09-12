@@ -13,6 +13,8 @@ import {
   FINANCIAL_TERMINAL_JOB_STATUSES,
   normalizeTechnicianId,
 } from '@/lib/job-workflow';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
 const DISPATCHER_STATUSES = [
   'NEW',
@@ -65,7 +67,7 @@ const VALID_JOB_STATUSES = [
   'NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS',
 ] as const;
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -101,11 +103,12 @@ export async function GET(
 
     return NextResponse.json({ success: true, job });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to load job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/[id]', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to load job') }, { status: 500 });
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -435,6 +438,10 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, job: updated, smsDraft, smsDraftWarnings });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to update job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/[id]', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to update job') }, { status: 500 });
   }
 }
+
+export const GET = withRequestLogging('/api/jobs/[id]', handleGET);
+export const PATCH = withRequestLogging('/api/jobs/[id]', handlePATCH);

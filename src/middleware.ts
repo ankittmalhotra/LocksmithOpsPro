@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { deserializeSession } from '@/lib/session';
+import { addRequestId, getRequestId, logFailedRequest } from '@/lib/request-logger';
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -34,10 +35,22 @@ export function middleware(request: NextRequest) {
   // Handle API unauthorized
   if (pathname.startsWith('/api/')) {
     if (!user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized: Authentication required' }, { status: 401 });
+      const requestId = getRequestId(request);
+      const response = NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required' },
+        { status: 401 },
+      );
+      logFailedRequest(request, pathname, 401, requestId, 'Unauthorized: Authentication required');
+      return addRequestId(response, requestId);
     }
     if (isAdminRoute && user.role !== 'ADMIN') {
-      return NextResponse.json({ success: false, error: 'Forbidden: Admin access required' }, { status: 403 });
+      const requestId = getRequestId(request);
+      const response = NextResponse.json(
+        { success: false, error: 'Forbidden: Admin access required' },
+        { status: 403 },
+      );
+      logFailedRequest(request, pathname, 403, requestId, 'Forbidden: Admin access required');
+      return addRequestId(response, requestId);
     }
     return NextResponse.next();
   }

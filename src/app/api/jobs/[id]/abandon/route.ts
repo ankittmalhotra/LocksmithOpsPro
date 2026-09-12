@@ -10,8 +10,10 @@ import {
   isOpenJobStatus,
 } from '@/lib/job-workflow';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -221,7 +223,9 @@ export async function POST(
       revenueEmail: revenueEmail ? { success: revenueEmail.success, error: revenueEmail.error } : null,
     });
   } catch (err: any) {
-    console.error('Abandon fee error:', err);
-    return NextResponse.json({ success: false, error: 'Unable to abandon job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/[id]/abandon', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to abandon job') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/jobs/[id]/abandon', handlePOST);

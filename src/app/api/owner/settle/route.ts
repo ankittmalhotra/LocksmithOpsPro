@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const user = await getCurrentUser();
     if (!user || user.role !== 'ADMIN') {
@@ -58,7 +60,9 @@ export async function POST(request: Request) {
       message: `Successfully settled $${normalizedAmount.toFixed(2)} with ${settlement.technician.name}`,
     });
   } catch (err: any) {
-    console.error('Settlement error:', err);
-    return NextResponse.json({ success: false, error: 'Unable to record settlement' }, { status: 500 });
+    logCaughtRequestError(request, '/api/owner/settle', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to record settlement') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/owner/settle', handlePOST);

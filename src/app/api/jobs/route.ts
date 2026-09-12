@@ -10,8 +10,10 @@ import {
 } from '@/lib/sms-draft';
 import { parseTorontoDateTime } from '@/lib/timezone';
 import { findJobsWithDetails } from '@/lib/job-helper';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser) {
@@ -55,14 +57,14 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {
-    console.error('Error fetching jobs:', err);
+    logCaughtRequestError(request, '/api/jobs', err);
     const errorCode = typeof err?.code === 'string' ? ` (${err.code})` : '';
-    return NextResponse.json({ success: false, error: `Unable to load jobs${errorCode}` }, { status: 500 });
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, `Unable to load jobs${errorCode}`) }, { status: 500 });
   }
 }
 
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser) {
@@ -260,7 +262,10 @@ export async function POST(request: Request) {
       customerSmsResult: null,
     });
   } catch (err: any) {
-    console.error('Error creating job:', err);
-    return NextResponse.json({ success: false, error: 'Unable to create job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to create job') }, { status: 500 });
   }
 }
+
+export const GET = withRequestLogging('/api/jobs', handleGET);
+export const POST = withRequestLogging('/api/jobs', handlePOST);

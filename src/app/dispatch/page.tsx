@@ -383,6 +383,8 @@ export default function DispatchPage() {
 
   const openNewManualJob = () => {
     setEditingManualId(null);
+    setErrorMsg('');
+    setSuccessMsg('');
     resetManualJob();
     setShowManualJob(true);
   };
@@ -390,6 +392,8 @@ export default function DispatchPage() {
   const openEditManualJob = (job: Job) => {
     const knownType = MANUAL_SERVICE_TYPES.includes(job.serviceType as (typeof MANUAL_SERVICE_TYPES)[number]);
     setEditingManualId(job.id);
+    setErrorMsg('');
+    setSuccessMsg('');
     setManualForm({
       jobNumber: String(job.jobNumber),
       jobDate: formatTorontoDateInput(job.completedAt || job.invoice?.paidAt || job.createdAt),
@@ -430,7 +434,12 @@ export default function DispatchPage() {
         body: JSON.stringify({ ...manualForm, taxCollected: manualForm.taxCollected === 'yes' }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to record manual job');
+      if (!res.ok || !data.success) {
+        const exactError = typeof data.error === 'string' && data.error.trim()
+          ? data.error
+          : `Request returned HTTP ${res.status}`;
+        throw new Error(exactError);
+      }
       setSuccessMsg(`✅ ${data.message}`);
       setShowManualJob(false);
       setEditingManualId(null);
@@ -1298,6 +1307,11 @@ export default function DispatchPage() {
               </div>
               <button type="button" onClick={() => setShowManualJob(false)} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
             </div>
+            {errorMsg && (
+              <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium break-words">
+                {errorMsg}
+              </div>
+            )}
             <form onSubmit={handleManualJob} className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-sm">
               <div>
                 <label className="field-label">Job number *</label>

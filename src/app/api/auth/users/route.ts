@@ -4,6 +4,8 @@ import { sendEmail, buildContractorApprovedEmail } from '@/lib/resend';
 import { getCurrentUser } from '@/lib/auth';
 import { APP_ROLES, type AppRole } from '@/lib/session';
 import { hashPassword } from '@/lib/password';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
 function canViewTechnicians(role?: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
@@ -29,7 +31,7 @@ function publicUser(user: Record<string, unknown>) {
   return safeUser;
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser || !canViewTechnicians(currentUser.role)) {
@@ -80,11 +82,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, users: rawUsers });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to load team members' }, { status: 500 });
+    logCaughtRequestError(request, '/api/auth/users', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to load team members') }, { status: 500 });
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     const body = await request.json();
@@ -160,12 +163,13 @@ export async function POST(request: Request) {
       user: publicUser(newUser),
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to create team member' }, { status: 500 });
+    logCaughtRequestError(request, '/api/auth/users', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to create team member') }, { status: 500 });
   }
 }
 
 // PATCH to activate/deactivate a team member or update a technician commission rate.
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser || !canManageTechnicians(currentUser.role)) {
@@ -285,12 +289,13 @@ export async function PATCH(request: Request) {
         : `Contractor ${updatedUser.name} deactivated.`,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to update team member' }, { status: 500 });
+    logCaughtRequestError(request, '/api/auth/users', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to update team member') }, { status: 500 });
   }
 }
 
 // DELETE deactivates a technician so historical jobs and settlements remain intact.
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser || !canManageTechnicians(currentUser.role)) {
@@ -322,6 +327,12 @@ export async function DELETE(request: Request) {
       message: `Technician ${deletedUser.name} deleted.`,
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: 'Unable to delete technician' }, { status: 500 });
+    logCaughtRequestError(request, '/api/auth/users', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to delete technician') }, { status: 500 });
   }
 }
+
+export const GET = withRequestLogging('/api/auth/users', handleGET);
+export const POST = withRequestLogging('/api/auth/users', handlePOST);
+export const PATCH = withRequestLogging('/api/auth/users', handlePATCH);
+export const DELETE = withRequestLogging('/api/auth/users', handleDELETE);

@@ -2,21 +2,14 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
-import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, type SupportedPaymentMethod } from '@/lib/calculations';
+import { calculateJobSettlementPosition, calculateManualInvoice, type SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { torontoDateToMidnightIso } from '@/lib/timezone';
-
-class ManualJobInputError extends Error {}
-
-function amount(value: unknown, field: string, allowZero = true): number {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || (!allowZero && parsed === 0)) {
-    throw new ManualJobInputError(`${field} must be a valid ${allowZero ? 'non-negative' : 'positive'} amount`);
-  }
-  return roundToTwo(parsed);
-}
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
+import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
 
 function isManualRole(role: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
@@ -31,7 +24,7 @@ function safeJobInclude() {
   } as const;
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -121,16 +114,16 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Tax collected must be Yes or No' }, { status: 400 });
     }
 
-    const totalAmountCollected = amount(
+    const totalAmountCollected = parseManualAmount(
       body.totalAmountCollected === undefined ? invoice.totalAmountCollected || invoice.grandTotal : body.totalAmountCollected,
       'Total amount collected',
       false
     );
-    const cogsAmount = amount(
+    const cogsAmount = parseManualAmount(
       body.cogsAmount === undefined ? invoice.cogsAmount : body.cogsAmount,
       'COGS (Parts, etc.) amount'
     );
-    const technicianCommission = amount(
+    const technicianCommission = parseManualAmount(
       body.technicianCommission === undefined ? job.workerCommission : body.technicianCommission,
       'Technician commission'
     );
@@ -261,12 +254,12 @@ export async function PATCH(
     if (err?.code === 'P2002') {
       return NextResponse.json({ success: false, error: 'That job number already exists' }, { status: 409 });
     }
-    console.error('Manual job update error:', err);
-    return NextResponse.json({ success: false, error: 'Failed to update manual job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/manual/[id]', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Failed to update manual job') }, { status: 500 });
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -291,7 +284,10 @@ export async function DELETE(
       message: `Manual Job #${job.jobNumber} deleted successfully.`,
     });
   } catch (err: any) {
-    console.error('Manual job delete error:', err);
-    return NextResponse.json({ success: false, error: 'Failed to delete manual job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/manual/[id]', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Failed to delete manual job') }, { status: 500 });
   }
 }
+
+export const PATCH = withRequestLogging('/api/jobs/manual/[id]', handlePATCH);
+export const DELETE = withRequestLogging('/api/jobs/manual/[id]', handleDELETE);

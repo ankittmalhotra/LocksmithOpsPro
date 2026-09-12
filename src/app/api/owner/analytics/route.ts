@@ -4,8 +4,10 @@ import { roundToTwo } from '@/lib/calculations';
 import { getCurrentUser } from '@/lib/auth';
 import { normalizeManualJobInvoice } from '@/lib/manual-job';
 import { findJobsWithDetails, findTechniciansWithSettlements } from '@/lib/job-helper';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
 
-export async function GET() {
+async function handleGET(request: Request) {
   try {
     const user = await getCurrentUser();
     if (!user || user.role !== 'ADMIN') {
@@ -202,8 +204,10 @@ export async function GET() {
       recentJobs: jobs.slice(0, 10),
     });
   } catch (err: any) {
-    console.error('Admin analytics error:', err);
+    logCaughtRequestError(request, '/api/owner/analytics', err);
     const errorCode = typeof err?.code === 'string' ? ` (${err.code})` : '';
-    return NextResponse.json({ success: false, error: `Unable to load Admin analytics${errorCode}` }, { status: 500 });
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, `Unable to load Admin analytics${errorCode}`) }, { status: 500 });
   }
 }
+
+export const GET = withRequestLogging('/api/owner/analytics', handleGET);

@@ -54,6 +54,12 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 - Password-based staff login on `/login`; Admin creates and manages all staff accounts.
 - Route protection with contextual navigation header.
 
+### 6. Request Failure Logging
+- Every `/api/*` request emits a structured log record containing the request ID, HTTP method, path, response status, duration, and authenticated user ID / role when available.
+- Failed requests include the API's returned error message; unexpected server exceptions include the exception message and stack in the server log.
+- The portal UI displays the API error detail directly, including unexpected manual-job creation/update failures; stack traces remain server-side only.
+- Responses include an `X-Request-Id` header so support can correlate a browser failure with its server log entry without logging passwords, request bodies, or uploaded files.
+
 ---
 
 ## 🛠️ Technology Stack
@@ -125,6 +131,10 @@ node --experimental-strip-types tests/production-e2e.test.ts
 # Verify production build compilation
 npm run build
 ```
+
+### Viewing production logs
+
+The deployed portal runs its API routes as Vercel serverless functions. Open the Vercel project, select **Logs**, and search for `portal_api_request` or the reported `X-Request-Id`. HTTP 4xx failures are warnings and 5xx failures / uncaught exceptions are errors. These logs are platform logs rather than records stored in the portal database; a persistent Admin log viewer can be added separately if needed.
 
 ---
 

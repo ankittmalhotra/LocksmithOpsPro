@@ -1,23 +1,16 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, SupportedPaymentMethod } from '@/lib/calculations';
+import { calculateJobSettlementPosition, calculateManualInvoice, SupportedPaymentMethod } from '@/lib/calculations';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { formatTorontoDateInput, torontoDateToMidnightIso } from '@/lib/timezone';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
+import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
 
-class ManualJobInputError extends Error {}
-
-function amount(value: unknown, field: string, allowZero = true): number {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || (!allowZero && parsed === 0)) {
-    throw new ManualJobInputError(`${field} must be a valid ${allowZero ? 'non-negative' : 'positive'} amount`);
-  }
-  return roundToTwo(parsed);
-}
-
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser) {
@@ -75,9 +68,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Tax collected must be Yes or No' }, { status: 400 });
     }
 
-    const totalAmountCollected = amount(body.totalAmountCollected, 'Total amount collected', false);
-    const cogsAmount = amount(body.cogsAmount, 'COGS (Parts, etc.) amount');
-    const technicianCommission = amount(body.technicianCommission, 'Technician commission');
+    const totalAmountCollected = parseManualAmount(body.totalAmountCollected, 'Total amount collected', false);
+    const cogsAmount = parseManualAmount(body.cogsAmount, 'COGS (Parts, etc.) amount');
+    const technicianCommission = parseManualAmount(body.technicianCommission, 'Technician commission');
     const manualCalculation = calculateManualInvoice({
       amountCollected: totalAmountCollected,
       taxCollected: body.taxCollected,
@@ -184,7 +177,9 @@ export async function POST(request: Request) {
     if (err?.code === 'P2002') {
       return NextResponse.json({ success: false, error: 'That job number already exists' }, { status: 409 });
     }
-    console.error('Manual job creation error:', err);
-    return NextResponse.json({ success: false, error: 'Failed to create manual job' }, { status: 500 });
+    logCaughtRequestError(request, '/api/jobs/manual', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Failed to create manual job') }, { status: 500 });
   }
 }
+
+export const POST = withRequestLogging('/api/jobs/manual', handlePOST);

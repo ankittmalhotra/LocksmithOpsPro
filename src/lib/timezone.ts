@@ -4,6 +4,15 @@ const TORONTO_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
 });
 
+const TORONTO_DATE_INPUT_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Toronto',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 /** Parse a datetime-local value as Toronto wall-clock time, independent of server timezone. */
 export function parseTorontoDateTime(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -42,4 +51,33 @@ export function parseTorontoDateTime(value: unknown): Date | null {
 
 export function torontoDateTimeToIso(value: unknown): string | null {
   return parseTorontoDateTime(value)?.toISOString() || null;
+}
+
+/** Parse a YYYY-MM-DD value as midnight in the Toronto business timezone. */
+export function parseTorontoDateOnly(value: unknown): Date | null {
+  if (typeof value !== 'string' || !DATE_ONLY_PATTERN.test(value)) return null;
+  return parseTorontoDateTime(`${value}T00:00`);
+}
+
+/** Convert a YYYY-MM-DD Toronto date to the UTC ISO value stored by Prisma. */
+export function torontoDateToMidnightIso(value: unknown): string | null {
+  return parseTorontoDateOnly(value)?.toISOString() || null;
+}
+
+/** Format a timestamp as a YYYY-MM-DD value suitable for an HTML date input. */
+export function formatTorontoDateInput(value: unknown = new Date()): string {
+  if (typeof value === 'string' && DATE_ONLY_PATTERN.test(value)) {
+    return parseTorontoDateOnly(value) ? value : '';
+  }
+  if (value === null || (typeof value !== 'string' && typeof value !== 'number' && !(value instanceof Date))) {
+    return '';
+  }
+
+  const date = value instanceof Date ? value : new Date(value as string | number);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const parts = Object.fromEntries(
+    TORONTO_DATE_INPUT_FORMATTER.formatToParts(date).map(({ type, value: part }) => [type, part])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }

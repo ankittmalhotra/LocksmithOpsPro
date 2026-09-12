@@ -6,7 +6,7 @@ import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manu
 import { roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
-import { torontoDateTimeToIso } from '@/lib/timezone';
+import { formatTorontoDateInput, torontoDateTimeToIso } from '@/lib/timezone';
 
 const PHONE_INPUT_PATTERN = '(?=.*[0-9])[0-9()+\\-\\s]{7,}';
 
@@ -62,6 +62,7 @@ interface Job {
   isAbandoned: boolean;
   isManual?: boolean;
   createdAt: string;
+  completedAt?: string | null;
   isScheduled?: boolean;
   scheduledFor?: string;
   vehicleYear?: string;
@@ -94,6 +95,7 @@ interface Job {
     paymentStatus: string;
     paymentMethod: string;
     taxCollected?: boolean;
+    paidAt?: string | null;
   };
 }
 
@@ -148,6 +150,7 @@ export default function DispatchPage() {
   const [deletingManualId, setDeletingManualId] = useState<string | null>(null);
   const [manualForm, setManualForm] = useState<Record<string, string>>({
     jobNumber: '',
+    jobDate: formatTorontoDateInput(),
     customerName: '',
     customerPhone: '',
     customerExtension: '',
@@ -367,7 +370,7 @@ export default function DispatchPage() {
 
   const resetManualJob = () => {
     setManualForm({
-      jobNumber: '', customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
+      jobNumber: '', jobDate: formatTorontoDateInput(), customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
       serviceType: MANUAL_SERVICE_TYPES[0], jobReceivedTimeSlot: '', otherServiceType: '', description: '', paymentMethod: 'CASH',
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
       otherTechnicianName: '',
@@ -386,6 +389,7 @@ export default function DispatchPage() {
     setEditingManualId(job.id);
     setManualForm({
       jobNumber: String(job.jobNumber),
+      jobDate: formatTorontoDateInput(job.completedAt || job.invoice?.paidAt || job.createdAt),
       customerName: job.customer.name,
       customerPhone: job.customer.phone,
       customerExtension: job.customer.extension || '',
@@ -1291,6 +1295,11 @@ export default function DispatchPage() {
               <div>
                 <label className="field-label">Job number *</label>
                 <input aria-label="Job number" required type="text" inputMode="numeric" pattern="[0-9]+" title="Enter a positive whole-number job number." value={manualForm.jobNumber} onChange={(e) => updateManualField('jobNumber', e.target.value.replace(/\D/g, ''))} className="field-input" />
+              </div>
+              <div>
+                <label className="field-label">Job date *</label>
+                <input aria-label="Job date" required type="date" value={manualForm.jobDate} onChange={(e) => updateManualField('jobDate', e.target.value)} className="field-input" />
+                <p className="mt-1 text-[10px] text-slate-500">Stored at 12:00 AM Toronto time.</p>
               </div>
               <div>
                 <label className="field-label">Customer name *</label>

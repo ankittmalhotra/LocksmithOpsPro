@@ -5,6 +5,7 @@ import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, Sup
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
+import { formatTorontoDateInput, torontoDateToMidnightIso } from '@/lib/timezone';
 
 class ManualJobInputError extends Error {}
 
@@ -45,6 +46,12 @@ export async function POST(request: Request) {
     const technicianId = typeof body.technicianId === 'string' ? body.technicianId.trim() : '';
     const otherTechnicianName = typeof body.otherTechnicianName === 'string' ? body.otherTechnicianName.trim() : '';
     const isOtherTechnician = technicianId === 'OTHER';
+    const jobDateInput = body.jobDate === undefined ? formatTorontoDateInput() : body.jobDate;
+    const jobDateIso = torontoDateToMidnightIso(jobDateInput);
+    if (!jobDateIso) {
+      return NextResponse.json({ success: false, error: 'Job date must be a valid YYYY-MM-DD date' }, { status: 400 });
+    }
+    const manualTimestamp = new Date(jobDateIso);
 
     if (!jobNumber) {
       return NextResponse.json({ success: false, error: 'Job number must be a positive whole number' }, { status: 400 });
@@ -130,7 +137,8 @@ export async function POST(request: Request) {
           jobReceivedTimeSlot: jobReceivedTimeSlot || null,
           workerCommissionRate: 0,
           workerCommission: technicianCommission,
-          completedAt: new Date(),
+          createdAt: manualTimestamp,
+          completedAt: manualTimestamp,
           invoice: {
             create: {
               calculationMode: 'MANUAL',
@@ -148,7 +156,7 @@ export async function POST(request: Request) {
               paymentStatus: 'PAID',
               paymentMethod: payment,
               cashOwedToCompany: settlement.cashOwedToCompany,
-              paidAt: new Date(),
+              paidAt: manualTimestamp,
             },
           },
         },

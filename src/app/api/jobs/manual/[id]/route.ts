@@ -6,6 +6,7 @@ import { calculateJobSettlementPosition, calculateManualInvoice, roundToTwo, typ
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
+import { torontoDateToMidnightIso } from '@/lib/timezone';
 
 class ManualJobInputError extends Error {}
 
@@ -91,6 +92,12 @@ export async function PATCH(
     const taxCollected = body.taxCollected === undefined
       ? invoice.taxCollected !== false
       : body.taxCollected;
+    const hasJobDate = body.jobDate !== undefined;
+    const jobDateIso = hasJobDate ? torontoDateToMidnightIso(body.jobDate) : null;
+    if (hasJobDate && !jobDateIso) {
+      return NextResponse.json({ success: false, error: 'Job date must be a valid YYYY-MM-DD date' }, { status: 400 });
+    }
+    const manualTimestamp = jobDateIso ? new Date(jobDateIso) : null;
 
     if (!jobNumber) {
       return NextResponse.json({ success: false, error: 'Job number must be a positive whole number' }, { status: 400 });
@@ -199,7 +206,7 @@ export async function PATCH(
           paymentStatus: 'PAID',
           paymentMethod: payment,
           cashOwedToCompany: settlement.cashOwedToCompany,
-          paidAt: invoice.paidAt || new Date(),
+          ...(manualTimestamp ? { paidAt: manualTimestamp } : {}),
         },
       });
 
@@ -217,7 +224,7 @@ export async function PATCH(
           workerCommissionRate: 0,
           workerCommission: technicianCommission,
           status: 'COMPLETED',
-          completedAt: job.completedAt || new Date(),
+          ...(manualTimestamp ? { createdAt: manualTimestamp, completedAt: manualTimestamp } : {}),
         },
         include: safeJobInclude(),
       });

@@ -160,7 +160,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted · {activeRangeLabel}</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-emerald-700">{summary.converted}</div>
-              <p className="mt-auto pt-1 text-[11px] text-slate-500">Matched to a LockOps job</p>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">All jobs logged, matched or unmatched</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Conversion rate</div>
@@ -173,11 +173,11 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-sm font-black text-slate-900">Received vs converted</h3>
-                <p className="text-[11px] text-slate-500">Qualified calls; repeat callers count once per Toronto day</p>
+                <p className="text-[11px] text-slate-500">All jobs logged count; phone matching is not required</p>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-bold text-slate-600 sm:justify-end">
                 <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-500" />Received</span>
-                <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Converted</span>
+                <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Converted / jobs logged</span>
                 <span className="text-slate-400">{summary.received} total leads</span>
               </div>
             </div>

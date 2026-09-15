@@ -45,24 +45,6 @@ export type RingCentralCallAnalytics = {
   error?: string;
 };
 
-const normalizePhone = (value?: string) => {
-  const digits = (value || '').replace(/\D/g, '');
-  return digits.length > 10 ? digits.slice(-10) : digits;
-};
-
-const phoneLastFour = (value?: string) => {
-  const digits = (value || '').replace(/\D/g, '');
-  return digits.length >= 4 ? digits.slice(-4) : '';
-};
-
-function phoneMatchType(left?: string, right?: string) {
-  const normalizedLeft = normalizePhone(left);
-  const normalizedRight = normalizePhone(right);
-  if (normalizedLeft.length >= 7 && normalizedLeft === normalizedRight) return 'exact';
-  if (phoneLastFour(left) && phoneLastFour(left) === phoneLastFour(right)) return 'suffix';
-  return null;
-}
-
 const percent = (converted: number, received: number) => received > 0 ? Math.round((converted / received) * 1000) / 10 : 0;
 
 const rangeLabels: Record<RingCentralAnalyticsRange, string> = {
@@ -97,26 +79,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
   const callRows = calls.map((call) => ({
     call,
     date: call.startTime ? ringCentralDateKey(call.startTime) : '',
-    phone: normalizePhone(call.from?.phoneNumber),
-    converted: false,
   }));
-
-  for (const job of jobs) {
-    const jobDate = ringCentralDateKey(job.createdAt);
-    const customerPhone = normalizePhone(job.customer?.phone);
-    if (!customerPhone) continue;
-
-    const candidates = callRows.filter((row) => {
-      if (row.converted || row.date !== jobDate) return false;
-      if (job.isManual) return true;
-      return Boolean(row.call.startTime && new Date(row.call.startTime) <= new Date(job.createdAt));
-    });
-
-    const exactCandidate = candidates.find((row) => phoneMatchType(row.call.from?.phoneNumber, job.customer?.phone) === 'exact');
-    const suffixCandidates = candidates.filter((row) => phoneMatchType(row.call.from?.phoneNumber, job.customer?.phone) === 'suffix');
-    const candidate = exactCandidate || (suffixCandidates.length === 1 ? suffixCandidates[0] : null);
-    if (candidate) candidate.converted = true;
-  }
 
   const dailyByDate = new Map<string, { received: number; converted: number }>();
   const dayCount = Math.round((range.endUtc.getTime() - range.startUtc.getTime()) / 86400000) + 1;
@@ -136,7 +99,13 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     const daily = dailyByDate.get(row.date);
     if (!daily) continue;
     daily.received += 1;
-    if (row.converted) daily.converted += 1;
+  }
+
+  // Every job logged in the selected Toronto period counts as converted.
+  // Phone matching is intentionally not required for this business metric.
+  for (const job of jobs) {
+    const daily = dailyByDate.get(ringCentralDateKey(job.createdAt));
+    if (daily) daily.converted += 1;
   }
 
   const daily = days.map((day) => {
@@ -147,7 +116,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     (totals, day) => ({ received: totals.received + day.received, converted: totals.converted + day.converted }),
     { received: 0, converted: 0 },
   );
-  const totalConvertedCalls = callRows.filter((row) => row.converted).length;
+  const totalConvertedCalls = jobs.length;
 
   return {
     data: {

@@ -256,7 +256,9 @@ export async function listRingCentralInboundCalls(dateFrom: string, dateTo: stri
       perPage: '250',
       page: String(page),
     });
-    if (config.targetPhoneNumber) params.set('phoneNumber', config.targetPhoneNumber);
+    // Filter the receiving number locally. The API's phoneNumber query filter
+    // can be format-sensitive, while call-log records may use E.164 or a
+    // formatted national number for the same destination.
 
     const response = await fetch(`${config.serverUrl}/restapi/v1.0/account/~/call-log?${params.toString()}`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${token.accessToken}` },
@@ -318,14 +320,17 @@ export function ringCentralTorontoRange(days: number) {
 
 export function isCallForTarget(record: RingCentralCallRecord, targetPhoneNumber?: string) {
   if (!targetPhoneNumber) return true;
-  const normalize = (value?: string) => (value || '').replace(/\D/g, '');
+  const normalize = (value?: string) => {
+    const digits = (value || '').replace(/\D/g, '');
+    return digits.length > 10 ? digits.slice(-10) : digits;
+  };
   const target = normalize(targetPhoneNumber);
   const destination = normalize(record.to?.phoneNumber);
-  return Boolean(target && destination && (destination.endsWith(target) || target.endsWith(destination)));
+  return Boolean(target.length >= 7 && destination.length >= 7 && target === destination);
 }
 
 export function uniqueInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string) {
-  const filtered = records.filter((record) => record.direction === 'Inbound' && isCallForTarget(record, targetPhoneNumber));
+  const filtered = records.filter((record) => record.direction?.toLowerCase() === 'inbound' && isCallForTarget(record, targetPhoneNumber));
   const seen = new Set<string>();
   return filtered.filter((record) => {
     const key = record.telephonySessionId || record.sessionId || record.id;

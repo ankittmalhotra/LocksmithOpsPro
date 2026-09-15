@@ -20,10 +20,10 @@ async function handleGET(request: Request) {
     return response;
   } catch (err) {
     if (err instanceof RingCentralAuthRequiredError) {
-      return NextResponse.json({ success: true, configured: true, connected: false, connectRequired: true, error: err.message });
+      return NextResponse.json({ success: true, configured: true, connected: false, connectRequired: true, error: 'Authorization is required to sync call data.' });
     }
     logCaughtRequestError(request, '/api/ringcentral/call-analytics', err);
-    return NextResponse.json({ success: false, error: 'Unable to load RingCentral call analytics right now.' }, { status: 502 });
+    return NextResponse.json({ success: false, error: 'Unable to load call analytics right now.' }, { status: 502 });
   }
 }
 

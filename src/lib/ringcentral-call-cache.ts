@@ -4,15 +4,15 @@ import {
   getRingCentralConfig,
   listRingCentralInboundCalls,
   ringCentralTorontoRange,
+  ringCentralTorontoWeekToDateRange,
   RingCentralCallRecord,
   RingCentralTokenData,
 } from '@/lib/ringcentral';
 import { normalizeRingCentralPhone, sourceKeyForRecord } from '@/lib/ringcentral-call-cache-utils';
 
 const SYNC_SOURCE_KEY = 'account-call-log';
-const INITIAL_LOOKBACK_DAYS = 30;
-const REFRESH_LOOKBACK_DAYS = 14;
 const LEASE_MINUTES = 5;
+const INITIAL_SYNC_MARKER = 'monday-to-today-v1';
 
 export type CachedTargetNumber = {
   id?: string;
@@ -159,6 +159,20 @@ export async function readRingCentralSyncState() {
   return prisma.ringCentralCallSyncState.findUnique({ where: { sourceKey: SYNC_SOURCE_KEY } });
 }
 
+async function readLatestCachedCallStartTime() {
+  const latest = await prisma.ringCentralCallLog.findFirst({
+    where: { startTime: { not: null } },
+    orderBy: { startTime: 'desc' },
+    select: { startTime: true },
+  });
+  return latest?.startTime || null;
+}
+
+function completedInitialSync(state: Awaited<ReturnType<typeof readRingCentralSyncState>>) {
+  if (!state?.rawPayload || typeof state.rawPayload !== 'object' || Array.isArray(state.rawPayload)) return false;
+  return (state.rawPayload as { initialSyncMarker?: string }).initialSyncMarker === INITIAL_SYNC_MARKER;
+}
+
 export async function readCachedRingCentralCalls(dateFrom: Date, dateTo: Date) {
   return prisma.ringCentralCallLog.findMany({
     where: {
@@ -204,8 +218,19 @@ export async function refreshRingCentralCallCache() {
 
   try {
     const targets = await ensureTargetNumbers();
-    const hasSuccessfulSync = Boolean(state.lastSuccessAt);
-    const range = ringCentralTorontoRange(hasSuccessfulSync ? REFRESH_LOOKBACK_DAYS : INITIAL_LOOKBACK_DAYS);
+    const latestCachedCallStartTime = await readLatestCachedCallStartTime();
+    const initialSyncRequired = !state.lastSuccessAt || !completedInitialSync(state);
+    const todayRange = ringCentralTorontoRange('today');
+    const initialRange = ringCentralTorontoWeekToDateRange();
+    const range = initialSyncRequired
+      ? initialRange
+      : latestCachedCallStartTime
+        ? {
+            dateFrom: new Date(latestCachedCallStartTime.getTime() - 1000).toISOString(),
+            dateTo: todayRange.dateTo,
+          }
+        : initialRange;
+    const syncMode = initialSyncRequired ? 'monday-to-today' : 'after-last-call';
     const result = await listRingCentralInboundCalls(range.dateFrom, range.dateTo);
     const writes = result.records.map((record) => callLogData(record, targets)).filter(Boolean);
     let upserted = 0;
@@ -231,11 +256,17 @@ export async function refreshRingCentralCallCache() {
         lastError: null,
         recordsFetched: result.records.length,
         leaseUntil: null,
-        rawPayload: jsonValue({ targetNumbers: targets.map((target) => target.phoneNumberNormalized), upserted }),
+        rawPayload: jsonValue({
+          targetNumbers: targets.map((target) => target.phoneNumberNormalized),
+          upserted,
+          syncMode,
+          initialSyncMarker: INITIAL_SYNC_MARKER,
+          latestCachedCallStartTime: latestCachedCallStartTime?.toISOString() || null,
+        }),
       },
     });
 
-    return { busy: false as const, refreshedToken: result.refreshed ? result.token : undefined, fetched: result.records.length, upserted };
+    return { busy: false as const, refreshedToken: result.refreshed ? result.token : undefined, fetched: result.records.length, upserted, syncMode };
   } catch (error: any) {
     await prisma.ringCentralCallSyncState.update({
       where: { sourceKey: SYNC_SOURCE_KEY },

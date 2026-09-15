@@ -71,7 +71,7 @@ const rangeLabels: Record<RingCentralAnalyticsRange, string> = {
   'last-week': 'Last week',
 };
 
-export async function buildRingCentralCachedAnalytics(selectedRange: RingCentralAnalyticsRange = 'today'): Promise<{
+export async function buildRingCentralCachedAnalytics(selectedRange: RingCentralAnalyticsRange = 'last-week'): Promise<{
   data: RingCentralCallAnalytics;
   refreshedToken?: Parameters<typeof setRingCentralTokenCookie>[1];
 }> {
@@ -174,7 +174,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
 
 // Existing callers now receive cache-backed analytics. This function must not
 // invoke RingCentral; the explicit refresh route owns all external syncing.
-export async function buildRingCentralCallAnalytics(selectedRange: RingCentralAnalyticsRange = 'today') {
+export async function buildRingCentralCallAnalytics(selectedRange: RingCentralAnalyticsRange = 'last-week') {
   return buildRingCentralCachedAnalytics(selectedRange);
 }
 

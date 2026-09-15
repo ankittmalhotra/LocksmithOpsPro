@@ -13,9 +13,9 @@ async function handleGET(request: Request) {
     }
 
     const requestedRange = new URL(request.url).searchParams.get('range');
-    const selectedRange: RingCentralAnalyticsRange = requestedRange === 'yesterday' || requestedRange === 'last-week'
+    const selectedRange: RingCentralAnalyticsRange = requestedRange === 'today' || requestedRange === 'yesterday' || requestedRange === 'last-week'
       ? requestedRange
-      : 'today';
+      : 'last-week';
 
     // Cache-only read. RingCentral is invoked only by the explicit refresh POST.
     const result = await buildRingCentralCallAnalytics(selectedRange);

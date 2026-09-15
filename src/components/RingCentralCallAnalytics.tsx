@@ -42,7 +42,7 @@ type AnalyticsRange = (typeof rangeOptions)[number]['value'];
 
 export default function RingCentralCallAnalytics({ canManageConnection = false }: { canManageConnection?: boolean }) {
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
-  const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
+  const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('last-week');
   const [loading, setLoading] = useState(false);
 
   const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {

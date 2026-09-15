@@ -345,6 +345,39 @@ export function ringCentralTorontoRange(range: RingCentralAnalyticsRange | numbe
   };
 }
 
+export function ringCentralTorontoWeekToDateRange() {
+  const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TORONTO_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const todayKey = dateFormatter.format(new Date());
+  const [year, month, day] = todayKey.split('-').map(Number);
+  const endUtc = new Date(Date.UTC(year, month - 1, day));
+  const startUtc = new Date(endUtc);
+  const daysSinceMonday = (startUtc.getUTCDay() + 6) % 7;
+  startUtc.setUTCDate(startUtc.getUTCDate() - daysSinceMonday);
+
+  const offsetForDate = (date: Date) => {
+    const rawOffset = new Intl.DateTimeFormat('en-US', { timeZone: TORONTO_TIME_ZONE, timeZoneName: 'longOffset' })
+      .formatToParts(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 12)))
+      .find((part) => part.type === 'timeZoneName')?.value.replace('GMT', '') || '+00:00';
+    return /^[-+]\d$/.test(rawOffset) ? `${rawOffset[0]}0${rawOffset.slice(1)}:00` : rawOffset;
+  };
+
+  const localIso = (date: Date, endOfDay = false) =>
+    `${date.toISOString().slice(0, 10)}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}${offsetForDate(date)}`;
+
+  return {
+    dateFrom: localIso(startUtc),
+    dateTo: localIso(endUtc, true),
+    startUtc,
+    endUtc,
+    todayKey,
+  };
+}
+
 export function isCallForTarget(record: RingCentralCallRecord, targetPhoneNumber?: string | string[]) {
   if (!targetPhoneNumber || (Array.isArray(targetPhoneNumber) && targetPhoneNumber.length === 0)) return true;
   const normalize = (value?: string) => {

@@ -24,8 +24,12 @@ export type RingCentralCallRecord = {
   telephonySessionId?: string;
   direction?: string;
   type?: string;
+  action?: string;
   result?: string;
+  reason?: string;
+  transport?: string;
   startTime?: string;
+  lastModifiedTime?: string;
   duration?: number | string;
   durationMs?: number | string;
   from?: { phoneNumber?: string; extensionNumber?: string; name?: string };
@@ -247,23 +251,24 @@ export async function listRingCentralInboundCalls(dateFrom: string, dateTo: stri
   const { token, refreshed } = await getValidToken();
   const records: RingCentralCallRecord[] = [];
   let page = 1;
-  let totalPages = 1;
+  let totalPages: number | null = 1;
+  let nextPageUri: string | null = null;
 
-  while (page <= totalPages && page <= 20) {
+  while ((nextPageUri || totalPages === null || page <= totalPages) && page <= 100) {
     const params = new URLSearchParams({
       dateFrom,
       dateTo,
       direction: 'Inbound',
       type: 'Voice',
       view: 'Detailed',
-      perPage: '250',
+      perPage: '1000',
       page: String(page),
     });
     // Filter the receiving number locally. The API's phoneNumber query filter
     // can be format-sensitive, while call-log records may use E.164 or a
     // formatted national number for the same destination.
 
-    const response = await fetch(`${config.serverUrl}/restapi/v1.0/account/~/call-log?${params.toString()}`, {
+    const response: Response = await fetch(nextPageUri || `${config.serverUrl}/restapi/v1.0/account/~/call-log?${params.toString()}`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${token.accessToken}` },
       cache: 'no-store',
     });
@@ -271,10 +276,16 @@ export async function listRingCentralInboundCalls(dateFrom: string, dateTo: stri
     if (response.status === 401) throw new RingCentralAuthRequiredError();
     if (!response.ok) throw new Error(`RingCentral call log request failed (${response.status}).`);
 
-    const data = await response.json();
+    const data: {
+      records?: RingCentralCallRecord[];
+      paging?: { totalPages?: number };
+      navigation?: { nextPage?: { uri?: string } };
+    } = await response.json();
     records.push(...(Array.isArray(data.records) ? data.records : []));
-    totalPages = Number(data.paging?.totalPages || page);
+    totalPages = data.paging?.totalPages === undefined ? null : Number(data.paging.totalPages);
+    nextPageUri = typeof data.navigation?.nextPage?.uri === 'string' ? data.navigation.nextPage.uri : null;
     page += 1;
+    if (!nextPageUri && totalPages === null) break;
   }
 
   return { records, token, refreshed };
@@ -321,15 +332,15 @@ export function ringCentralTorontoRange(days: number) {
   };
 }
 
-export function isCallForTarget(record: RingCentralCallRecord, targetPhoneNumber?: string) {
-  if (!targetPhoneNumber) return true;
+export function isCallForTarget(record: RingCentralCallRecord, targetPhoneNumber?: string | string[]) {
+  if (!targetPhoneNumber || (Array.isArray(targetPhoneNumber) && targetPhoneNumber.length === 0)) return true;
   const normalize = (value?: string) => {
     const digits = (value || '').replace(/\D/g, '');
     return digits.length > 10 ? digits.slice(-10) : digits;
   };
-  const target = normalize(targetPhoneNumber);
+  const targets = (Array.isArray(targetPhoneNumber) ? targetPhoneNumber : [targetPhoneNumber]).map(normalize);
   const destination = normalize(record.to?.phoneNumber);
-  return Boolean(target.length >= 7 && destination.length >= 7 && target === destination);
+  return Boolean(destination.length >= 7 && targets.some((target) => target.length >= 7 && target === destination));
 }
 
 function getCallDurationSeconds(record: RingCentralCallRecord) {
@@ -345,7 +356,7 @@ function normalizeCallerPhone(value?: string) {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-export function uniqueInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string) {
+export function uniqueInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string | string[]) {
   const filtered = records
     .filter((record) => record.direction?.toLowerCase() === 'inbound' && isCallForTarget(record, targetPhoneNumber))
     .filter((record) => {

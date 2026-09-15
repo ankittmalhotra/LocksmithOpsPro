@@ -197,3 +197,107 @@ model RingCentralConnection {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
+
+// Server-side cache of RingCentral detailed call-log records. sourceKey is a
+// deterministic provider-scoped identity used for idempotent sync upserts.
+model RingCentralCallLog {
+  id        String  @id @default(uuid())
+  sourceKey String  @unique(map: "rc_call_source_key_key")
+  sourceId  String?
+  accountId String?
+
+  sessionId          String?
+  telephonySessionId String?
+  direction          String?
+  type               String?
+  action             String?
+  result             String?
+  reason             String?
+  transport          String?
+  startTime          DateTime?
+  lastModifiedTime   DateTime?
+  durationSeconds    Int?
+  durationMs         Int?
+
+  callerPhoneNumber                String?
+  callerPhoneNumberNormalized      String?
+  callerExtensionNumber            String?
+  callerName                       String?
+  destinationPhoneNumber           String?
+  destinationPhoneNumberNormalized String?
+  destinationExtensionNumber       String?
+  destinationName                  String?
+
+  trackedDestinationId String?
+  trackedDestination   RingCentralPhoneNumber? @relation(fields: [trackedDestinationId], references: [id], onDelete: SetNull)
+
+  rawPayload Json
+  syncedAt   DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([startTime], map: "rc_call_start_time_idx")
+  @@index([destinationPhoneNumberNormalized, startTime], map: "rc_call_destination_start_idx")
+  @@index([callerPhoneNumberNormalized, startTime], map: "rc_call_caller_start_idx")
+  @@index([trackedDestinationId, startTime], map: "rc_call_phone_number_start_idx")
+  @@index([telephonySessionId], map: "rc_call_telephony_session_idx")
+}
+
+// Destination-number inventory. Multiple records can share a normalized
+// number when RingCentral represents distinct provider resources/extensions.
+model RingCentralPhoneNumber {
+  id                    String  @id @default(uuid())
+  sourceKey             String  @unique(map: "rc_phone_source_key_key")
+  sourceId              String?
+  accountId             String?
+  extensionId           String?
+  phoneNumber           String
+  phoneNumberNormalized String
+  extensionNumber       String?
+  name                  String?
+  type                  String?
+  usageType             String?
+  status                String?
+  active                Boolean @default(true)
+
+  rawPayload Json
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  callLogs   RingCentralCallLog[]
+  syncStates RingCentralCallSyncState[]
+
+  @@unique([accountId, phoneNumberNormalized], map: "rc_phone_account_normalized_key")
+  @@index([active, phoneNumberNormalized], map: "rc_phone_active_normalized_idx")
+  @@index([accountId, active], map: "rc_phone_account_active_idx")
+}
+
+// Per-source synchronization checkpoint. A source can represent an account,
+// destination number, or another stable partition without changing the model.
+model RingCentralCallSyncState {
+  id        String @id @default(uuid())
+  sourceKey String @unique(map: "rc_sync_source_key_key")
+
+  phoneNumberId String?
+  phoneNumber   RingCentralPhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+
+  syncType       String    @default("CALL_LOG")
+  status         String    @default("IDLE")
+  cursor         String?
+  windowStart    DateTime?
+  windowEnd      DateTime?
+  lastAttemptAt  DateTime?
+  leaseUntil     DateTime?
+  lastSuccessAt  DateTime?
+  lastFailureAt  DateTime?
+  lastError      String?
+  recordsFetched Int       @default(0)
+  rawPayload     Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([phoneNumberId, syncType], map: "rc_sync_phone_type_idx")
+  @@index([status, lastAttemptAt], map: "rc_sync_status_attempt_idx")
+  @@index([lastSuccessAt], map: "rc_sync_last_success_idx")
+}

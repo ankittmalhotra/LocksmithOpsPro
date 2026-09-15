@@ -56,6 +56,16 @@ npx prisma db push
 node prisma/seed.js
 ```
 
+Before deploying the cache-backed RingCentral analytics, also apply
+`prisma/ringcentral-call-cache-migration.sql` once against the production
+database. The normal analytics GET endpoint reads only cached rows from these
+tables. RingCentral is contacted only when an Admin or Dispatcher clicks
+**Refresh calls**, which invokes the authenticated refresh POST endpoint.
+
+The migration stores detailed call-log fields plus the original JSON payload,
+supports multiple configured destination numbers, and records the last
+successful sync and any refresh error. It is additive and safe to re-run.
+
 The Prisma schema is the single source of truth for this new database. No role-consolidation or manual-job SQL migration is required when production starts empty. Set a strong `ADMIN_PASSWORD` in production; it also signs login cookies, and the application fails closed when it is missing.
 
 For an existing database, apply schema changes before deploying application code. The job-number identifier migration is available at `prisma/job-number-string-migration.sql`; run it once against the production database, or use `npx prisma db push` after verifying the diff.

@@ -1,21 +1,28 @@
 import { findJobsWithDetails } from '@/lib/job-helper';
 import {
-  getRingCentralConfig,
   getRingCentralConnectionStatus,
-  listRingCentralInboundCalls,
   ringCentralDateKey,
   ringCentralTorontoRange,
   RingCentralAuthRequiredError,
   setRingCentralTokenCookie,
   uniqueInboundCalls,
 } from '@/lib/ringcentral';
+import {
+  cachedRowToCallRecord,
+  getCachedTargetNumbers,
+  readCachedRingCentralCalls,
+  readRingCentralSyncState,
+} from '@/lib/ringcentral-call-cache';
 
 export type RingCentralCallAnalytics = {
   success: boolean;
   configured: boolean;
   connected: boolean;
   connectRequired?: boolean;
+  cacheAvailable?: boolean;
+  dataSource?: 'cache';
   targetPhoneNumber?: string | null;
+  targetPhoneNumbers?: string[];
   timezone?: string;
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{
@@ -30,13 +37,12 @@ export type RingCentralCallAnalytics = {
   totalConvertedCalls?: number;
   conversionRate?: number;
   lastSyncedAt?: string;
+  syncError?: string;
   error?: string;
 };
 
 const normalizePhone = (value?: string) => {
   const digits = (value || '').replace(/\D/g, '');
-  // RingCentral commonly returns +1XXXXXXXXXX while LockOps intake may store
-  // the same Canadian number as ten digits (or with an extension).
   return digits.length > 10 ? digits.slice(-10) : digits;
 };
 
@@ -55,18 +61,19 @@ function phoneMatchType(left?: string, right?: string) {
 
 const percent = (converted: number, received: number) => received > 0 ? Math.round((converted / received) * 1000) / 10 : 0;
 
-export async function buildRingCentralCallAnalytics(): Promise<{
+export async function buildRingCentralCachedAnalytics(): Promise<{
   data: RingCentralCallAnalytics;
   refreshedToken?: Parameters<typeof setRingCentralTokenCookie>[1];
 }> {
-  const config = getRingCentralConfig();
   const status = await getRingCentralConnectionStatus();
-  if (!config) return { data: { success: true, ...status } };
-  if (!status.connected) return { data: { success: true, ...status, connectRequired: true } };
-
   const range = ringCentralTorontoRange(7);
-  const result = await listRingCentralInboundCalls(range.dateFrom, range.dateTo);
-  const calls = uniqueInboundCalls(result.records, config.targetPhoneNumber);
+  const [targetNumbers, cachedRows, syncState] = await Promise.all([
+    getCachedTargetNumbers(),
+    readCachedRingCentralCalls(new Date(range.dateFrom), new Date(range.dateTo)),
+    readRingCentralSyncState(),
+  ]);
+  const targetPhoneNumbers = targetNumbers.map((target) => target.phoneNumber);
+  const calls = uniqueInboundCalls(cachedRows.map(cachedRowToCallRecord), targetPhoneNumbers);
   const jobs = await findJobsWithDetails({
     where: {
       createdAt: {
@@ -84,9 +91,6 @@ export async function buildRingCentralCallAnalytics(): Promise<{
     converted: false,
   }));
 
-  // Match each job to one earlier inbound call from the same caller on the
-  // same Toronto calendar day. Manual jobs use the calendar day because their
-  // historical timestamp intentionally has no exact intake time.
   for (const job of jobs) {
     const jobDate = ringCentralDateKey(job.createdAt);
     const customerPhone = normalizePhone(job.customer?.phone);
@@ -129,23 +133,33 @@ export async function buildRingCentralCallAnalytics(): Promise<{
     return { ...day, ...counts, conversionRate: percent(counts.converted, counts.received) };
   });
   const today = dailyByDate.get(range.todayKey) || { received: 0, converted: 0 };
+  const totalConvertedCalls = callRows.filter((row) => row.converted).length;
 
   return {
     data: {
       success: true,
-      configured: true,
-      connected: true,
-      targetPhoneNumber: config.targetPhoneNumber || null,
+      ...status,
+      connectRequired: Boolean(status.configured && !status.connected),
+      cacheAvailable: Boolean(syncState?.lastSuccessAt),
+      dataSource: 'cache',
+      targetPhoneNumber: targetPhoneNumbers[0] || status.targetPhoneNumber || null,
+      targetPhoneNumbers,
       timezone: 'America/Toronto',
       today: { date: range.todayKey, ...today, conversionRate: percent(today.converted, today.received) },
       daily,
       totalCalls: callRows.length,
-      totalConvertedCalls: callRows.filter((row) => row.converted).length,
-      conversionRate: percent(callRows.filter((row) => row.converted).length, callRows.length),
-      lastSyncedAt: new Date().toISOString(),
+      totalConvertedCalls,
+      conversionRate: percent(totalConvertedCalls, callRows.length),
+      lastSyncedAt: syncState?.lastSuccessAt?.toISOString(),
+      syncError: syncState?.lastError || undefined,
     },
-    refreshedToken: result.refreshed ? result.token : undefined,
   };
+}
+
+// Existing callers now receive cache-backed analytics. This function must not
+// invoke RingCentral; the explicit refresh route owns all external syncing.
+export async function buildRingCentralCallAnalytics() {
+  return buildRingCentralCachedAnalytics();
 }
 
 export { RingCentralAuthRequiredError };

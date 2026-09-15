@@ -11,6 +11,7 @@ async function handleGET(request: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized: Admin or Dispatcher access required' }, { status: 403 });
     }
 
+    // Cache-only read. RingCentral is invoked only by the explicit refresh POST.
     const result = await buildRingCentralCallAnalytics();
     const response = NextResponse.json(result.data);
     if (result.refreshedToken) {

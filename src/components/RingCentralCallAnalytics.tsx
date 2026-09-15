@@ -89,7 +89,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Calls received today</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-blue-700">{analytics.today?.received || 0}</div>
-              <p className="mt-1 text-[11px] text-slate-500">Unique inbound call sessions</p>
+              <p className="mt-1 text-[11px] text-slate-500">30+ sec calls; repeat callers counted once</p>
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted today</div>
@@ -107,7 +107,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black text-slate-900">Received vs converted</h3>
-                <p className="text-[11px] text-slate-500">A conversion is a same-day caller-to-job phone match</p>
+                <p className="text-[11px] text-slate-500">Qualified calls; repeat callers count once per Toronto day</p>
               </div>
               <div className="flex gap-3 text-[10px] font-bold text-slate-600"><span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-500" />Received</span><span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Converted</span></div>
             </div>

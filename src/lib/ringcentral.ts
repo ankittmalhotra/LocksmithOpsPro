@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 const RINGCENTRAL_TOKEN_COOKIE = 'lockops_ringcentral_tokens';
 const RINGCENTRAL_STATE_COOKIE = 'lockops_ringcentral_oauth_state';
 const TORONTO_TIME_ZONE = 'America/Toronto';
+const MIN_REAL_CALL_DURATION_SECONDS = 30;
 // The receiving number shown in the connected RingCentral account. Override it
 // with RC_TARGET_PHONE_NUMBER if the business number changes.
 const DEFAULT_TARGET_PHONE_NUMBER = '+14162400593';
@@ -25,6 +26,8 @@ export type RingCentralCallRecord = {
   type?: string;
   result?: string;
   startTime?: string;
+  duration?: number | string;
+  durationMs?: number | string;
   from?: { phoneNumber?: string; extensionNumber?: string; name?: string };
   to?: { phoneNumber?: string; extensionNumber?: string; name?: string };
   [key: string]: unknown;
@@ -329,14 +332,54 @@ export function isCallForTarget(record: RingCentralCallRecord, targetPhoneNumber
   return Boolean(target.length >= 7 && destination.length >= 7 && target === destination);
 }
 
+function getCallDurationSeconds(record: RingCentralCallRecord) {
+  const duration = record.duration === undefined ? Number.NaN : Number(record.duration);
+  if (Number.isFinite(duration)) return duration;
+  const durationMs = record.durationMs === undefined ? Number.NaN : Number(record.durationMs);
+  if (Number.isFinite(durationMs)) return durationMs / 1000;
+  return null;
+}
+
+function normalizeCallerPhone(value?: string) {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
 export function uniqueInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string) {
-  const filtered = records.filter((record) => record.direction?.toLowerCase() === 'inbound' && isCallForTarget(record, targetPhoneNumber));
-  const seen = new Set<string>();
-  return filtered.filter((record) => {
+  const filtered = records
+    .filter((record) => record.direction?.toLowerCase() === 'inbound' && isCallForTarget(record, targetPhoneNumber))
+    .filter((record) => {
+      const duration = getCallDurationSeconds(record);
+      // Keep records with no duration for backwards compatibility with older
+      // call-log payloads, but exclude known calls shorter than 30 seconds.
+      return duration === null || duration >= MIN_REAL_CALL_DURATION_SECONDS;
+    });
+
+  const seenSessions = new Set<string>();
+  const sessionDeduped = filtered.filter((record) => {
     const key = record.telephonySessionId || record.sessionId || record.id;
     if (!key) return true;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seenSessions.has(key)) return false;
+    seenSessions.add(key);
+    return true;
+  });
+
+  // Preserve the earliest qualifying call so a later job on the same day can
+  // still be matched to the lead's first call.
+  sessionDeduped.sort((left, right) => {
+    const leftTime = left.startTime ? new Date(left.startTime).getTime() : Number.MAX_SAFE_INTEGER;
+    const rightTime = right.startTime ? new Date(right.startTime).getTime() : Number.MAX_SAFE_INTEGER;
+    return leftTime - rightTime;
+  });
+
+  const seenLeads = new Set<string>();
+  return sessionDeduped.filter((record) => {
+    const callerPhone = normalizeCallerPhone(record.from?.phoneNumber);
+    if (!callerPhone || callerPhone.length < 7 || !record.startTime) return true;
+
+    const leadKey = `${ringCentralDateKey(record.startTime)}:${callerPhone}`;
+    if (seenLeads.has(leadKey)) return false;
+    seenLeads.add(leadKey);
     return true;
   });
 }

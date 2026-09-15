@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
+import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { formatTorontoDateInput, parseTorontoDateOnly, torontoDateTimeToIso } from '@/lib/timezone';
 
@@ -613,6 +614,8 @@ export default function DispatchPage() {
           </div>
         </div>
       )}
+
+      {canManageManualJobs && <RingCentralCallAnalytics canManageConnection={currentUser?.role === 'ADMIN'} />}
 
       {currentUser && currentUser.role === 'TECHNICIAN' && (
         <div className="mb-6 p-4 rounded-2xl bg-blue-50 border-2 border-blue-200 text-blue-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">

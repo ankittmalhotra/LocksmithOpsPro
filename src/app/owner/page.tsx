@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 
 interface TechLedgerItem {
   id: string;
@@ -578,6 +579,8 @@ export default function AdminDashboardPage() {
           </div>
         </div>
       </section>
+
+      <RingCentralCallAnalytics canManageConnection />
 
       {/* Worker Cash-in-Hand Ledger & Settlements */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm mb-6">

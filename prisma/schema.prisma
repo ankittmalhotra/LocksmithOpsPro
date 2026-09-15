@@ -188,3 +188,12 @@ model Settlement {
   settledBy     String // Admin User ID
   settledAt     DateTime @default(now())
 }
+
+// One encrypted RingCentral connection is shared by the Admin and Dispatcher
+// dashboards. The app stores no RingCentral credentials in browser storage.
+model RingCentralConnection {
+  id                 String   @id @default("default")
+  encryptedTokenData String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}

@@ -43,6 +43,7 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 
 ### 4. Admin Executive Hub & Cash Handover Settlements (`/owner`)
 - **Executive KPIs**: Total Gross Revenue, Cash vs Card vs Interac splits, Ontario HST (13%) collected for CRA tax filing, and Net Company Profit.
+- **RingCentral call analytics**: Admin and Dispatcher inbound call counts for the receiving number, including Toronto-local today widgets, a seven-day received-vs-converted graph, and conversion rate. Calls are read from the account Call Log API and deduplicated by RingCentral call session. A conversion is an inbound caller whose phone number matches a LockOps job created on the same Toronto calendar day.
 - **Contractor Cash-in-Hand Ledger**:
   - Tracks live cash physically held by each contractor (`Cash Collected - Commission Earned - Settled = Net Owed`).
   - **1-Click "Settle Cash Handover"**: Admin records physical cash envelopes received from contractors with complete audit notes.
@@ -106,6 +107,9 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    - `POSTGRES_URL_NON_POOLING`: *(Supabase/Vercel direct, non-pooling PostgreSQL URL)*
    - `ADMIN_PASSWORD`: *(Strong password for the built-in Admin login; required in production)*
    - `NEXT_PUBLIC_APP_URL`: `https://your-project.vercel.app`
+   - *(Optional RingCentral)* `RC_APP_CLIENT_ID`, `RC_APP_CLIENT_SECRET`, and `RC_REDIRECT_URI` for the RingCentral OAuth app. Register `RC_REDIRECT_URI` as `https://your-project.vercel.app/api/ringcentral/callback` and enable the `ReadCallLog` permission. Set `RC_TARGET_PHONE_NUMBER` to override the default receiving number `(416) 240-0593`.
+   - *(Optional server-to-server RingCentral auth)* `RC_USER_JWT` can be used instead of the interactive Admin Hub connection flow.
+   - Run `prisma/ringcentral-connection-migration.sql` once against production so an OAuth connection is shared between Admin and Dispatcher dashboards. This is not needed when using `RC_USER_JWT`.
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 
 5. Before deploying a version that includes dispatcher edits or manual-job intake

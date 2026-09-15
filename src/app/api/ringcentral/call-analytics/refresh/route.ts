@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { persistRingCentralToken, setRingCentralTokenCookie } from '@/lib/ringcentral';
+import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import { buildRingCentralCallAnalytics, RingCentralAuthRequiredError } from '@/lib/ringcentral-analytics';
 import { refreshRingCentralCallCache } from '@/lib/ringcentral-call-cache';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
@@ -12,6 +13,11 @@ async function handlePOST(request: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized: Admin or Dispatcher access required' }, { status: 403 });
     }
 
+    const requestedRange = new URL(request.url).searchParams.get('range');
+    const selectedRange: RingCentralAnalyticsRange = requestedRange === 'yesterday' || requestedRange === 'last-week'
+      ? requestedRange
+      : 'today';
+
     const result = await refreshRingCentralCallCache();
     if (result.busy) {
       return NextResponse.json({ success: false, busy: true, error: 'A call refresh is already in progress.' }, { status: 409 });
@@ -20,7 +26,7 @@ async function handlePOST(request: Request) {
     if (result.refreshedToken) {
       await persistRingCentralToken(result.refreshedToken);
     }
-    const analytics = await buildRingCentralCallAnalytics();
+    const analytics = await buildRingCentralCallAnalytics(selectedRange);
     const response = NextResponse.json({ ...analytics.data, refreshed: true, fetched: result.fetched, upserted: result.upserted });
     if (result.refreshedToken) setRingCentralTokenCookie(response, result.refreshedToken);
     return response;

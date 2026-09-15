@@ -37,6 +37,8 @@ export type RingCentralCallRecord = {
   [key: string]: unknown;
 };
 
+export type RingCentralAnalyticsRange = 'today' | 'yesterday' | 'last-week';
+
 type RingCentralConfig = {
   clientId: string;
   clientSecret: string;
@@ -300,7 +302,10 @@ export function ringCentralDateKey(value: string | Date) {
   }).format(new Date(value));
 }
 
-export function ringCentralTorontoRange(days: number) {
+export function ringCentralTorontoRange(range: RingCentralAnalyticsRange | number = 'last-week') {
+  const isLegacyDayCount = typeof range === 'number';
+  const selectedRange = isLegacyDayCount ? 'last-week' : range;
+  const dayCount = isLegacyDayCount ? Math.max(1, Math.floor(range)) : 7;
   const dateFormatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: TORONTO_TIME_ZONE,
     year: 'numeric',
@@ -311,24 +316,32 @@ export function ringCentralTorontoRange(days: number) {
   const [year, month, day] = todayKey.split('-').map(Number);
   const todayUtc = new Date(Date.UTC(year, month - 1, day));
   const startUtc = new Date(todayUtc);
-  startUtc.setUTCDate(startUtc.getUTCDate() - (days - 1));
+  const endUtc = new Date(todayUtc);
+  if (selectedRange === 'today') {
+    // Keep today's local date as both boundaries.
+  } else if (selectedRange === 'yesterday') {
+    startUtc.setUTCDate(startUtc.getUTCDate() - 1);
+    endUtc.setUTCDate(endUtc.getUTCDate() - 1);
+  } else {
+    startUtc.setUTCDate(startUtc.getUTCDate() - (dayCount - 1));
+  }
 
-  // Toronto's current offset is applied by constructing the query boundary
-  // from the local calendar date. The API accepts the explicit offset.
-  const rawOffset = new Intl.DateTimeFormat('en-US', { timeZone: TORONTO_TIME_ZONE, timeZoneName: 'longOffset' })
-    .formatToParts(new Date())
-    .find((part) => part.type === 'timeZoneName')?.value.replace('GMT', '') || '-04:00';
-  const offset = /^[-+]\d$/.test(rawOffset) ? `${rawOffset[0]}0${rawOffset.slice(1)}:00` : rawOffset;
+  const offsetForDate = (date: Date) => {
+    const rawOffset = new Intl.DateTimeFormat('en-US', { timeZone: TORONTO_TIME_ZONE, timeZoneName: 'longOffset' })
+      .formatToParts(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 12)))
+      .find((part) => part.type === 'timeZoneName')?.value.replace('GMT', '') || '+00:00';
+    return /^[-+]\d$/.test(rawOffset) ? `${rawOffset[0]}0${rawOffset.slice(1)}:00` : rawOffset;
+  };
 
   const localIso = (date: Date, endOfDay = false) =>
-    `${date.toISOString().slice(0, 10)}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}${offset}`;
+    `${date.toISOString().slice(0, 10)}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}${offsetForDate(date)}`;
 
   return {
     dateFrom: localIso(startUtc),
-    dateTo: localIso(todayUtc, true),
+    dateTo: localIso(endUtc, true),
     todayKey,
     startUtc,
-    todayUtc,
+    endUtc,
   };
 }
 

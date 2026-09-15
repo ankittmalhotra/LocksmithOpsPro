@@ -10,6 +10,9 @@ type CallAnalytics = {
   dataSource?: 'cache';
   targetPhoneNumber?: string | null;
   targetPhoneNumbers?: string[];
+  range?: 'today' | 'yesterday' | 'last-week';
+  rangeLabel?: string;
+  summary?: { received: number; converted: number; conversionRate: number };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{ date: string; label: string; dateLabel: string; received: number; converted: number; conversionRate: number }>;
   totalCalls?: number;
@@ -29,14 +32,23 @@ function formatPhoneNumber(value?: string | null) {
   return value || '(416) 240-0593';
 }
 
+const rangeOptions = [
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'last-week', label: 'Last week' },
+] as const;
+
+type AnalyticsRange = (typeof rangeOptions)[number]['value'];
+
 export default function RingCentralCallAnalytics({ canManageConnection = false }: { canManageConnection?: boolean }) {
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
+  const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
   const [loading, setLoading] = useState(false);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/ringcentral/call-analytics', { cache: 'no-store' });
+      const response = await fetch(`/api/ringcentral/call-analytics?range=${range}`, { cache: 'no-store' });
       const data = await response.json();
       setAnalytics(data.success ? data : { configured: true, connected: false, error: data.error || 'Unable to load call analytics.' });
       return data;
@@ -51,7 +63,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
   const refreshAnalytics = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/ringcentral/call-analytics/refresh', { method: 'POST', cache: 'no-store' });
+      const response = await fetch(`/api/ringcentral/call-analytics/refresh?range=${selectedRange}`, { method: 'POST', cache: 'no-store' });
       const data = await response.json();
       if (response.ok && data.success) {
         setAnalytics(data);
@@ -70,6 +82,10 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
   }, []);
 
   const daily = analytics?.daily || [];
+  const activeRange = analytics?.range || selectedRange;
+  const activeRangeLabel = analytics?.rangeLabel || rangeOptions.find((option) => option.value === activeRange)?.label || 'Today';
+  const periodLabel = activeRange === 'last-week' ? 'last 7 days' : activeRange === 'yesterday' ? 'yesterday' : 'today';
+  const summary = analytics?.summary || { received: 0, converted: 0, conversionRate: 0 };
   const maxDailyCalls = useMemo(() => Math.max(1, ...daily.map((day) => Math.max(day.received, day.converted))), [daily]);
 
   const disconnect = async () => {
@@ -93,6 +109,20 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
           {analytics?.connected && canManageConnection && (
             <button onClick={disconnect} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100">Disconnect</button>
           )}
+          <label className="sr-only" htmlFor="call-analytics-range">Call analytics period</label>
+          <select
+            id="call-analytics-range"
+            value={selectedRange}
+            onChange={(event) => {
+              const nextRange = event.target.value as AnalyticsRange;
+              setSelectedRange(nextRange);
+              fetchAnalytics(nextRange);
+            }}
+            disabled={loading}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-wait disabled:opacity-70"
+          >
+            {rangeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
           <button onClick={refreshAnalytics} disabled={loading} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-wait disabled:opacity-70">
             {loading ? 'Syncing…' : 'Refresh calls'}
           </button>
@@ -123,19 +153,19 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Calls received today</div>
-              <div className="mt-2 text-4xl font-black tracking-tight text-blue-700">{analytics.today?.received || 0}</div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Calls received · {activeRangeLabel}</div>
+              <div className="mt-2 text-4xl font-black tracking-tight text-blue-700">{summary.received}</div>
               <p className="mt-auto pt-1 text-[11px] text-slate-500">30+ sec calls; repeat callers counted once</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted today</div>
-              <div className="mt-2 text-4xl font-black tracking-tight text-emerald-700">{analytics.today?.converted || 0}</div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted · {activeRangeLabel}</div>
+              <div className="mt-2 text-4xl font-black tracking-tight text-emerald-700">{summary.converted}</div>
               <p className="mt-auto pt-1 text-[11px] text-slate-500">Matched to a LockOps job</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Conversion rate</div>
-              <div className="mt-2 text-4xl font-black tracking-tight text-amber-700">{(analytics.today?.conversionRate || 0).toFixed(1)}%</div>
-              <p className="mt-auto pt-1 text-[11px] text-slate-500">{analytics.totalCalls || 0} qualified leads in seven days</p>
+              <div className="mt-2 text-4xl font-black tracking-tight text-amber-700">{summary.conversionRate.toFixed(1)}%</div>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">{summary.received} received {periodLabel === 'today' || periodLabel === 'yesterday' ? periodLabel : `in ${periodLabel}`}</p>
             </div>
           </div>
 
@@ -148,7 +178,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-bold text-slate-600 sm:justify-end">
                 <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-500" />Received</span>
                 <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Converted</span>
-                <span className="text-slate-400">{analytics.totalCalls || 0} total leads</span>
+                <span className="text-slate-400">{summary.received} total leads</span>
               </div>
             </div>
             {daily.length === 0 ? (
@@ -162,13 +192,15 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
                   const convertedHeight = day.converted ? Math.max(8, (day.converted / maxDailyCalls) * 100) : 2;
                   return (
                     <div key={day.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end" title={`${day.dateLabel}: ${day.received} received, ${day.converted} converted`}>
-                      <div className="mb-1 flex w-full max-w-14 items-center justify-center gap-1 text-center text-[10px] font-black">
-                        <span className="w-1/2 text-blue-700">{day.received}</span>
-                        <span className="w-1/2 text-emerald-700">{day.converted}</span>
-                      </div>
-                      <div className="flex h-32 w-full max-w-14 items-end justify-center gap-1">
-                        <div className="w-1/2 rounded-t-md bg-blue-500 transition-all hover:bg-blue-600" style={{ height: `${receivedHeight}%` }} role="img" aria-label={`${day.dateLabel}: ${day.received} calls received`} />
-                        <div className="w-1/2 rounded-t-md bg-emerald-500 transition-all hover:bg-emerald-600" style={{ height: `${convertedHeight}%` }} role="img" aria-label={`${day.dateLabel}: ${day.converted} calls converted`} />
+                      <div className="flex h-36 w-full max-w-14 items-end justify-center gap-1">
+                        <div className="flex h-full w-1/2 flex-col items-center justify-end">
+                          <span className="mb-1 text-[10px] font-black text-blue-700">{day.received}</span>
+                          <div className="w-full rounded-t-md bg-blue-500 transition-all hover:bg-blue-600" style={{ height: `${Math.max(6, receivedHeight * 0.82)}%` }} role="img" aria-label={`${day.dateLabel}: ${day.received} calls received`} />
+                        </div>
+                        <div className="flex h-full w-1/2 flex-col items-center justify-end">
+                          <span className="mb-1 text-[10px] font-black text-emerald-700">{day.converted}</span>
+                          <div className="w-full rounded-t-md bg-emerald-500 transition-all hover:bg-emerald-600" style={{ height: `${Math.max(6, convertedHeight * 0.82)}%` }} role="img" aria-label={`${day.dateLabel}: ${day.converted} calls converted`} />
+                        </div>
                       </div>
                       <span className="mt-2 text-[10px] font-bold text-slate-600">{day.label}</span>
                       <span className="text-[10px] font-semibold text-slate-400">{day.dateLabel}</span>

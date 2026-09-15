@@ -7,6 +7,7 @@ import {
   setRingCentralTokenCookie,
   uniqueInboundCalls,
 } from '@/lib/ringcentral';
+import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import {
   cachedRowToCallRecord,
   getCachedTargetNumbers,
@@ -24,6 +25,9 @@ export type RingCentralCallAnalytics = {
   targetPhoneNumber?: string | null;
   targetPhoneNumbers?: string[];
   timezone?: string;
+  range?: RingCentralAnalyticsRange;
+  rangeLabel?: string;
+  summary?: { received: number; converted: number; conversionRate: number };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{
     date: string;
@@ -61,12 +65,18 @@ function phoneMatchType(left?: string, right?: string) {
 
 const percent = (converted: number, received: number) => received > 0 ? Math.round((converted / received) * 1000) / 10 : 0;
 
-export async function buildRingCentralCachedAnalytics(): Promise<{
+const rangeLabels: Record<RingCentralAnalyticsRange, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  'last-week': 'Last week',
+};
+
+export async function buildRingCentralCachedAnalytics(selectedRange: RingCentralAnalyticsRange = 'today'): Promise<{
   data: RingCentralCallAnalytics;
   refreshedToken?: Parameters<typeof setRingCentralTokenCookie>[1];
 }> {
   const status = await getRingCentralConnectionStatus();
-  const range = ringCentralTorontoRange(7);
+  const range = ringCentralTorontoRange(selectedRange);
   const [targetNumbers, cachedRows, syncState] = await Promise.all([
     getCachedTargetNumbers(),
     readCachedRingCentralCalls(new Date(range.dateFrom), new Date(range.dateTo)),
@@ -109,7 +119,8 @@ export async function buildRingCentralCachedAnalytics(): Promise<{
   }
 
   const dailyByDate = new Map<string, { received: number; converted: number }>();
-  const days = Array.from({ length: 7 }, (_, index) => {
+  const dayCount = Math.round((range.endUtc.getTime() - range.startUtc.getTime()) / 86400000) + 1;
+  const days = Array.from({ length: dayCount }, (_, index) => {
     const date = new Date(range.startUtc);
     date.setUTCDate(date.getUTCDate() + index);
     const dateKey = date.toISOString().slice(0, 10);
@@ -132,7 +143,10 @@ export async function buildRingCentralCachedAnalytics(): Promise<{
     const counts = dailyByDate.get(day.date)!;
     return { ...day, ...counts, conversionRate: percent(counts.converted, counts.received) };
   });
-  const today = dailyByDate.get(range.todayKey) || { received: 0, converted: 0 };
+  const summary = daily.reduce(
+    (totals, day) => ({ received: totals.received + day.received, converted: totals.converted + day.converted }),
+    { received: 0, converted: 0 },
+  );
   const totalConvertedCalls = callRows.filter((row) => row.converted).length;
 
   return {
@@ -145,7 +159,9 @@ export async function buildRingCentralCachedAnalytics(): Promise<{
       targetPhoneNumber: targetPhoneNumbers[0] || status.targetPhoneNumber || null,
       targetPhoneNumbers,
       timezone: 'America/Toronto',
-      today: { date: range.todayKey, ...today, conversionRate: percent(today.converted, today.received) },
+      range: selectedRange,
+      rangeLabel: rangeLabels[selectedRange],
+      summary: { ...summary, conversionRate: percent(summary.converted, summary.received) },
       daily,
       totalCalls: callRows.length,
       totalConvertedCalls,
@@ -158,8 +174,8 @@ export async function buildRingCentralCachedAnalytics(): Promise<{
 
 // Existing callers now receive cache-backed analytics. This function must not
 // invoke RingCentral; the explicit refresh route owns all external syncing.
-export async function buildRingCentralCallAnalytics() {
-  return buildRingCentralCachedAnalytics();
+export async function buildRingCentralCallAnalytics(selectedRange: RingCentralAnalyticsRange = 'today') {
+  return buildRingCentralCachedAnalytics(selectedRange);
 }
 
 export { RingCentralAuthRequiredError };

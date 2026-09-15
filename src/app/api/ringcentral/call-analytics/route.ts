@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { persistRingCentralToken, setRingCentralTokenCookie } from '@/lib/ringcentral';
+import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import { buildRingCentralCallAnalytics, RingCentralAuthRequiredError } from '@/lib/ringcentral-analytics';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 
@@ -11,8 +12,13 @@ async function handleGET(request: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized: Admin or Dispatcher access required' }, { status: 403 });
     }
 
+    const requestedRange = new URL(request.url).searchParams.get('range');
+    const selectedRange: RingCentralAnalyticsRange = requestedRange === 'yesterday' || requestedRange === 'last-week'
+      ? requestedRange
+      : 'today';
+
     // Cache-only read. RingCentral is invoked only by the explicit refresh POST.
-    const result = await buildRingCentralCallAnalytics();
+    const result = await buildRingCentralCallAnalytics(selectedRange);
     const response = NextResponse.json(result.data);
     if (result.refreshedToken) {
       await persistRingCentralToken(result.refreshedToken);

@@ -40,6 +40,19 @@ const normalizePhone = (value?: string) => {
   return digits.length > 10 ? digits.slice(-10) : digits;
 };
 
+const phoneLastFour = (value?: string) => {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(-4) : '';
+};
+
+function phoneMatchType(left?: string, right?: string) {
+  const normalizedLeft = normalizePhone(left);
+  const normalizedRight = normalizePhone(right);
+  if (normalizedLeft.length >= 7 && normalizedLeft === normalizedRight) return 'exact';
+  if (phoneLastFour(left) && phoneLastFour(left) === phoneLastFour(right)) return 'suffix';
+  return null;
+}
+
 const percent = (converted: number, received: number) => received > 0 ? Math.round((converted / received) * 1000) / 10 : 0;
 
 export async function buildRingCentralCallAnalytics(): Promise<{
@@ -79,11 +92,15 @@ export async function buildRingCentralCallAnalytics(): Promise<{
     const customerPhone = normalizePhone(job.customer?.phone);
     if (!customerPhone) continue;
 
-    const candidate = callRows.find((row) => {
-      if (row.converted || row.date !== jobDate || row.phone !== customerPhone) return false;
+    const candidates = callRows.filter((row) => {
+      if (row.converted || row.date !== jobDate) return false;
       if (job.isManual) return true;
       return Boolean(row.call.startTime && new Date(row.call.startTime) <= new Date(job.createdAt));
     });
+
+    const exactCandidate = candidates.find((row) => phoneMatchType(row.call.from?.phoneNumber, job.customer?.phone) === 'exact');
+    const suffixCandidates = candidates.filter((row) => phoneMatchType(row.call.from?.phoneNumber, job.customer?.phone) === 'suffix');
+    const candidate = exactCandidate || (suffixCandidates.length === 1 ? suffixCandidates[0] : null);
     if (candidate) candidate.converted = true;
   }
 

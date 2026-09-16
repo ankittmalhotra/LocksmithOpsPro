@@ -25,7 +25,11 @@ interface DailyAnalyticsItem {
   jobsCount: number;
   revenue: number;
   tax: number;
+  profit: number;
 }
+
+type GoogleAdsRoiRange = 'today' | 'yesterday' | 'last-week';
+type GoogleAdsRoiView = 'partner' | 'company';
 
 const formatCompactCurrency = (value: number) =>
   value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${Math.round(value)}`;
@@ -72,6 +76,8 @@ export default function AdminDashboardPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [googleAdsSyncing, setGoogleAdsSyncing] = useState(false);
+  const [googleAdsRange, setGoogleAdsRange] = useState<GoogleAdsRoiRange>('yesterday');
+  const [googleAdsView, setGoogleAdsView] = useState<GoogleAdsRoiView>('partner');
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
@@ -145,7 +151,7 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const fetchAuthAndAnalytics = async () => {
+  const fetchAuthAndAnalytics = async (selectedGoogleAdsRange: GoogleAdsRoiRange = googleAdsRange) => {
     try {
       setLoading(true);
       const authRes = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -154,7 +160,7 @@ export default function AdminDashboardPage() {
         setCurrentUser(authData.user);
       }
 
-      const res = await fetch('/api/owner/analytics', { cache: 'no-store' });
+      const res = await fetch(`/api/owner/analytics?googleAdsRange=${selectedGoogleAdsRange}`, { cache: 'no-store' });
       const data = await res.json();
       if (data.success) {
         setErrorMsg('');
@@ -216,14 +222,14 @@ export default function AdminDashboardPage() {
       setErrorMsg('');
       setSuccessMsg('');
 
-      const res = await fetch('/api/owner/google-ads/sync', { method: 'POST' });
+      const res = await fetch(`/api/owner/google-ads/sync?range=${googleAdsRange}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to sync Google Ads');
       }
 
-      setSuccessMsg(`Google Ads synced for ${data.data.date}. Spend: $${Number(data.data.spend || 0).toFixed(2)}.`);
-      await fetchAuthAndAnalytics();
+      setSuccessMsg(`Google Ads synced for ${data.data.rangeLabel.toLowerCase()} (${data.data.dateFrom} to ${data.data.dateTo}). Spend: $${Number(data.data.spend || 0).toFixed(2)}.`);
+      await fetchAuthAndAnalytics(googleAdsRange);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to sync Google Ads');
     } finally {
@@ -346,6 +352,20 @@ export default function AdminDashboardPage() {
   const last7Days: DailyAnalyticsItem[] = analytics?.last7Days || [];
   const last7DaysSummary = analytics?.last7DaysSummary || {};
   const googleAds = analytics?.googleAds || {};
+  const googleAdsRangeLabel = googleAds.rangeLabel || (googleAdsRange === 'last-week' ? 'Last week' : googleAdsRange === 'today' ? 'Today' : 'Yesterday');
+  const displayedGoogleAds = googleAdsView === 'partner'
+    ? {
+        label: 'Partner',
+        profit: Number(googleAds.partnerProfit || 0),
+        netReturn: googleAds.partnerNetReturn,
+        roiPercent: googleAds.partnerRoiPercent,
+      }
+    : {
+        label: 'Company',
+        profit: Number(googleAds.companyProfit || 0),
+        netReturn: googleAds.companyNetReturn,
+        roiPercent: googleAds.companyRoiPercent,
+      };
   const maxDailyJobs = Math.max(1, ...last7Days.map((day) => day.jobsCount));
   const maxDailyRevenue = Math.max(1, ...last7Days.map((day) => day.revenue));
 
@@ -373,7 +393,7 @@ export default function AdminDashboardPage() {
             <span>➕</span> Add Team Member
           </button>
           <button
-            onClick={fetchAuthAndAnalytics}
+            onClick={() => fetchAuthAndAnalytics()}
             disabled={loading}
             aria-label={loading ? 'Refreshing admin analytics' : 'Refresh admin analytics'}
             className="px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-xs disabled:cursor-wait disabled:opacity-70"
@@ -388,68 +408,6 @@ export default function AdminDashboardPage() {
           </button>
         </div>
       </div>
-
-      {/* Standalone Google Ads ROI panel; existing admin widgets remain unchanged. */}
-      <section className="mb-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-5 shadow-sm" aria-labelledby="google-ads-roi-title">
-        <div className="flex flex-col gap-3 border-b border-blue-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 id="google-ads-roi-title" className="flex items-center gap-2 text-base font-black text-slate-900">
-              <span>📣</span> Yesterday&apos;s Google Ads ROI
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-600">
-              {googleAds.date || 'Yesterday'} · {googleAds.timeZone || 'America/Toronto'} · Google Ads is queried only on request.
-            </p>
-          </div>
-          <button
-            onClick={handleGoogleAdsSync}
-            disabled={googleAdsSyncing}
-            className="rounded-xl border border-blue-300 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-wait disabled:opacity-70"
-          >
-            {googleAdsSyncing ? 'Syncing…' : 'Sync yesterday'}
-          </button>
-        </div>
-
-        {!googleAds.configured ? (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-            Google Ads is not configured yet. Add the server environment variables listed in the deployment guide, then refresh this dashboard.
-          </div>
-        ) : googleAds.status === 'migration_required' ? (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-            Google Ads credentials are present, but the database table is not ready. Apply <code>prisma/google-ads-daily-metric-migration.sql</code> once, then sync again.
-          </div>
-        ) : googleAds.status !== 'synced' ? (
-          <div className="mt-4 rounded-xl border border-slate-200 bg-white/80 p-3 text-xs font-semibold text-slate-600">
-            No Google Ads spend has been synced for yesterday yet. Click <strong>Sync yesterday</strong> to pull it from Google.
-          </div>
-        ) : (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ad spend</div>
-              <div className="mt-1 text-2xl font-black text-slate-900">{googleAds.currencyCode || 'CAD'} ${Number(googleAds.adSpend || 0).toFixed(2)}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Portal revenue</div>
-              <div className="mt-1 text-2xl font-black text-emerald-700">{googleAds.currencyCode || 'CAD'} ${Number(googleAds.portalRevenue || 0).toFixed(2)}</div>
-              <div className="mt-1 text-[10px] text-slate-500">Paid gross invoices, including HST</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">ROI</div>
-              <div className={`mt-1 text-2xl font-black ${Number(googleAds.roiPercent || 0) >= 0 ? 'text-blue-700' : 'text-rose-700'}`}>
-                {googleAds.roiPercent === null ? '—' : `${Number(googleAds.roiPercent).toFixed(1)}%`}
-              </div>
-              <div className="mt-1 text-[10px] text-slate-500">(Revenue − spend) ÷ spend</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">ROAS</div>
-              <div className="mt-1 text-2xl font-black text-indigo-700">
-                {googleAds.roas === null ? '—' : `${Number(googleAds.roas).toFixed(2)}x`}
-              </div>
-              <div className="mt-1 text-[10px] text-slate-500">Revenue ÷ ad spend · Last synced {googleAds.lastSyncedAt ? new Date(googleAds.lastSyncedAt).toLocaleString() : '—'}</div>
-            </div>
-          </div>
-        )}
-      </section>
-
 
       {currentUser && currentUser.role !== 'ADMIN' && (
         <div className="mb-6 p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
@@ -665,6 +623,100 @@ export default function AdminDashboardPage() {
       </section>
 
       <RingCentralCallAnalytics canManageConnection />
+
+      {/* Standalone Google Ads ROI panel; kept admin-only and separate from existing widgets. */}
+      <section className="mb-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-5 shadow-sm" aria-labelledby="google-ads-roi-title">
+        <div className="flex flex-col gap-3 border-b border-blue-100 pb-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 id="google-ads-roi-title" className="flex items-center gap-2 text-base font-black text-slate-900">
+              <span>📣</span> Google Ads ROI
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-600">
+              {googleAdsRangeLabel} · {googleAds.dateFrom ? `${googleAds.dateFrom}${googleAds.dateTo && googleAds.dateTo !== googleAds.dateFrom ? ` to ${googleAds.dateTo}` : ''}` : 'Toronto calendar period'} · Google Ads is queried only on request.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="google-ads-roi-range">Google Ads ROI period</label>
+            <select
+              id="google-ads-roi-range"
+              value={googleAdsRange}
+              onChange={(event) => {
+                const nextRange = event.target.value as GoogleAdsRoiRange;
+                setGoogleAdsRange(nextRange);
+                fetchAuthAndAnalytics(nextRange);
+              }}
+              disabled={loading || googleAdsSyncing}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-wait disabled:opacity-70"
+            >
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last-week">Last week</option>
+            </select>
+            <label className="sr-only" htmlFor="google-ads-roi-view">ROI ownership view</label>
+            <select
+              id="google-ads-roi-view"
+              value={googleAdsView}
+              onChange={(event) => setGoogleAdsView(event.target.value as GoogleAdsRoiView)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            >
+              <option value="partner">ROI for partner</option>
+              <option value="company">ROI for company</option>
+            </select>
+            <button
+              onClick={handleGoogleAdsSync}
+              disabled={googleAdsSyncing}
+              className="rounded-xl border border-blue-300 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-wait disabled:opacity-70"
+            >
+              {googleAdsSyncing ? 'Syncing…' : `Sync ${googleAdsRangeLabel.toLowerCase()}`}
+            </button>
+          </div>
+        </div>
+
+        {!googleAds.configured ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+            Google Ads is not configured yet. Add the server environment variables listed in the deployment guide, then refresh this dashboard.
+          </div>
+        ) : googleAds.status === 'migration_required' ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+            Google Ads credentials are present, but the database table is not ready. Apply <code>prisma/google-ads-daily-metric-migration.sql</code> once, then sync again.
+          </div>
+        ) : googleAds.status !== 'synced' ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-white/80 p-3 text-xs font-semibold text-slate-600">
+            {googleAds.status === 'partially_synced'
+              ? `Google Ads data is only partially synced for ${googleAdsRangeLabel.toLowerCase()} (${googleAds.syncedDays || 0} of ${googleAds.expectedDays || 0} days).`
+              : `No Google Ads spend has been synced for ${googleAdsRangeLabel.toLowerCase()} yet.`}{' '}
+            Click <strong>{`Sync ${googleAdsRangeLabel.toLowerCase()}`}</strong> to pull it from Google.
+          </div>
+        ) : (
+          <>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ad spend</div>
+                <div className="mt-1 text-2xl font-black text-slate-900">{googleAds.currencyCode || 'CAD'} ${Number(googleAds.adSpend || 0).toFixed(2)}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{displayedGoogleAds.label} profit</div>
+                <div className={`mt-1 text-2xl font-black ${displayedGoogleAds.profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{googleAds.currencyCode || 'CAD'} ${displayedGoogleAds.profit.toFixed(2)}</div>
+                <div className="mt-1 text-[10px] text-slate-500">Net profit before Ads, after HST, tech commissions, and parts cost{googleAdsView === 'partner' ? ` · split between ${googleAds.partnerCount || 2} partners` : ''}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{displayedGoogleAds.label} ROI</div>
+                <div className={`mt-1 text-2xl font-black ${Number(displayedGoogleAds.roiPercent || 0) >= 0 ? 'text-blue-700' : 'text-rose-700'}`}>
+                  {displayedGoogleAds.roiPercent === null ? '—' : `${Number(displayedGoogleAds.roiPercent).toFixed(1)}%`}
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">(Profit − spend) ÷ spend</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Net return</div>
+                <div className={`mt-1 text-2xl font-black ${Number(displayedGoogleAds.netReturn || 0) >= 0 ? 'text-indigo-700' : 'text-rose-700'}`}>
+                  {displayedGoogleAds.netReturn === null ? '—' : `${googleAds.currencyCode || 'CAD'} $${Number(displayedGoogleAds.netReturn).toFixed(2)}`}
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">Profit after subtracting Ads spend · Last synced {googleAds.lastSyncedAt ? new Date(googleAds.lastSyncedAt).toLocaleString() : '—'}</div>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
 
       {/* Worker Cash-in-Hand Ledger & Settlements */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm mb-6">

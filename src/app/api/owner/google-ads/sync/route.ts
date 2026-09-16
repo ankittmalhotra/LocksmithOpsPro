@@ -4,7 +4,10 @@ import { getCurrentUser } from '@/lib/auth';
 import {
   dateKeyToUtcDate,
   fetchGoogleAdsDailyMetrics,
-  getYesterdayDateKey,
+  getGoogleAdsDateKeys,
+  GOOGLE_ADS_RANGE_LABELS,
+  GOOGLE_ADS_RANGE_OPTIONS,
+  type GoogleAdsRoiRange,
   googleAdsErrorMessage,
 } from '@/lib/google-ads';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
@@ -20,40 +23,57 @@ async function handlePOST(request: Request) {
       );
     }
 
-    const date = getYesterdayDateKey();
-    const metrics = await fetchGoogleAdsDailyMetrics(date);
-    const metric = await prisma.googleAdsDailyMetric.upsert({
-      where: {
-        customerId_date: {
-          customerId: metrics.customerId,
-          date: dateKeyToUtcDate(date),
+    const requestedRange = new URL(request.url).searchParams.get('range');
+    const range: GoogleAdsRoiRange = GOOGLE_ADS_RANGE_OPTIONS.includes(requestedRange as GoogleAdsRoiRange)
+      ? requestedRange as GoogleAdsRoiRange
+      : 'yesterday';
+    const dates = getGoogleAdsDateKeys(range);
+    const metrics = await Promise.all(dates.map((date) => fetchGoogleAdsDailyMetrics(date)));
+    const savedMetrics = [];
+
+    for (const dailyMetrics of metrics) {
+      const metric = await prisma.googleAdsDailyMetric.upsert({
+        where: {
+          customerId_date: {
+            customerId: dailyMetrics.customerId,
+            date: dateKeyToUtcDate(dailyMetrics.date),
+          },
         },
-      },
-      create: {
-        clicks: metrics.clicks,
-        conversionsValue: metrics.conversionsValue,
-        customerId: metrics.customerId,
-        date: dateKeyToUtcDate(date),
-        impressions: metrics.impressions,
-        spend: metrics.costMicros / 1_000_000,
-      },
-      update: {
-        clicks: metrics.clicks,
-        conversionsValue: metrics.conversionsValue,
-        impressions: metrics.impressions,
-        spend: metrics.costMicros / 1_000_000,
-        syncedAt: new Date(),
-      },
-    });
+        create: {
+          clicks: dailyMetrics.clicks,
+          conversionsValue: dailyMetrics.conversionsValue,
+          customerId: dailyMetrics.customerId,
+          date: dateKeyToUtcDate(dailyMetrics.date),
+          impressions: dailyMetrics.impressions,
+          spend: dailyMetrics.costMicros / 1_000_000,
+        },
+        update: {
+          clicks: dailyMetrics.clicks,
+          conversionsValue: dailyMetrics.conversionsValue,
+          impressions: dailyMetrics.impressions,
+          spend: dailyMetrics.costMicros / 1_000_000,
+          syncedAt: new Date(),
+        },
+      });
+      savedMetrics.push(metric);
+    }
+
+    const spend = savedMetrics.reduce((sum, metric) => sum + metric.spend, 0);
+    const lastSyncedAt = savedMetrics.reduce<Date | null>((latest, metric) => (
+      !latest || metric.syncedAt > latest ? metric.syncedAt : latest
+    ), null);
 
     return NextResponse.json({
       data: {
-        clicks: metric.clicks,
-        conversionsValue: metric.conversionsValue,
-        date,
-        impressions: metric.impressions,
-        spend: metric.spend,
-        syncedAt: metric.syncedAt,
+        clicks: savedMetrics.reduce((sum, metric) => sum + metric.clicks, 0),
+        conversionsValue: savedMetrics.reduce((sum, metric) => sum + metric.conversionsValue, 0),
+        dateFrom: dates[0],
+        dateTo: dates[dates.length - 1],
+        range,
+        rangeLabel: GOOGLE_ADS_RANGE_LABELS[range],
+        impressions: savedMetrics.reduce((sum, metric) => sum + metric.impressions, 0),
+        spend,
+        syncedAt: lastSyncedAt,
       },
       success: true,
     });

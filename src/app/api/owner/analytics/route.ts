@@ -10,7 +10,11 @@ import {
   calculateGoogleAdsRoi,
   dateKeyToUtcDate,
   getMissingGoogleAdsConfigVariables,
-  getYesterdayDateKey,
+  getGoogleAdsDateKeys,
+  GOOGLE_ADS_PARTNER_COUNT,
+  GOOGLE_ADS_RANGE_LABELS,
+  GOOGLE_ADS_RANGE_OPTIONS,
+  type GoogleAdsRoiRange,
   GOOGLE_ADS_TIME_ZONE,
 } from '@/lib/google-ads';
 
@@ -136,13 +140,14 @@ async function handleGET(request: Request) {
       jobsCount: number;
       revenue: number;
       tax: number;
+      profit: number;
     }>();
 
     const last7Days = Array.from({ length: 7 }, (_, index) => {
       const date = new Date(todayUtc);
       date.setUTCDate(todayUtc.getUTCDate() - (6 - index));
       const dateKey = date.toISOString().slice(0, 10);
-      dailyByDate.set(dateKey, { jobsCount: 0, revenue: 0, tax: 0 });
+      dailyByDate.set(dateKey, { jobsCount: 0, revenue: 0, tax: 0, profit: 0 });
 
       return {
         date: dateKey,
@@ -162,21 +167,41 @@ async function handleGET(request: Request) {
       daily.jobsCount += 1;
       daily.revenue += job.invoice.grandTotal;
       if (job.invoice.taxCollected !== false) daily.tax += job.invoice.taxAmount;
+
+      const partsCost = job.invoice.cogsAmount > 0
+        ? job.invoice.cogsAmount
+        : (job.items || []).reduce((sum, item) => item.isPart ? sum + (item.unitCost || 0) * (item.quantity || 1) : sum, 0);
+      daily.profit += job.invoice.grandTotal
+        - (job.invoice.taxCollected !== false ? job.invoice.taxAmount : 0)
+        - job.workerCommission
+        - partsCost;
     }
 
-    const yesterdayDate = getYesterdayDateKey();
-    const yesterdayPortalRevenue = roundToTwo(dailyByDate.get(yesterdayDate)?.revenue || 0);
+    const requestedGoogleAdsRange = new URL(request.url).searchParams.get('googleAdsRange');
+    const googleAdsRange: GoogleAdsRoiRange = GOOGLE_ADS_RANGE_OPTIONS.includes(requestedGoogleAdsRange as GoogleAdsRoiRange)
+      ? requestedGoogleAdsRange as GoogleAdsRoiRange
+      : 'yesterday';
+    const googleAdsDateKeys = getGoogleAdsDateKeys(googleAdsRange);
+    const googleAdsStartDate = googleAdsDateKeys[0];
+    const googleAdsEndDate = googleAdsDateKeys[googleAdsDateKeys.length - 1];
     const missingGoogleAdsVariables = getMissingGoogleAdsConfigVariables();
     const googleAdsConfigured = missingGoogleAdsVariables.length === 0;
-    let googleAdsMetric = null;
+    let googleAdsMetrics: Array<{
+      spend: number;
+      conversionsValue: number;
+      clicks: number;
+      impressions: number;
+      syncedAt: Date;
+    }> = [];
     let googleAdsStorageReady = true;
     if (googleAdsConfigured) {
       try {
-        googleAdsMetric = await prisma.googleAdsDailyMetric.findUnique({
+        googleAdsMetrics = await prisma.googleAdsDailyMetric.findMany({
           where: {
-            customerId_date: {
-              customerId: process.env.GOOGLE_ADS_CUSTOMER_ID!.replace(/[-\s]/g, ''),
-              date: dateKeyToUtcDate(yesterdayDate),
+            customerId: process.env.GOOGLE_ADS_CUSTOMER_ID!.replace(/[-\s]/g, ''),
+            date: {
+              gte: dateKeyToUtcDate(googleAdsStartDate),
+              lte: dateKeyToUtcDate(googleAdsEndDate),
             },
           },
         });
@@ -188,7 +213,15 @@ async function handleGET(request: Request) {
         }
       }
     }
-    const googleAdsRoi = calculateGoogleAdsRoi(yesterdayPortalRevenue, googleAdsMetric?.spend ?? null);
+    const googleAdsProfit = roundToTwo(googleAdsDateKeys.reduce((sum, date) => sum + (dailyByDate.get(date)?.profit || 0), 0));
+    const googleAdsSpend = googleAdsMetrics.length > 0
+      ? roundToTwo(googleAdsMetrics.reduce((sum, metric) => sum + metric.spend, 0))
+      : null;
+    const companyGoogleAdsRoi = calculateGoogleAdsRoi(googleAdsProfit, googleAdsSpend);
+    const partnerGoogleAdsRoi = calculateGoogleAdsRoi(googleAdsProfit / GOOGLE_ADS_PARTNER_COUNT, googleAdsSpend);
+    const lastGoogleAdsSync = googleAdsMetrics.reduce<Date | null>((latest, metric) => (
+      !latest || metric.syncedAt > latest ? metric.syncedAt : latest
+    ), null);
 
     const dailySeries = last7Days.map((day) => {
       const daily = dailyByDate.get(day.date)!;
@@ -197,6 +230,7 @@ async function handleGET(request: Request) {
         jobsCount: daily.jobsCount,
         revenue: roundToTwo(daily.revenue),
         tax: roundToTwo(daily.tax),
+        profit: roundToTwo(daily.profit),
       };
     });
 
@@ -236,19 +270,31 @@ async function handleGET(request: Request) {
       googleAds: {
         configured: googleAdsConfigured,
         currencyCode: process.env.GOOGLE_ADS_CURRENCY_CODE || 'CAD',
-        date: yesterdayDate,
-        lastSyncedAt: googleAdsMetric?.syncedAt || null,
+        range: googleAdsRange,
+        rangeLabel: GOOGLE_ADS_RANGE_LABELS[googleAdsRange],
+        dateFrom: googleAdsStartDate,
+        dateTo: googleAdsEndDate,
+        lastSyncedAt: lastGoogleAdsSync,
         missingVariables: missingGoogleAdsVariables,
-        portalRevenue: googleAdsRoi.portalRevenue,
-        revenueDefinition: 'Paid portal invoice gross total, including HST; not ad-attributed.',
-        adSpend: googleAdsRoi.adSpend,
-        netReturn: googleAdsRoi.netReturn,
-        roiPercent: googleAdsRoi.roiPercent,
-        roas: googleAdsRoi.roas,
-        conversionsValue: googleAdsMetric?.conversionsValue ?? null,
-        clicks: googleAdsMetric?.clicks ?? null,
-        impressions: googleAdsMetric?.impressions ?? null,
-        status: googleAdsMetric ? 'synced' : googleAdsStorageReady ? 'not_synced' : 'migration_required',
+        adSpend: googleAdsSpend,
+        profit: googleAdsProfit,
+        partnerCount: GOOGLE_ADS_PARTNER_COUNT,
+        companyProfit: companyGoogleAdsRoi.profit,
+        companyNetReturn: companyGoogleAdsRoi.netReturn,
+        companyRoiPercent: companyGoogleAdsRoi.roiPercent,
+        companyRoas: companyGoogleAdsRoi.roas,
+        partnerProfit: partnerGoogleAdsRoi.profit,
+        partnerNetReturn: partnerGoogleAdsRoi.netReturn,
+        partnerRoiPercent: partnerGoogleAdsRoi.roiPercent,
+        partnerRoas: partnerGoogleAdsRoi.roas,
+        conversionsValue: googleAdsMetrics.length > 0 ? roundToTwo(googleAdsMetrics.reduce((sum, metric) => sum + metric.conversionsValue, 0)) : null,
+        clicks: googleAdsMetrics.length > 0 ? googleAdsMetrics.reduce((sum, metric) => sum + metric.clicks, 0) : null,
+        impressions: googleAdsMetrics.length > 0 ? googleAdsMetrics.reduce((sum, metric) => sum + metric.impressions, 0) : null,
+        syncedDays: googleAdsMetrics.length,
+        expectedDays: googleAdsDateKeys.length,
+        status: googleAdsMetrics.length === googleAdsDateKeys.length
+          ? 'synced'
+          : googleAdsMetrics.length > 0 ? 'partially_synced' : googleAdsStorageReady ? 'not_synced' : 'migration_required',
         storageReady: googleAdsStorageReady,
         timeZone: GOOGLE_ADS_TIME_ZONE,
       },

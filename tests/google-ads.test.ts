@@ -4,6 +4,7 @@ import {
   dateKeyToUtcDate,
   fetchGoogleAdsDailyMetrics,
   getDateKeyInTimeZone,
+  getGoogleAdsDateKeys,
   getYesterdayDateKey,
 } from '../src/lib/google-ads.ts';
 
@@ -22,10 +23,19 @@ const missingSpend = calculateGoogleAdsRoi(250, null);
 assert.equal(missingSpend.netReturn, null);
 assert.equal(missingSpend.roiPercent, null);
 
+const negativeProfit = calculateGoogleAdsRoi(-50, 100);
+assert.equal(negativeProfit.netReturn, -150);
+assert.equal(negativeProfit.roiPercent, -150);
+
 const instant = new Date('2026-09-16T02:30:00.000Z');
 assert.equal(getDateKeyInTimeZone(instant, 'America/Toronto'), '2026-09-15');
 assert.equal(getYesterdayDateKey(new Date('2026-09-16T15:00:00.000Z'), 'America/Toronto'), '2026-09-15');
 assert.equal(dateKeyToUtcDate('2026-09-15').toISOString(), '2026-09-15T00:00:00.000Z');
+assert.deepEqual(getGoogleAdsDateKeys('today', new Date('2026-09-16T15:00:00.000Z')), ['2026-09-16']);
+assert.deepEqual(getGoogleAdsDateKeys('yesterday', new Date('2026-09-16T15:00:00.000Z')), ['2026-09-15']);
+assert.deepEqual(getGoogleAdsDateKeys('last-week', new Date('2026-09-16T15:00:00.000Z')), [
+  '2026-09-10', '2026-09-11', '2026-09-12', '2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16',
+]);
 
 const originalFetch = globalThis.fetch;
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];

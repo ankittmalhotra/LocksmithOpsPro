@@ -90,7 +90,7 @@ NEXT_PUBLIC_APP_URL="https://your-domain.example"
 
 ### Google Ads ROI setup
 
-The Admin dashboard pulls the previous calendar day from Google Ads when an Admin clicks **Sync yesterday**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. Portal revenue is the existing paid-invoice gross total for the same Toronto calendar day; it includes HST and is not ad-attributed to individual jobs.
+The Admin dashboard pulls Google Ads spend when an Admin clicks **Sync today**, **Sync yesterday**, or **Sync last week**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. The ROI widget supports the same three Toronto calendar periods and compares spend with net profit, not revenue. Net profit uses the existing accounting definition: paid gross invoices minus HST, technician commissions, and parts cost. The default **ROI for partner** view splits that profit equally between the two partners before calculating ROI; **ROI for company** uses the full company profit.
 
 Google Ads does not use a single API key for this integration. Google requires an OAuth 2.0 client, a refresh token, and a Google Ads developer token. The account customer ID is also required. See Google’s official [authorization and HTTP headers guide](https://developers.google.com/google-ads/api/rest/auth).
 
@@ -119,7 +119,7 @@ To obtain the values:
 4. Copy the 10-digit client account ID from Google Ads into `GOOGLE_ADS_CUSTOMER_ID`, removing hyphens. If the authorized Google user enters the account through a Manager account, put that Manager ID, also without hyphens, in `GOOGLE_ADS_LOGIN_CUSTOMER_ID`; otherwise leave it unset.
 5. Apply `prisma/google-ads-daily-metric-migration.sql` once to an existing production database, or run `npx prisma db push` for a new database, before deploying the code.
 
-The initial implementation reports blended portal revenue against account-level Google Ads spend. For exact ad-attributed ROI, jobs will also need a source/conversion attribution field and a matching Google Ads conversion workflow.
+The current implementation reports blended portal profit against account-level Google Ads spend. For exact ad-attributed ROI, jobs will also need a source/conversion attribution field and a matching Google Ads conversion workflow.
 
 You can now open the **Supabase Table Editor** in your browser and verify that all tables (`Job`, `User`, `Customer`, `Invoice`, `Settlement`) are populated!
 

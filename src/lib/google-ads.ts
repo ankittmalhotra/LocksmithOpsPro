@@ -4,6 +4,16 @@ const GOOGLE_ADS_API_URL = 'https://googleads.googleapis.com';
 const DEFAULT_GOOGLE_ADS_API_VERSION = 'v25';
 
 export const GOOGLE_ADS_TIME_ZONE = 'America/Toronto';
+export const GOOGLE_ADS_PARTNER_COUNT = 2;
+
+export const GOOGLE_ADS_RANGE_OPTIONS = ['today', 'yesterday', 'last-week'] as const;
+export type GoogleAdsRoiRange = (typeof GOOGLE_ADS_RANGE_OPTIONS)[number];
+
+export const GOOGLE_ADS_RANGE_LABELS: Record<GoogleAdsRoiRange, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  'last-week': 'Last week',
+};
 
 export type GoogleAdsConfig = {
   apiVersion: string;
@@ -27,7 +37,7 @@ export type GoogleAdsDailyMetrics = {
 export type GoogleAdsRoi = {
   adSpend: number | null;
   netReturn: number | null;
-  portalRevenue: number;
+  profit: number;
   roiPercent: number | null;
   roas: number | null;
 };
@@ -132,19 +142,31 @@ export function getYesterdayDateKey(now = new Date(), timeZone = GOOGLE_ADS_TIME
   return todayUtc.toISOString().slice(0, 10);
 }
 
-export function calculateGoogleAdsRoi(portalRevenue: number, adSpend: number | null): GoogleAdsRoi {
-  const safeRevenue = Number.isFinite(portalRevenue) ? Math.max(0, portalRevenue) : 0;
+export function getGoogleAdsDateKeys(range: GoogleAdsRoiRange = 'yesterday', now = new Date()): string[] {
+  const todayKey = getDateKeyInTimeZone(now);
+  const todayUtc = dateKeyToUtcDate(todayKey);
+  const dayOffset = range === 'today' ? 0 : range === 'yesterday' ? 1 : 6;
+
+  return Array.from({ length: range === 'last-week' ? 7 : 1 }, (_, index) => {
+    const date = new Date(todayUtc);
+    date.setUTCDate(todayUtc.getUTCDate() - dayOffset + index);
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+export function calculateGoogleAdsRoi(profit: number, adSpend: number | null): GoogleAdsRoi {
+  const safeProfit = Number.isFinite(profit) ? profit : 0;
   if (adSpend === null || !Number.isFinite(adSpend)) {
-    return { adSpend: null, netReturn: null, portalRevenue: safeRevenue, roiPercent: null, roas: null };
+    return { adSpend: null, netReturn: null, profit: safeProfit, roiPercent: null, roas: null };
   }
 
   const safeSpend = Math.max(0, adSpend);
   return {
     adSpend: safeSpend,
-    netReturn: safeRevenue - safeSpend,
-    portalRevenue: safeRevenue,
-    roiPercent: safeSpend > 0 ? ((safeRevenue - safeSpend) / safeSpend) * 100 : null,
-    roas: safeSpend > 0 ? safeRevenue / safeSpend : null,
+    netReturn: safeProfit - safeSpend,
+    profit: safeProfit,
+    roiPercent: safeSpend > 0 ? ((safeProfit - safeSpend) / safeSpend) * 100 : null,
+    roas: safeSpend > 0 ? safeProfit / safeSpend : null,
   };
 }
 

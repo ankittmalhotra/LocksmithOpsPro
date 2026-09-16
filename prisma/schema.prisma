@@ -178,6 +178,24 @@ model Invoice {
   createdAt DateTime  @default(now())
 }
 
+// Cached on-demand Google Ads daily metrics. The customer ID is part of the
+// key so a future multi-account setup cannot mix spend records.
+model GoogleAdsDailyMetric {
+  id               String   @id @default(uuid())
+  customerId       String
+  date             DateTime @db.Date
+  spend            Float    @default(0.0)
+  conversionsValue Float    @default(0.0)
+  clicks           Int      @default(0)
+  impressions      Int      @default(0)
+  syncedAt         DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([customerId, date])
+  @@index([date])
+}
+
 model Settlement {
   id            String   @id @default(uuid())
   technicianId  String

@@ -112,6 +112,7 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    - *(Optional server-to-server RingCentral auth)* `RC_USER_JWT` can be used instead of the interactive Admin Hub connection flow.
    - Run `prisma/ringcentral-connection-migration.sql` and `prisma/ringcentral-call-cache-migration.sql` once against production so OAuth and cached call records are shared between Admin and Dispatcher dashboards. This is not needed when using `RC_USER_JWT` for the OAuth connection, but the call-cache migration is still required for analytics caching.
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+   - *(Optional Google Ads ROI)* `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`, and optionally `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CURRENCY_CODE`, `GOOGLE_ADS_API_VERSION`. See [DEPLOYMENT.md](./DEPLOYMENT.md#google-ads-roi-setup) for setup.
 
 5. Before deploying a version that includes dispatcher edits or manual-job intake
    windows, apply both one-time additive migrations against the production database:
@@ -129,6 +130,9 @@ Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.
 ```bash
 # Run unit financial calculation tests (HST 13%, Reverse Mode)
 node --experimental-strip-types tests/calculations.test.ts
+
+# Run Google Ads ROI calculation/date tests
+node --experimental-strip-types tests/google-ads.test.ts
 
 # Run production E2E integration test suite
 node --experimental-strip-types tests/production-e2e.test.ts

@@ -6,6 +6,13 @@ import { normalizeManualJobInvoice } from '@/lib/manual-job';
 import { findJobsWithDetails, findTechniciansWithSettlements } from '@/lib/job-helper';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import {
+  calculateGoogleAdsRoi,
+  dateKeyToUtcDate,
+  getMissingGoogleAdsConfigVariables,
+  getYesterdayDateKey,
+  GOOGLE_ADS_TIME_ZONE,
+} from '@/lib/google-ads';
 
 async function handleGET(request: Request) {
   try {
@@ -157,6 +164,32 @@ async function handleGET(request: Request) {
       if (job.invoice.taxCollected !== false) daily.tax += job.invoice.taxAmount;
     }
 
+    const yesterdayDate = getYesterdayDateKey();
+    const yesterdayPortalRevenue = roundToTwo(dailyByDate.get(yesterdayDate)?.revenue || 0);
+    const missingGoogleAdsVariables = getMissingGoogleAdsConfigVariables();
+    const googleAdsConfigured = missingGoogleAdsVariables.length === 0;
+    let googleAdsMetric = null;
+    let googleAdsStorageReady = true;
+    if (googleAdsConfigured) {
+      try {
+        googleAdsMetric = await prisma.googleAdsDailyMetric.findUnique({
+          where: {
+            customerId_date: {
+              customerId: process.env.GOOGLE_ADS_CUSTOMER_ID!.replace(/[-\s]/g, ''),
+              date: dateKeyToUtcDate(yesterdayDate),
+            },
+          },
+        });
+      } catch (error: any) {
+        if (error?.code === 'P2021') {
+          googleAdsStorageReady = false;
+        } else {
+          throw error;
+        }
+      }
+    }
+    const googleAdsRoi = calculateGoogleAdsRoi(yesterdayPortalRevenue, googleAdsMetric?.spend ?? null);
+
     const dailySeries = last7Days.map((day) => {
       const daily = dailyByDate.get(day.date)!;
       return {
@@ -199,6 +232,25 @@ async function handleGET(request: Request) {
         bestRevenueDay: bestRevenueDay
           ? { date: bestRevenueDay.date, label: bestRevenueDay.dateLabel, revenue: bestRevenueDay.revenue }
           : null,
+      },
+      googleAds: {
+        configured: googleAdsConfigured,
+        currencyCode: process.env.GOOGLE_ADS_CURRENCY_CODE || 'CAD',
+        date: yesterdayDate,
+        lastSyncedAt: googleAdsMetric?.syncedAt || null,
+        missingVariables: missingGoogleAdsVariables,
+        portalRevenue: googleAdsRoi.portalRevenue,
+        revenueDefinition: 'Paid portal invoice gross total, including HST; not ad-attributed.',
+        adSpend: googleAdsRoi.adSpend,
+        netReturn: googleAdsRoi.netReturn,
+        roiPercent: googleAdsRoi.roiPercent,
+        roas: googleAdsRoi.roas,
+        conversionsValue: googleAdsMetric?.conversionsValue ?? null,
+        clicks: googleAdsMetric?.clicks ?? null,
+        impressions: googleAdsMetric?.impressions ?? null,
+        status: googleAdsMetric ? 'synced' : googleAdsStorageReady ? 'not_synced' : 'migration_required',
+        storageReady: googleAdsStorageReady,
+        timeZone: GOOGLE_ADS_TIME_ZONE,
       },
       technicianLedger,
       recentJobs: jobs.slice(0, 10),

@@ -88,6 +88,39 @@ NEXT_PUBLIC_APP_URL="https://your-domain.example"
 
 `ADMIN_PASSWORD` is used only for the built-in Admin login. Staff accounts created from the Admin console receive their own password hash. Do not use the development fallback password in production.
 
+### Google Ads ROI setup
+
+The Admin dashboard pulls the previous calendar day from Google Ads when an Admin clicks **Sync yesterday**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. Portal revenue is the existing paid-invoice gross total for the same Toronto calendar day; it includes HST and is not ad-attributed to individual jobs.
+
+Google Ads does not use a single API key for this integration. Google requires an OAuth 2.0 client, a refresh token, and a Google Ads developer token. The account customer ID is also required. See Google’s official [authorization and HTTP headers guide](https://developers.google.com/google-ads/api/rest/auth).
+
+Add these server-only variables to Vercel and local development as needed:
+
+```env
+GOOGLE_ADS_DEVELOPER_TOKEN="..."
+GOOGLE_ADS_CLIENT_ID="...apps.googleusercontent.com"
+GOOGLE_ADS_CLIENT_SECRET="..."
+GOOGLE_ADS_REFRESH_TOKEN="..."
+GOOGLE_ADS_CUSTOMER_ID="1234567890"
+
+# Required only when the OAuth user reaches the account through a manager account.
+GOOGLE_ADS_LOGIN_CUSTOMER_ID="0987654321"
+
+# Optional; defaults to CAD for display and v25 for the Google Ads REST endpoint.
+GOOGLE_ADS_CURRENCY_CODE="CAD"
+GOOGLE_ADS_API_VERSION="v25"
+```
+
+To obtain the values:
+
+1. In Google Ads, create or use a Manager account and open **Admin → API Center**. Copy the developer token. Google documents that a developer token is required on every API request and that its access level controls production access.
+2. In [Google Cloud Console](https://console.cloud.google.com/), create/select a project, enable the Google Ads API, configure the OAuth consent screen, and create an OAuth client ID for a server-side web/desktop application. Keep the client secret private.
+3. Authorize the Google account that can access the target Ads account with the scope `https://www.googleapis.com/auth/adwords` and request offline access. Exchange the authorization result for a refresh token. Google’s [single-user authentication guide](https://developers.google.com/google-ads/api/docs/oauth/single-user-authentication) describes this flow.
+4. Copy the 10-digit client account ID from Google Ads into `GOOGLE_ADS_CUSTOMER_ID`, removing hyphens. If the authorized Google user enters the account through a Manager account, put that Manager ID, also without hyphens, in `GOOGLE_ADS_LOGIN_CUSTOMER_ID`; otherwise leave it unset.
+5. Apply `prisma/google-ads-daily-metric-migration.sql` once to an existing production database, or run `npx prisma db push` for a new database, before deploying the code.
+
+The initial implementation reports blended portal revenue against account-level Google Ads spend. For exact ad-attributed ROI, jobs will also need a source/conversion attribution field and a matching Google Ads conversion workflow.
+
 You can now open the **Supabase Table Editor** in your browser and verify that all tables (`Job`, `User`, `Customer`, `Invoice`, `Settlement`) are populated!
 
 ---

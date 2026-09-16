@@ -10,6 +10,9 @@ import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger'
 import { getApiErrorMessage } from '@/lib/api-error';
 import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
 
+const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
+type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
+
 async function handlePOST(request: Request) {
   try {
     const currentUser = await getCurrentUser();
@@ -64,6 +67,10 @@ async function handlePOST(request: Request) {
     if (!(MANUAL_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
       return NextResponse.json({ success: false, error: 'Invalid payment method' }, { status: 400 });
     }
+    const requestedPaymentStatus = body.paymentStatus === undefined ? 'PAID' : body.paymentStatus;
+    if (!(MANUAL_PAYMENT_STATUSES as readonly string[]).includes(requestedPaymentStatus)) {
+      return NextResponse.json({ success: false, error: 'Invalid payment status' }, { status: 400 });
+    }
     if (typeof body.taxCollected !== 'boolean') {
       return NextResponse.json({ success: false, error: 'Tax collected must be Yes or No' }, { status: 400 });
     }
@@ -96,6 +103,7 @@ async function handlePOST(request: Request) {
     }
 
     const payment = paymentMethod as SupportedPaymentMethod;
+    const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
       grandTotal: totalAmountCollected,
@@ -146,10 +154,10 @@ async function handlePOST(request: Request) {
               totalAmountCollected,
               taxCollected: body.taxCollected,
               cogsAmount,
-              paymentStatus: 'PAID',
+              paymentStatus,
               paymentMethod: payment,
               cashOwedToCompany: settlement.cashOwedToCompany,
-              paidAt: manualTimestamp,
+              paidAt: paymentStatus === 'PAID' ? manualTimestamp : null,
             },
           },
         },

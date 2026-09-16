@@ -84,6 +84,10 @@ POSTGRES_PRISMA_URL="..."
 POSTGRES_URL_NON_POOLING="..."
 ADMIN_PASSWORD="a-strong-admin-password"
 NEXT_PUBLIC_APP_URL="https://your-domain.example"
+STRIPE_SECRET_KEY="sk_live_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."
+# Optional for the current hosted Checkout redirect:
+STRIPE_PUBLISHABLE_KEY="pk_live_..."
 ```
 
 `ADMIN_PASSWORD` is used only for the built-in Admin login. Staff accounts created from the Admin console receive their own password hash. Do not use the development fallback password in production.
@@ -150,7 +154,9 @@ git push -u origin main
    - `NEXT_PUBLIC_APP_URL`: `https://your-project-name.vercel.app` *(or your custom domain)*
    - `RESEND_API_KEY`: *(Resend API key from the Omnibroker workspace)*
    - `RESEND_FROM_EMAIL`: *(A verified Omnibroker sender address, for example `LockOps <notifications@your-domain.com>`)*
-   - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+   - `STRIPE_SECRET_KEY`: server-side Stripe key for creating Checkout Sessions
+   - `STRIPE_WEBHOOK_SECRET`: webhook endpoint signing secret
+   - `STRIPE_PUBLISHABLE_KEY`: optional for the current hosted redirect; reserved for future Stripe.js flows
 5. Click **"Deploy"**.
 
 Vercel will run `prisma generate && next build` automatically. Within 60 seconds, your application will be live with a secure HTTPS URL!
@@ -159,12 +165,34 @@ Vercel will run `prisma generate && next build` automatically. Within 60 seconds
 
 ## 🔒 Production Webhook Configuration
 
-### Stripe Webhook (Instant Job Closeout)
+### Stripe Webhook (Payment Status and Invoice Tracking)
 1. Go to **Stripe Dashboard** ➔ **Developers** ➔ **Webhooks**.
 2. Add an endpoint pointing to:
    `https://your-app.vercel.app/api/webhooks/stripe`
-3. Select event: `checkout.session.completed`.
+3. Select these events:
+   - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
+   - `checkout.session.expired`
+   - `invoice.paid`
+   - `invoice.payment_failed`
+   - `invoice.sent`
 4. Copy the Signing Secret into Vercel as `STRIPE_WEBHOOK_SECRET`.
+
+For local testing, use the Stripe CLI instead of a Dashboard endpoint:
+
+```bash
+stripe login
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+```
+
+Copy the `whsec_...` value printed by the CLI into local `.env`. The CLI
+secret and a Dashboard endpoint secret are different and must not be mixed.
+
+Pending Credit Card/Debit Card manual jobs create a hosted Checkout Session.
+The customer enters their email on Stripe Checkout. Stripe then creates and
+sends the paid invoice after successful payment. The application updates its
+invoice only from verified Stripe webhooks, not from the success redirect.
 
 ### Device SMS
 - The portal prepares an `sms:` link and message preview for the dispatcher or technician.

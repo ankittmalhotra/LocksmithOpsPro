@@ -63,15 +63,19 @@ model User {
 }
 
 model Customer {
-  id         String   @id @default(uuid())
-  name       String
-  phone      String
-  extension  String?
-  address    String
-  unit       String?
-  postalCode String?
-  notes      String?
-  createdAt  DateTime @default(now())
+  id               String   @id @default(uuid())
+  name             String
+  phone            String
+  extension        String?
+  address          String
+  unit             String?
+  postalCode       String?
+  notes            String?
+  // Dispatcher intake does not require an email. Stripe Checkout can collect
+  // it later and the webhook backfills it here.
+  email            String?
+  stripeCustomerId String?  @unique(map: "customer_stripe_customer_id_key")
+  createdAt        DateTime @default(now())
 
   jobs Job[]
 }
@@ -170,12 +174,35 @@ model Invoice {
   settlementStatus  SettlementStatus @default(UNSETTLED)
 
   // Twilio & Stripe tracking
-  smsSent          Boolean @default(false)
-  stripeSessionId  String?
-  stripePaymentUrl String?
+  smsSent                    Boolean   @default(false)
+  paymentProvider            String?
+  stripeSessionId            String?
+  stripeSessionStatus        String?
+  stripeSessionExpiresAt     DateTime?
+  stripePaymentUrl           String?
+  stripePaymentLinkCreatedAt DateTime?
+  stripePaymentLinkExpiresAt DateTime?
+  stripeInvoiceId            String?   @unique(map: "invoice_stripe_invoice_id_key")
+  stripePaymentIntentId      String?
+  stripeChargeId              String?
+  customerEmailCollectedAt   DateTime?
+  invoiceSentAt              DateTime?
+  paymentFailedAt             DateTime?
 
   paidAt    DateTime?
   createdAt DateTime  @default(now())
+}
+
+// Stripe may retry an event. A durable event ID makes webhook processing
+// idempotent across retries and across multiple application instances.
+model StripeWebhookEvent {
+  id          String   @id @default(uuid())
+  eventId     String   @unique(map: "stripe_webhook_event_event_id_key")
+  eventType   String
+  processedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([processedAt])
 }
 
 // Cached on-demand Google Ads daily metrics. The customer ID is part of the

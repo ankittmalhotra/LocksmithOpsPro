@@ -1,24 +1,38 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import type { SmsDraft } from '@/lib/sms-draft';
 
 interface SmsComposerModalProps {
   draft: SmsDraft | null;
   warnings?: string[];
   title?: string;
+  autoOpen?: boolean;
   onClose: () => void;
 }
 
 /**
- * Device SMS hand-off. Opening the native Messages app must remain a direct
- * user action; a browser cannot send or verify an SMS on the user's behalf.
+ * Device SMS hand-off. Opening the native Messages app remains a user-controlled
+ * hand-off; a browser cannot send or verify an SMS on the user's behalf.
  */
 export default function SmsComposerModal({
   draft,
   warnings = [],
   title = 'SMS ready to send',
+  autoOpen = false,
   onClose,
 }: SmsComposerModalProps) {
+  const autoOpenedHref = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!autoOpen || !draft || autoOpenedHref.current === draft.href) return;
+    autoOpenedHref.current = draft.href;
+    const timer = window.setTimeout(() => {
+      window.location.href = draft.href;
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [autoOpen, draft]);
+
   if (!draft && warnings.length === 0) return null;
 
   if (!draft) {

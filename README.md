@@ -35,10 +35,10 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 - **Multi-Payment Settlement**:
   - 💵 **Cash**: Record physical cash received and automatically update the contractor's cash ledger.
   - 🏦 **Interac e-Transfer**: Record the payment method and automatically update the contractor's cash ledger.
-  - 💳 **Credit/Debit Card (Stripe)**: Disabled for now; planned for a future release.
+  - 💳 **Credit/Debit Card (Stripe)**: Pending jobs can receive a hosted Stripe Checkout link by SMS; the customer enters their email during Checkout and receives a paid invoice after payment.
 
 ### 3. Customer Tracking and Online Payments
-- Customer tracking and Stripe online payments are disabled for now.
+- Stripe online payments use hosted Checkout Sessions and webhook-confirmed invoice status. Customer email is collected by Stripe during payment because dispatchers do not need to know it upfront.
 - The technician sends completion details to the dispatcher, including payment method and amount received.
 
 ### 4. Admin Executive Hub & Cash Handover Settlements (`/owner`)
@@ -111,10 +111,17 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    - *(Optional multi-number RingCentral)* `RC_TARGET_PHONE_NUMBERS` may contain comma-separated receiving numbers. Existing `RC_TARGET_PHONE_NUMBER` remains supported.
    - *(Optional server-to-server RingCentral auth)* `RC_USER_JWT` can be used instead of the interactive Admin Hub connection flow.
    - Run `prisma/ringcentral-connection-migration.sql` and `prisma/ringcentral-call-cache-migration.sql` once against production so OAuth and cached call records are shared between Admin and Dispatcher dashboards. This is not needed when using `RC_USER_JWT` for the OAuth connection, but the call-cache migration is still required for analytics caching.
-   - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+   - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` for the online-payment flow
+   - `STRIPE_PUBLISHABLE_KEY` is reserved for future client-side Stripe.js flows and is not required by the current hosted Checkout redirect
    - *(Optional Google Ads ROI)* `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`, and optionally `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CURRENCY_CODE`, `GOOGLE_ADS_API_VERSION`. See [DEPLOYMENT.md](./DEPLOYMENT.md#google-ads-roi-setup) for setup.
 
-5. Before deploying a version that includes dispatcher edits or manual-job intake
+5. Before deploying a version that includes dispatcher edits, manual-job intake,
+   or Stripe payment tracking, apply the current Prisma schema to the existing
+   database with `npx prisma db push` after reviewing the additive changes.
+   This adds the customer Stripe/email fields, invoice payment references, and
+   Stripe webhook-event deduplication table.
+
+6. Before deploying a version that includes dispatcher edits or manual-job intake
    windows, apply both one-time additive migrations against the production database:
    `prisma/job-updated-at-migration.sql` and
    `prisma/manual-job-received-time-migration.sql`. These add `Job.updatedAt` for

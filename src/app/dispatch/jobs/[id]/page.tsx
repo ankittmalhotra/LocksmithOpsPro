@@ -4,8 +4,9 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
+import { buildSmsDraft } from '@/lib/sms-draft';
 
-type PaymentMethod = 'CASH' | 'INTERAC';
+type PaymentMethod = 'CASH' | 'INTERAC' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'STRIPE_CARD';
 
 const OPEN_STATUSES = ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'] as const;
 const PAYMENT_METHODS: Array<{ value: PaymentMethod; label: string }> = [
@@ -39,7 +40,68 @@ interface Job {
     grandTotal: number;
     paymentMethod?: PaymentMethod | null;
     paymentStatus: string;
+    stripeSessionStatus?: string | null;
+    stripeSessionExpiresAt?: string | null;
+    stripePaymentUrl?: string | null;
+    stripePaymentLinkExpiresAt?: string | null;
+    paymentUrl?: string | null;
+    paymentLink?: string | null;
+    paymentLinkExpiresAt?: string | null;
   } | null;
+}
+
+function getPaymentLinkUrl(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = payload as Record<string, unknown>;
+  const nested = value.data && typeof value.data === 'object' ? value.data as Record<string, unknown> : null;
+  const payment = value.payment && typeof value.payment === 'object' ? value.payment as Record<string, unknown> : null;
+  const invoice = value.invoice && typeof value.invoice === 'object' ? value.invoice as Record<string, unknown> : null;
+  const job = value.job && typeof value.job === 'object' ? value.job as Record<string, unknown> : null;
+  const jobInvoice = job?.invoice && typeof job.invoice === 'object' ? job.invoice as Record<string, unknown> : null;
+  const candidates = [
+    value.paymentUrl,
+    value.paymentLink,
+    value.url,
+    nested?.paymentUrl,
+    nested?.paymentLink,
+    payment?.paymentUrl,
+    payment?.paymentLink,
+    invoice?.stripePaymentUrl,
+    jobInvoice?.stripePaymentUrl,
+    jobInvoice?.paymentUrl,
+    jobInvoice?.paymentLink,
+  ];
+  return candidates.find((candidate): candidate is string => typeof candidate === 'string' && /^https?:\/\//i.test(candidate)) || null;
+}
+
+function getPaymentLinkSmsBody(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = payload as Record<string, unknown>;
+  const nested = value.data && typeof value.data === 'object' ? value.data as Record<string, unknown> : null;
+  return [value.smsBody, nested?.smsBody].find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0) || null;
+}
+
+function isCardPaymentMethod(paymentMethod: PaymentMethod | null | undefined) {
+  return paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD' || paymentMethod === 'STRIPE_CARD';
+}
+
+function getPersistedPaymentLink(job: Job): { url: string | null; expiresAt: string | null; sessionStatus: string | null } {
+  const invoice = job.invoice;
+  if (!invoice) return { url: null, expiresAt: null, sessionStatus: null };
+  const url = [invoice.stripePaymentUrl, invoice.paymentUrl, invoice.paymentLink]
+    .find((candidate): candidate is string => typeof candidate === 'string' && /^https?:\/\//i.test(candidate)) || null;
+  return {
+    url,
+    expiresAt: invoice.stripePaymentLinkExpiresAt || invoice.stripeSessionExpiresAt || invoice.paymentLinkExpiresAt || null,
+    sessionStatus: invoice.stripeSessionStatus || null,
+  };
+}
+
+function isActivePaymentLink(expiresAt: string | null, sessionStatus: string | null) {
+  if (sessionStatus && sessionStatus.toLowerCase() !== 'open') return false;
+  if (!expiresAt) return true;
+  const timestamp = new Date(expiresAt).getTime();
+  return Number.isFinite(timestamp) && timestamp > Date.now();
 }
 
 interface EditForm {
@@ -106,6 +168,11 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
   const [successMsg, setSuccessMsg] = useState('');
   const [smsDraft, setSmsDraft] = useState<SmsDraft | null>(null);
   const [smsWarnings, setSmsWarnings] = useState<string[]>([]);
+  const [smsAutoOpen, setSmsAutoOpen] = useState(false);
+  const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
+  const [paymentLinkError, setPaymentLinkError] = useState('');
+  const [paymentLinkCopyState, setPaymentLinkCopyState] = useState('');
+  const [paymentLinkUrlOverride, setPaymentLinkUrlOverride] = useState<string | null>(null);
 
   const [calculationMode, setCalculationMode] = useState<'REVERSE' | 'FORWARD'>('REVERSE');
   const [amountReceived, setAmountReceived] = useState('');
@@ -129,7 +196,8 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
       if (!jobRes.ok || !jobData.success || !jobData.job) throw new Error(jobData.error || 'Unable to load job');
       setJob(jobData.job);
       setForm(formFromJob(jobData.job));
-      if (jobData.job.invoice?.paymentMethod === 'CASH' || jobData.job.invoice?.paymentMethod === 'INTERAC') setPaymentMethod(jobData.job.invoice.paymentMethod);
+      if (jobData.job.invoice?.paymentMethod) setPaymentMethod(jobData.job.invoice.paymentMethod);
+      setPaymentLinkUrlOverride(null);
       if (jobData.job.invoice?.grandTotal) setAmountReceived(String(jobData.job.invoice.grandTotal));
       if (techRes.ok && techData.success) setTechnicians(techData.users || []);
     } catch (error: any) {
@@ -216,6 +284,78 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  const copyPaymentLink = async () => {
+    if (!job) return;
+    const persisted = getPersistedPaymentLink(job);
+    const paymentUrl = paymentLinkUrlOverride || persisted.url;
+    if (!paymentUrl) return;
+    try {
+      await navigator.clipboard.writeText(paymentUrl);
+      setPaymentLinkCopyState('Payment link copied.');
+    } catch {
+      setPaymentLinkCopyState('Copy was unavailable. Select the link and copy it manually.');
+    }
+  };
+
+  const preparePaymentLinkSms = (paymentUrl: string, smsBody?: string | null) => {
+    if (!job) return;
+    try {
+      const body = smsBody
+        ? (smsBody.includes(paymentUrl) ? smsBody : `${smsBody}\nPayment link: ${paymentUrl}`)
+        : `Payment link for Job #${job.jobNumber}: ${paymentUrl}`;
+      const draft = buildSmsDraft({
+        to: job.customer.phone,
+        body,
+      });
+      setSmsDraft(draft);
+      setSmsWarnings([]);
+      setSmsAutoOpen(true);
+      setSuccessMsg('Payment link SMS draft is ready. Review the message and tap Send in Messages.');
+      setPaymentLinkError('');
+    } catch {
+      setPaymentLinkError('Payment link is available, but the customer phone number cannot open an SMS draft. Copy the link and send it manually.');
+    }
+  };
+
+  const sendPaymentLinkSms = () => {
+    if (!job) return;
+    const persisted = getPersistedPaymentLink(job);
+    const paymentUrl = paymentLinkUrlOverride || persisted.url;
+    if (!paymentUrl || !isActivePaymentLink(persisted.expiresAt, persisted.sessionStatus)) {
+      setPaymentLinkError('No active payment link is available. Generate a new link and retry.');
+      return;
+    }
+    preparePaymentLinkSms(paymentUrl);
+  };
+
+  const generatePaymentLink = async (sendSms: boolean) => {
+    if (!job) return;
+    setPaymentLinkBusy(true);
+    setPaymentLinkError('');
+    setPaymentLinkCopyState('');
+    try {
+      const res = await fetch(`/api/jobs/${id}/payment-link`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.error || 'Unable to generate payment link');
+      const paymentUrl = getPaymentLinkUrl(data);
+      if (!paymentUrl) throw new Error('Payment link was generated without a usable URL. Retry.');
+      setPaymentLinkUrlOverride(paymentUrl);
+      setJob((current) => current && current.invoice ? {
+        ...current,
+        invoice: { ...current.invoice, stripePaymentUrl: paymentUrl },
+      } : current);
+      if (sendSms) {
+        preparePaymentLinkSms(paymentUrl, getPaymentLinkSmsBody(data));
+      } else {
+        setSuccessMsg('Payment link generated. You can now send it by SMS or copy it for another channel.');
+      }
+    } catch (error: any) {
+      setPaymentLinkError(error.message || 'Unable to generate payment link');
+    } finally {
+      setPaymentLinkBusy(false);
+    }
+  };
+
   const closeJob = async (kind: 'complete' | 'abandon') => {
     if (!job || !form) return;
     setClosing(true);
@@ -270,6 +410,18 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
 
   const isOpen = OPEN_STATUSES.includes(job.status as (typeof OPEN_STATUSES)[number]);
   const selectedTech = technicians.find((technician) => technician.id === form.technicianId);
+  const persistedPaymentLink = getPersistedPaymentLink(job);
+  const activePaymentLinkUrl = paymentLinkUrlOverride || persistedPaymentLink.url;
+  const canManagePaymentLink = Boolean(
+    job.isManual
+    && job.invoice?.paymentStatus === 'PENDING'
+    && isCardPaymentMethod(job.invoice.paymentMethod)
+  );
+  const hasActivePaymentLink = Boolean(
+    canManagePaymentLink
+    && activePaymentLinkUrl
+    && (paymentLinkUrlOverride ? true : isActivePaymentLink(persistedPaymentLink.expiresAt, persistedPaymentLink.sessionStatus))
+  );
 
   return (
     <main className="max-w-6xl mx-auto w-full p-4 sm:p-6 space-y-5">
@@ -318,6 +470,37 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
         </fieldset>
       </form>
 
+      {canManagePaymentLink && (
+        <section className="bg-white rounded-2xl border border-blue-200 shadow-sm p-5 space-y-3">
+          <div>
+            <h2 className="font-black text-blue-900">Customer payment link</h2>
+            <p className="text-xs text-slate-600">This job is still pending. Opening Messages prepares a draft; it does not confirm that an SMS was sent.</p>
+          </div>
+          {paymentLinkError && (
+            <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+              <div>{paymentLinkError}</div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <button type="button" disabled={paymentLinkBusy} onClick={() => generatePaymentLink(Boolean(activePaymentLinkUrl))} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold disabled:opacity-50">{paymentLinkBusy ? 'Retrying…' : 'Retry'}</button>
+                {activePaymentLinkUrl && <button type="button" onClick={copyPaymentLink} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-800 font-bold">Copy Payment Link</button>}
+              </div>
+              {paymentLinkCopyState && <div className="mt-2 text-[11px] font-semibold">{paymentLinkCopyState}</div>}
+            </div>
+          )}
+          {hasActivePaymentLink && activePaymentLinkUrl ? (
+            <>
+              <a href={activePaymentLinkUrl} target="_blank" rel="noreferrer" className="block break-all text-xs text-blue-700 underline">{activePaymentLinkUrl}</a>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={paymentLinkBusy} onClick={sendPaymentLinkSms} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black disabled:opacity-50">Send Payment Link via SMS</button>
+                <button type="button" onClick={copyPaymentLink} className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-800 text-xs font-black">Copy Payment Link</button>
+              </div>
+              {paymentLinkCopyState && <p className="text-[11px] text-emerald-700 font-semibold">{paymentLinkCopyState}</p>}
+            </>
+          ) : (
+            <button type="button" disabled={paymentLinkBusy} onClick={() => generatePaymentLink(false)} className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-black disabled:opacity-50">{paymentLinkBusy ? 'Generating…' : 'Generate Payment Link'}</button>
+          )}
+        </section>
+      )}
+
       {isOpen && <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <section className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-5 space-y-4">
           <div><h2 className="font-black text-emerald-900">Close as successful</h2><p className="text-xs text-slate-500">Record Cash or Interac collected. Card payments are unavailable until processor integration is added.</p></div>
@@ -337,7 +520,7 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
       </div>}
 
       {!isOpen && <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">This job is closed and is read-only. Dispatcher edits and closeout actions are available only while the job is open.</div>}
-      <SmsComposerModal draft={smsDraft} warnings={smsWarnings} title="SMS draft ready" onClose={() => { setSmsDraft(null); setSmsWarnings([]); }} />
+      <SmsComposerModal draft={smsDraft} warnings={smsWarnings} title={smsAutoOpen ? 'Payment link SMS ready' : 'SMS draft ready'} autoOpen={smsAutoOpen} onClose={() => { setSmsDraft(null); setSmsWarnings([]); setSmsAutoOpen(false); }} />
     </main>
   );
 }

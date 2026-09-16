@@ -11,6 +11,9 @@ import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger'
 import { getApiErrorMessage } from '@/lib/api-error';
 import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
 
+const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
+type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
+
 function isManualRole(role: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
 }
@@ -75,6 +78,9 @@ async function handlePATCH(
     const paymentMethod = body.paymentMethod === undefined
       ? invoice.paymentMethod
       : body.paymentMethod;
+    const requestedPaymentStatus = body.paymentStatus === undefined
+      ? invoice.paymentStatus
+      : body.paymentStatus;
     const technicianId = body.technicianId === undefined
       ? (job.technicianId || (job.technicianName ? 'OTHER' : ''))
       : String(body.technicianId).trim();
@@ -109,6 +115,9 @@ async function handlePATCH(
     }
     if (!(MANUAL_PAYMENT_METHODS as readonly string[]).includes(paymentMethod as string)) {
       return NextResponse.json({ success: false, error: 'Invalid payment method' }, { status: 400 });
+    }
+    if (!(MANUAL_PAYMENT_STATUSES as readonly string[]).includes(requestedPaymentStatus as string)) {
+      return NextResponse.json({ success: false, error: 'Invalid payment status' }, { status: 400 });
     }
     if (typeof taxCollected !== 'boolean') {
       return NextResponse.json({ success: false, error: 'Tax collected must be Yes or No' }, { status: 400 });
@@ -146,6 +155,7 @@ async function handlePATCH(
     }
 
     const payment = paymentMethod as SupportedPaymentMethod;
+    const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
       grandTotal: totalAmountCollected,
@@ -196,10 +206,12 @@ async function handlePATCH(
           totalAmountCollected,
           taxCollected,
           cogsAmount,
-          paymentStatus: 'PAID',
+          paymentStatus,
           paymentMethod: payment,
           cashOwedToCompany: settlement.cashOwedToCompany,
-          ...(manualTimestamp ? { paidAt: manualTimestamp } : {}),
+          paidAt: paymentStatus === 'PAID'
+            ? (manualTimestamp || invoice.paidAt || new Date())
+            : null,
         },
       });
 

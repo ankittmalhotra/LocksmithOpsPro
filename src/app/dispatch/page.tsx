@@ -7,6 +7,7 @@ import { roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import type { SmsDraft } from '@/lib/sms-draft';
+import { buildSmsDraft } from '@/lib/sms-draft';
 import { formatTorontoDateInput, parseTorontoDateOnly, torontoDateTimeToIso } from '@/lib/timezone';
 
 const PHONE_INPUT_PATTERN = '(?=.*[0-9])[0-9()+\\-\\s]{7,}';
@@ -96,11 +97,59 @@ interface Job {
     taxAmount?: number;
     totalAmountCollected?: number;
     cogsAmount?: number;
-    paymentStatus: string;
     paymentMethod: string;
     taxCollected?: boolean;
     paidAt?: string | null;
+    paymentStatus: string;
+    stripePaymentUrl?: string | null;
+    stripePaymentLinkExpiresAt?: string | null;
+    paymentUrl?: string | null;
+    paymentLink?: string | null;
   };
+}
+
+type ManualPaymentStatus = 'PAID' | 'PENDING';
+
+interface PaymentLinkPrompt {
+  jobId: string;
+  jobNumber: string;
+  customerName: string;
+  customerPhone: string;
+}
+
+function getPaymentLinkUrl(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = payload as Record<string, unknown>;
+  const nested = value.data && typeof value.data === 'object' ? value.data as Record<string, unknown> : null;
+  const payment = value.payment && typeof value.payment === 'object' ? value.payment as Record<string, unknown> : null;
+  const invoice = value.invoice && typeof value.invoice === 'object' ? value.invoice as Record<string, unknown> : null;
+  const job = value.job && typeof value.job === 'object' ? value.job as Record<string, unknown> : null;
+  const jobInvoice = job?.invoice && typeof job.invoice === 'object' ? job.invoice as Record<string, unknown> : null;
+  const candidates = [
+    value.paymentUrl,
+    value.paymentLink,
+    value.url,
+    nested?.paymentUrl,
+    nested?.paymentLink,
+    payment?.paymentUrl,
+    payment?.paymentLink,
+    invoice?.stripePaymentUrl,
+    jobInvoice?.stripePaymentUrl,
+    jobInvoice?.paymentUrl,
+    jobInvoice?.paymentLink,
+  ];
+  return candidates.find((candidate): candidate is string => typeof candidate === 'string' && /^https?:\/\//i.test(candidate)) || null;
+}
+
+function getPaymentLinkSmsBody(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = payload as Record<string, unknown>;
+  const nested = value.data && typeof value.data === 'object' ? value.data as Record<string, unknown> : null;
+  return [value.smsBody, nested?.smsBody].find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0) || null;
+}
+
+function isCardPaymentMethod(paymentMethod: string | null | undefined) {
+  return paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD';
 }
 
 export default function DispatchPage() {
@@ -136,6 +185,7 @@ export default function DispatchPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [smsDraft, setSmsDraft] = useState<SmsDraft | null>(null);
   const [smsWarnings, setSmsWarnings] = useState<string[]>([]);
+  const [smsAutoOpen, setSmsAutoOpen] = useState(false);
 
   const [showAddTechnician, setShowAddTechnician] = useState(false);
   const [newTechnicianName, setNewTechnicianName] = useState('');
@@ -151,6 +201,11 @@ export default function DispatchPage() {
   const [showManualJob, setShowManualJob] = useState(false);
   const [editingManualId, setEditingManualId] = useState<string | null>(null);
   const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [paymentLinkPrompt, setPaymentLinkPrompt] = useState<PaymentLinkPrompt | null>(null);
+  const [paymentLinkGenerating, setPaymentLinkGenerating] = useState(false);
+  const [paymentLinkUrl, setPaymentLinkUrl] = useState<string | null>(null);
+  const [paymentLinkError, setPaymentLinkError] = useState('');
+  const [paymentLinkCopyState, setPaymentLinkCopyState] = useState('');
   const [deletingManualId, setDeletingManualId] = useState<string | null>(null);
   const [manualForm, setManualForm] = useState<Record<string, string>>({
     jobNumber: '',
@@ -164,6 +219,7 @@ export default function DispatchPage() {
     otherServiceType: '',
     description: '',
     paymentMethod: 'CASH',
+    paymentStatus: 'PAID',
     cogsAmount: '0.00',
     totalAmountCollected: '',
     taxCollected: 'yes',
@@ -256,6 +312,7 @@ export default function DispatchPage() {
       setSuccessMsg(`✅ Job #${data.job.jobNumber} created. Technician SMS draft is ready for review.`);
       setSmsDraft(data.smsDraft || null);
       setSmsWarnings(Array.isArray(data.smsDraftWarnings) ? data.smsDraftWarnings : []);
+      setSmsAutoOpen(false);
       // Reset form
       setCustomerName('');
       setCustomerPhone('');
@@ -376,6 +433,7 @@ export default function DispatchPage() {
     setManualForm({
       jobNumber: '', jobDate: formatTorontoDateInput(), customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
       serviceType: MANUAL_SERVICE_TYPES[0], jobReceivedTimeSlot: '', otherServiceType: '', description: '', paymentMethod: 'CASH',
+      paymentStatus: 'PAID',
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
       otherTechnicianName: '',
       technicianCommission: '0.00',
@@ -407,6 +465,7 @@ export default function DispatchPage() {
       otherServiceType: knownType ? '' : job.serviceType,
       description: job.problemDescription,
       paymentMethod: job.invoice?.paymentMethod || 'CASH',
+      paymentStatus: job.invoice?.paymentStatus === 'PENDING' ? 'PENDING' : 'PAID',
       cogsAmount: Number(job.invoice?.cogsAmount || 0).toFixed(2),
       totalAmountCollected: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
       taxCollected: job.invoice?.taxCollected === false ? 'no' : 'yes',
@@ -429,6 +488,7 @@ export default function DispatchPage() {
     setErrorMsg('');
     setSuccessMsg('');
     try {
+      const shouldOfferPaymentLink = manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod);
       const res = await fetch(editingManualId ? `/api/jobs/manual/${editingManualId}` : '/api/jobs/manual', {
         method: editingManualId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -446,10 +506,68 @@ export default function DispatchPage() {
       setEditingManualId(null);
       resetManualJob();
       fetchAuthAndJobs();
+      const paymentLinkJobId = data.job?.id || editingManualId;
+      if (shouldOfferPaymentLink && paymentLinkJobId) {
+        setPaymentLinkUrl(null);
+        setPaymentLinkError('');
+        setPaymentLinkCopyState('');
+        setPaymentLinkPrompt({
+          jobId: paymentLinkJobId,
+          jobNumber: String(data.job.jobNumber || manualForm.jobNumber),
+          customerName: manualForm.customerName,
+          customerPhone: manualForm.customerPhone,
+        });
+      }
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
       setManualSubmitting(false);
+    }
+  };
+
+  const copyPaymentLink = async () => {
+    if (!paymentLinkUrl) return;
+    try {
+      await navigator.clipboard.writeText(paymentLinkUrl);
+      setPaymentLinkCopyState('Payment link copied.');
+    } catch {
+      setPaymentLinkCopyState('Copy was unavailable. Select the link and copy it manually.');
+    }
+  };
+
+  const generatePaymentLinkAndSend = async () => {
+    if (!paymentLinkPrompt) return;
+    setPaymentLinkGenerating(true);
+    setPaymentLinkError('');
+    setPaymentLinkCopyState('');
+    try {
+      const res = await fetch(`/api/jobs/${paymentLinkPrompt.jobId}/payment-link`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to generate payment link');
+
+      const paymentUrl = getPaymentLinkUrl(data);
+      if (!paymentUrl) throw new Error('Payment link was generated without a usable URL. Retry from the job details page.');
+      setPaymentLinkUrl(paymentUrl);
+
+      const responseBody = getPaymentLinkSmsBody(data);
+      const body = responseBody
+        ? (responseBody.includes(paymentUrl) ? responseBody : `${responseBody}\nPayment link: ${paymentUrl}`)
+        : `Payment link for Job #${paymentLinkPrompt.jobNumber}: ${paymentUrl}`;
+      let draft: SmsDraft;
+      try {
+        draft = buildSmsDraft({ to: paymentLinkPrompt.customerPhone, body });
+      } catch {
+        throw new Error('Payment link generated, but the customer phone number cannot open an SMS draft. Copy the link below and send it manually.');
+      }
+      setSmsDraft(draft);
+      setSmsWarnings([]);
+      setSmsAutoOpen(true);
+      setPaymentLinkPrompt(null);
+      setSuccessMsg(`✅ Payment link generated for Job #${paymentLinkPrompt.jobNumber}. Review the SMS draft and tap Send in Messages.`);
+    } catch (error: any) {
+      setPaymentLinkError(error.message || 'Unable to generate payment link');
+    } finally {
+      setPaymentLinkGenerating(false);
     }
   };
 
@@ -1373,6 +1491,16 @@ export default function DispatchPage() {
                 </select>
               </div>
               <div>
+                <label className="field-label">Payment status *</label>
+                <select aria-label="Payment status" value={manualForm.paymentStatus} onChange={(e) => updateManualField('paymentStatus', e.target.value as ManualPaymentStatus)} className="field-input bg-white">
+                  <option value="PAID">Received</option>
+                  <option value="PENDING">Pending</option>
+                </select>
+                {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod) && (
+                  <p className="mt-1 text-[10px] text-blue-700">After saving, you can generate a payment link and prepare an SMS for the customer.</p>
+                )}
+              </div>
+              <div>
                 <label className="field-label">Total amount collected *</label>
                 <input aria-label="Total amount collected" required type="number" min="0.01" step="0.01" value={manualForm.totalAmountCollected} onChange={(e) => updateManualField('totalAmountCollected', e.target.value)} className="field-input" />
               </div>
@@ -1414,13 +1542,42 @@ export default function DispatchPage() {
           </div>
         </div>
       )}
+      {paymentLinkPrompt && (
+        <div className="fixed inset-0 z-[55] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="payment-link-prompt-title" className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h2 id="payment-link-prompt-title" className="text-lg font-black text-slate-900">Generate payment link?</h2>
+                <p className="text-xs text-slate-600 mt-1">Job #{paymentLinkPrompt.jobNumber} is pending by card. Generate a link and prepare an SMS for {paymentLinkPrompt.customerName}?</p>
+              </div>
+              <button type="button" disabled={paymentLinkGenerating} onClick={() => setPaymentLinkPrompt(null)} className="text-slate-400 hover:text-slate-900 text-xl disabled:opacity-50" aria-label="Close payment link prompt">×</button>
+            </div>
+            {paymentLinkError && (
+              <div role="alert" className="mb-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+                <div>{paymentLinkError}</div>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button type="button" disabled={paymentLinkGenerating} onClick={generatePaymentLinkAndSend} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold disabled:opacity-50">{paymentLinkGenerating ? 'Retrying…' : 'Retry'}</button>
+                  {paymentLinkUrl && <button type="button" onClick={copyPaymentLink} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-800 font-bold">Copy Payment Link</button>}
+                </div>
+                {paymentLinkCopyState && <div className="mt-2 text-[11px] font-semibold">{paymentLinkCopyState}</div>}
+              </div>
+            )}
+            <div className="flex flex-wrap justify-end gap-2 pt-3">
+              <button type="button" disabled={paymentLinkGenerating} onClick={() => { setPaymentLinkPrompt(null); setPaymentLinkError(''); setPaymentLinkUrl(null); setSuccessMsg(`✅ Job #${paymentLinkPrompt.jobNumber} remains pending.`); }} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold disabled:opacity-50">No, leave pending</button>
+              <button type="button" disabled={paymentLinkGenerating} onClick={generatePaymentLinkAndSend} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{paymentLinkGenerating ? 'Generating…' : 'Yes, generate and text link'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       <SmsComposerModal
         draft={smsDraft}
         warnings={smsWarnings}
-        title="Technician assignment SMS"
+        title={smsAutoOpen ? 'Payment link SMS ready' : 'Technician assignment SMS'}
+        autoOpen={smsAutoOpen}
         onClose={() => {
           setSmsDraft(null);
           setSmsWarnings([]);
+          setSmsAutoOpen(false);
         }}
       />
     </div>

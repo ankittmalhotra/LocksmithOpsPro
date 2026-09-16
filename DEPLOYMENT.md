@@ -90,7 +90,7 @@ NEXT_PUBLIC_APP_URL="https://your-domain.example"
 
 ### Google Ads ROI setup
 
-The Admin dashboard pulls Google Ads spend when an Admin clicks **Sync today**, **Sync yesterday**, or **Sync last week**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. The ROI widget supports the same three Toronto calendar periods and compares spend with net profit, not revenue. Net profit uses the existing accounting definition: paid gross invoices minus HST, technician commissions, and parts cost. The default **ROI for partner** view splits that profit equally between the two partners before calculating ROI; **ROI for company** uses the full company profit.
+The Admin dashboard pulls Google Ads spend when an Admin clicks **Sync today**, **Sync yesterday**, **Sync last week**, or **Sync all time**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. The ROI widget supports these Toronto calendar periods: Today, Yesterday, the trailing seven days, and All time beginning September 7, 2026, when the company started. It compares spend with net profit, not revenue. Net profit uses the existing accounting definition: paid gross invoices minus HST, technician commissions, and parts cost. The default **ROI for partner** view splits that profit equally between the two partners before calculating ROI; **ROI for company** uses the full company profit.
 
 Google Ads does not use a single API key for this integration. Google requires an OAuth 2.0 client, a refresh token, and a Google Ads developer token. The account customer ID is also required. See Google’s official [authorization and HTTP headers guide](https://developers.google.com/google-ads/api/rest/auth).
 

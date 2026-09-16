@@ -28,7 +28,7 @@ interface DailyAnalyticsItem {
   profit: number;
 }
 
-type GoogleAdsRoiRange = 'today' | 'yesterday' | 'last-week';
+type GoogleAdsRoiRange = 'today' | 'yesterday' | 'last-week' | 'all-time';
 type GoogleAdsRoiView = 'partner' | 'company';
 
 const formatCompactCurrency = (value: number) =>
@@ -352,7 +352,7 @@ export default function AdminDashboardPage() {
   const last7Days: DailyAnalyticsItem[] = analytics?.last7Days || [];
   const last7DaysSummary = analytics?.last7DaysSummary || {};
   const googleAds = analytics?.googleAds || {};
-  const googleAdsRangeLabel = googleAds.rangeLabel || (googleAdsRange === 'last-week' ? 'Last week' : googleAdsRange === 'today' ? 'Today' : 'Yesterday');
+  const googleAdsRangeLabel = googleAds.rangeLabel || (googleAdsRange === 'last-week' ? 'Last week' : googleAdsRange === 'today' ? 'Today' : googleAdsRange === 'all-time' ? 'All time' : 'Yesterday');
   const displayedGoogleAds = googleAdsView === 'partner'
     ? {
         label: 'Partner',
@@ -651,6 +651,7 @@ export default function AdminDashboardPage() {
               <option value="today">Today</option>
               <option value="yesterday">Yesterday</option>
               <option value="last-week">Last week</option>
+              <option value="all-time">All time</option>
             </select>
             <label className="sr-only" htmlFor="google-ads-roi-view">ROI ownership view</label>
             <select

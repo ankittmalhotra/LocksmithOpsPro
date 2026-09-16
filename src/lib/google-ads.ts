@@ -5,14 +5,16 @@ const DEFAULT_GOOGLE_ADS_API_VERSION = 'v25';
 
 export const GOOGLE_ADS_TIME_ZONE = 'America/Toronto';
 export const GOOGLE_ADS_PARTNER_COUNT = 2;
+export const GOOGLE_ADS_BUSINESS_START_DATE = '2026-09-07';
 
-export const GOOGLE_ADS_RANGE_OPTIONS = ['today', 'yesterday', 'last-week'] as const;
+export const GOOGLE_ADS_RANGE_OPTIONS = ['today', 'yesterday', 'last-week', 'all-time'] as const;
 export type GoogleAdsRoiRange = (typeof GOOGLE_ADS_RANGE_OPTIONS)[number];
 
 export const GOOGLE_ADS_RANGE_LABELS: Record<GoogleAdsRoiRange, string> = {
   today: 'Today',
   yesterday: 'Yesterday',
   'last-week': 'Last week',
+  'all-time': 'All time',
 };
 
 export type GoogleAdsConfig = {
@@ -145,11 +147,19 @@ export function getYesterdayDateKey(now = new Date(), timeZone = GOOGLE_ADS_TIME
 export function getGoogleAdsDateKeys(range: GoogleAdsRoiRange = 'yesterday', now = new Date()): string[] {
   const todayKey = getDateKeyInTimeZone(now);
   const todayUtc = dateKeyToUtcDate(todayKey);
-  const dayOffset = range === 'today' ? 0 : range === 'yesterday' ? 1 : 6;
+  const endUtc = range === 'yesterday'
+    ? new Date(todayUtc.getTime() - 86400000)
+    : todayUtc;
+  const startUtc = range === 'all-time'
+    ? dateKeyToUtcDate(GOOGLE_ADS_BUSINESS_START_DATE)
+    : range === 'last-week'
+      ? new Date(endUtc.getTime() - (6 * 86400000))
+      : endUtc;
+  const dayCount = Math.max(1, Math.floor((endUtc.getTime() - startUtc.getTime()) / 86400000) + 1);
 
-  return Array.from({ length: range === 'last-week' ? 7 : 1 }, (_, index) => {
-    const date = new Date(todayUtc);
-    date.setUTCDate(todayUtc.getUTCDate() - dayOffset + index);
+  return Array.from({ length: dayCount }, (_, index) => {
+    const date = new Date(startUtc);
+    date.setUTCDate(startUtc.getUTCDate() + index);
     return date.toISOString().slice(0, 10);
   });
 }

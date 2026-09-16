@@ -36,6 +36,9 @@ assert.deepEqual(getGoogleAdsDateKeys('yesterday', new Date('2026-09-16T15:00:00
 assert.deepEqual(getGoogleAdsDateKeys('last-week', new Date('2026-09-16T15:00:00.000Z')), [
   '2026-09-10', '2026-09-11', '2026-09-12', '2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16',
 ]);
+assert.deepEqual(getGoogleAdsDateKeys('all-time', new Date('2026-09-16T15:00:00.000Z')), [
+  '2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12', '2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16',
+]);
 
 const originalFetch = globalThis.fetch;
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];

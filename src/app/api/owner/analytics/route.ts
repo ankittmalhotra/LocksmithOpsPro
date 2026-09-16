@@ -142,6 +142,7 @@ async function handleGET(request: Request) {
       tax: number;
       profit: number;
     }>();
+    const profitByDate = new Map<string, number>();
 
     const last7Days = Array.from({ length: 7 }, (_, index) => {
       const date = new Date(todayUtc);
@@ -161,20 +162,22 @@ async function handleGET(request: Request) {
 
       const activityDate = job.invoice.paidAt || job.completedAt || job.createdAt;
       const dateKey = dateKeyFormatter.format(new Date(activityDate));
+      const partsCost = job.invoice.cogsAmount > 0
+        ? job.invoice.cogsAmount
+        : (job.items || []).reduce((sum, item) => item.isPart ? sum + (item.unitCost || 0) * (item.quantity || 1) : sum, 0);
+      const jobProfit = job.invoice.grandTotal
+        - (job.invoice.taxCollected !== false ? job.invoice.taxAmount : 0)
+        - job.workerCommission
+        - partsCost;
+      profitByDate.set(dateKey, (profitByDate.get(dateKey) || 0) + jobProfit);
+
       const daily = dailyByDate.get(dateKey);
       if (!daily) continue;
 
       daily.jobsCount += 1;
       daily.revenue += job.invoice.grandTotal;
       if (job.invoice.taxCollected !== false) daily.tax += job.invoice.taxAmount;
-
-      const partsCost = job.invoice.cogsAmount > 0
-        ? job.invoice.cogsAmount
-        : (job.items || []).reduce((sum, item) => item.isPart ? sum + (item.unitCost || 0) * (item.quantity || 1) : sum, 0);
-      daily.profit += job.invoice.grandTotal
-        - (job.invoice.taxCollected !== false ? job.invoice.taxAmount : 0)
-        - job.workerCommission
-        - partsCost;
+      daily.profit += jobProfit;
     }
 
     const requestedGoogleAdsRange = new URL(request.url).searchParams.get('googleAdsRange');
@@ -213,7 +216,7 @@ async function handleGET(request: Request) {
         }
       }
     }
-    const googleAdsProfit = roundToTwo(googleAdsDateKeys.reduce((sum, date) => sum + (dailyByDate.get(date)?.profit || 0), 0));
+    const googleAdsProfit = roundToTwo(googleAdsDateKeys.reduce((sum, date) => sum + (profitByDate.get(date) || 0), 0));
     const googleAdsSpend = googleAdsMetrics.length > 0
       ? roundToTwo(googleAdsMetrics.reduce((sum, metric) => sum + metric.spend, 0))
       : null;

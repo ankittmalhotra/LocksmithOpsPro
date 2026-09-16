@@ -37,6 +37,24 @@ export type RingCentralCallAnalytics = {
     converted: number;
     conversionRate: number;
   }>;
+  callDetails?: Array<{
+    id: string | null;
+    date: string;
+    time: string;
+    callerNumber: string;
+    callerName: string | null;
+    destinationNumber: string;
+    destinationName: string | null;
+    durationSeconds: number | null;
+    direction: string | null;
+    type: string | null;
+    result: string | null;
+    action: string | null;
+    reason: string | null;
+    transport: string | null;
+    sessionId: string | null;
+    telephonySessionId: string | null;
+  }>;
   totalCalls?: number;
   totalConvertedCalls?: number;
   conversionRate?: number;
@@ -79,6 +97,27 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
   const callRows = calls.map((call) => ({
     call,
     date: call.startTime ? ringCentralDateKey(call.startTime) : '',
+  }));
+
+  const callDetails = callRows.map(({ call, date }) => ({
+    id: call.id || null,
+    date,
+    time: call.startTime || '',
+    callerNumber: call.from?.phoneNumber || 'Unknown number',
+    callerName: call.from?.name || null,
+    destinationNumber: call.to?.phoneNumber || 'Unknown destination',
+    destinationName: call.to?.name || null,
+    durationSeconds: call.duration === undefined || call.duration === null
+      ? (call.durationMs === undefined || call.durationMs === null ? null : Math.round(Number(call.durationMs) / 1000))
+      : Math.round(Number(call.duration)),
+    direction: call.direction || null,
+    type: call.type || null,
+    result: call.result || null,
+    action: call.action || null,
+    reason: call.reason || null,
+    transport: call.transport || null,
+    sessionId: call.sessionId || null,
+    telephonySessionId: call.telephonySessionId || null,
   }));
 
   const dailyByDate = new Map<string, { received: number; converted: number }>();
@@ -132,6 +171,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
       rangeLabel: rangeLabels[selectedRange],
       summary: { ...summary, conversionRate: percent(summary.converted, summary.received) },
       daily,
+      callDetails,
       totalCalls: callRows.length,
       totalConvertedCalls,
       conversionRate: percent(totalConvertedCalls, callRows.length),

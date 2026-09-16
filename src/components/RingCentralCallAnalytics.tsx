@@ -15,6 +15,24 @@ type CallAnalytics = {
   summary?: { received: number; converted: number; conversionRate: number };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{ date: string; label: string; dateLabel: string; received: number; converted: number; conversionRate: number }>;
+  callDetails?: Array<{
+    id: string | null;
+    date: string;
+    time: string;
+    callerNumber: string;
+    callerName: string | null;
+    destinationNumber: string;
+    destinationName: string | null;
+    durationSeconds: number | null;
+    direction: string | null;
+    type: string | null;
+    result: string | null;
+    action: string | null;
+    reason: string | null;
+    transport: string | null;
+    sessionId: string | null;
+    telephonySessionId: string | null;
+  }>;
   totalCalls?: number;
   totalConvertedCalls?: number;
   conversionRate?: number;
@@ -32,6 +50,30 @@ function formatPhoneNumber(value?: string | null) {
   return value || '(416) 240-0593';
 }
 
+function formatCallTime(value: string, includeDate = false) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('en-CA', {
+    timeZone: 'America/Toronto',
+    ...(includeDate ? { weekday: 'short', month: 'short', day: 'numeric' } : {}),
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function formatDuration(seconds: number | null) {
+  if (seconds === null || !Number.isFinite(seconds)) return '—';
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s` : `${remainingSeconds}s`;
+}
+
+function displayValue(value: string | null) {
+  return value?.trim() || '—';
+}
+
 const rangeOptions = [
   { value: 'today', label: 'Today' },
   { value: 'yesterday', label: 'Yesterday' },
@@ -44,6 +86,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
   const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('last-week');
   const [loading, setLoading] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {
     try {
@@ -81,6 +124,15 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
     fetchAnalytics();
   }, []);
 
+  useEffect(() => {
+    if (!showDetails) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowDetails(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showDetails]);
+
   const daily = analytics?.daily || [];
   const activeRange = analytics?.range || selectedRange;
   const activeRangeLabel = analytics?.rangeLabel || rangeOptions.find((option) => option.value === activeRange)?.label || 'Today';
@@ -109,6 +161,14 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
           {analytics?.connected && canManageConnection && (
             <button onClick={disconnect} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100">Disconnect</button>
           )}
+          <button
+            type="button"
+            onClick={() => setShowDetails(true)}
+            disabled={loading || !analytics?.callDetails}
+            className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            More details
+          </button>
           <label className="sr-only" htmlFor="call-analytics-range">Call analytics period</label>
           <select
             id="call-analytics-range"
@@ -116,6 +176,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             onChange={(event) => {
               const nextRange = event.target.value as AnalyticsRange;
               setSelectedRange(nextRange);
+              setShowDetails(false);
               fetchAnalytics(nextRange);
             }}
             disabled={loading}
@@ -217,6 +278,79 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             )}
           </div>
         </>
+      )}
+
+      {showDetails && analytics && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 p-3 backdrop-blur-xs sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowDetails(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="call-details-title"
+            className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+              <div>
+                <h2 id="call-details-title" className="text-base font-black text-slate-900">Call details · {activeRangeLabel}</h2>
+                <p className="mt-1 text-xs text-slate-500">{analytics.callDetails?.length || 0} qualifying inbound lead{analytics.callDetails?.length === 1 ? '' : 's'} · Toronto time</p>
+              </div>
+              <button type="button" onClick={() => setShowDetails(false)} className="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close call details">×</button>
+            </div>
+
+            <div className="overflow-auto p-4 sm:p-6">
+              {!analytics.callDetails || analytics.callDetails.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">No qualifying calls found for this period.</div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="min-w-[980px] w-full border-collapse text-left text-xs">
+                    <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th className="whitespace-nowrap px-4 py-3">Date &amp; time</th>
+                        <th className="whitespace-nowrap px-4 py-3">Caller</th>
+                        <th className="whitespace-nowrap px-4 py-3">Received by</th>
+                        <th className="whitespace-nowrap px-4 py-3">Duration</th>
+                        <th className="whitespace-nowrap px-4 py-3">Result</th>
+                        <th className="whitespace-nowrap px-4 py-3">Direction / type</th>
+                        <th className="whitespace-nowrap px-4 py-3">Session</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {analytics.callDetails.map((call, index) => (
+                        <tr key={call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`} className="align-top transition hover:bg-blue-50/40">
+                          <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{formatCallTime(call.time, true)}</td>
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-slate-900">{formatPhoneNumber(call.callerNumber)}</div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">{displayValue(call.callerName)}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-slate-800">{formatPhoneNumber(call.destinationNumber)}</div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">{displayValue(call.destinationName)}</div>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{formatDuration(call.durationSeconds)}</td>
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-slate-800">{displayValue(call.result)}</div>
+                            {call.action && <div className="mt-0.5 text-[11px] text-slate-500">Action: {call.action}</div>}
+                            {call.reason && <div className="mt-0.5 text-[11px] text-slate-500">Reason: {call.reason}</div>}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-600">{displayValue(call.direction)} · {displayValue(call.type)}</td>
+                          <td className="px-4 py-3 text-[11px] text-slate-500">
+                            <div>{call.telephonySessionId || call.sessionId || '—'}</div>
+                            {call.transport && <div className="mt-0.5">Transport: {call.transport}</div>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

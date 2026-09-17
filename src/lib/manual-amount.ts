@@ -19,3 +19,13 @@ export function parseManualAmount(value: unknown, field: string, allowZero = tru
 
   return rounded;
 }
+
+/** Parses a dispatcher-entered percentage (e.g. 4 means 4%) into a rate. */
+export function parseManualPercentage(value: unknown, field: string, maxPercent = 100): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  const roundedPercent = roundToTwo(parsed);
+  if (!Number.isFinite(parsed) || parsed < 0 || roundedPercent > maxPercent) {
+    throw new ManualJobInputError(`${field} must be between 0% and ${maxPercent}%`);
+  }
+  return roundToTwo(roundedPercent / 100);
+}

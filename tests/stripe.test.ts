@@ -108,6 +108,49 @@ test('falls back to Checkout customer creation when pre-creating a customer fail
   assert.equal(bodies[1].get('customer_email'), null);
 });
 
+test('uses Stripe Tax and itemizes the service plus configurable card fee', async () => {
+  process.env.STRIPE_SECRET_KEY = 'sk_test_backend_unit';
+  const checkoutBodies: URLSearchParams[] = [];
+  globalThis.fetch = async (_input, init) => {
+    checkoutBodies.push(new URLSearchParams(String(init?.body || '')));
+    return new Response(JSON.stringify({
+      id: 'cs_test_automatic_tax',
+      url: 'https://checkout.stripe.com/automatic-tax',
+      status: 'open',
+    }), { status: 200 });
+  };
+
+  await createStripePaymentLink({
+    invoiceId: 'invoice-local-tax',
+    customerId: 'customer-local-tax',
+    jobId: 'job-local-tax',
+    jobNumber: '1003',
+    customerName: 'Tax Customer',
+    customerPhone: '+14165550103',
+    customerAddress: '3 Main Street, Toronto, ON',
+    stripeCustomerId: 'cus_existing_tax',
+    grandTotal: 104,
+    subtotal: 100,
+    taxAmount: 0,
+    cardSurchargeAmount: 4,
+    automaticTax: true,
+    returnUrl: 'https://portal.example.test/dispatch/jobs/job-local-tax',
+  });
+
+  const body = checkoutBodies[0];
+  if (!body) throw new Error('Checkout request body was not captured');
+  assert.equal(body.get('automatic_tax[enabled]'), 'true');
+  assert.equal(body.get('billing_address_collection'), 'required');
+  assert.equal(body.get('invoice_creation[invoice_data][rendering_options][amount_tax_display]'), 'exclude_tax');
+  assert.equal(body.get('line_items[0][price_data][unit_amount]'), '10000');
+  assert.equal(body.get('line_items[0][price_data][product_data][name]'), 'Locksmith Service - Job #1003');
+  assert.equal(body.get('line_items[0][price_data][product_data][tax_code]'), 'txcd_20030000');
+  assert.equal(body.get('line_items[0][price_data][tax_behavior]'), 'exclusive');
+  assert.equal(body.get('line_items[1][price_data][unit_amount]'), '400');
+  assert.equal(body.get('line_items[1][price_data][product_data][name]'), 'Card Processing Fee');
+  assert.equal(body.get('line_items[1][price_data][product_data][tax_code]'), 'txcd_20030000');
+});
+
 test('verifies Stripe raw webhook signatures and rejects stale or altered payloads', () => {
   const payload = '{"id":"evt_123","type":"invoice.paid"}';
   const secret = 'whsec_backend_unit';

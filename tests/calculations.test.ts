@@ -2,6 +2,7 @@ import {
   calculateForwardInvoice,
   calculateReverseInvoice,
   calculateManualInvoice,
+  calculatePendingManualCardInvoice,
   calculateTravelFee,
   calculateJobSettlementPosition,
 } from '../src/lib/calculations.ts';
@@ -109,6 +110,18 @@ function runTests() {
   console.assert(manualOffBooks.subtotal === 1000, 'Off-books subtotal should remain 1000.00');
   console.assert(manualOffBooks.taxAmount === 0, 'Off-books HST should be 0.00');
   console.log('✅ Test 6 Passed: Manual tax-inclusive HST extraction is accurate');
+
+  // Test 7: Pending manual card quote is service amount + configurable fee;
+  // Stripe calculates the tax after the customer confirms their address.
+  const pendingCard = calculatePendingManualCardInvoice({
+    amountToBeCollected: 100,
+    cardSurchargeRate: 0.04,
+  });
+  console.assert(pendingCard.subtotal === 100, 'Pending card service amount should be 100.00');
+  console.assert(pendingCard.cardSurchargeAmount === 4, 'Pending card fee should be 4.00');
+  console.assert(pendingCard.taxAmount === 0, 'Pending card tax should be calculated by Stripe');
+  console.assert(pendingCard.grandTotal === 104, 'Pending card pre-tax total should be 104.00');
+  console.log('✅ Test 7 Passed: Pending card quote is $100 service + $4 fee before Stripe tax');
 
   console.log('\n🎉 ALL CALCULATION TESTS PASSED!');
 }

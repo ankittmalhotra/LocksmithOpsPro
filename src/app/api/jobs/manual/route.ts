@@ -1,14 +1,21 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { calculateJobSettlementPosition, calculateManualInvoice, SupportedPaymentMethod } from '@/lib/calculations';
+import {
+  calculateJobSettlementPosition,
+  calculateManualInvoice,
+  calculatePendingManualCardInvoice,
+  DEFAULT_MANUAL_CARD_SURCHARGE_RATE,
+  isCardPaymentMethod,
+  SupportedPaymentMethod,
+} from '@/lib/calculations';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { formatTorontoDateInput, torontoDateToMidnightIso } from '@/lib/timezone';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
+import { ManualJobInputError, parseManualAmount, parseManualPercentage } from '@/lib/manual-amount';
 
 const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
 type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
@@ -78,11 +85,6 @@ async function handlePOST(request: Request) {
     const totalAmountCollected = parseManualAmount(body.totalAmountCollected, 'Total amount collected', false);
     const cogsAmount = parseManualAmount(body.cogsAmount, 'COGS (Parts, etc.) amount');
     const technicianCommission = parseManualAmount(body.technicianCommission, 'Technician commission');
-    const manualCalculation = calculateManualInvoice({
-      amountCollected: totalAmountCollected,
-      taxCollected: body.taxCollected,
-    });
-
     const [existingJob, technician] = await Promise.all([
       prisma.job.findUnique({ where: { jobNumber }, select: { id: true } }),
       isOtherTechnician || !technicianId
@@ -104,9 +106,19 @@ async function handlePOST(request: Request) {
 
     const payment = paymentMethod as SupportedPaymentMethod;
     const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
+    const pendingCardPayment = paymentStatus === 'PENDING' && isCardPaymentMethod(payment);
+    const cardSurchargeRate = pendingCardPayment
+      ? parseManualPercentage(
+          body.cardSurchargeRate === undefined ? DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100 : body.cardSurchargeRate,
+          'Card processing fee',
+        )
+      : 0;
+    const manualCalculation = pendingCardPayment
+      ? calculatePendingManualCardInvoice({ amountToBeCollected: totalAmountCollected, cardSurchargeRate })
+      : calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected: body.taxCollected });
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
-      grandTotal: totalAmountCollected,
+      grandTotal: manualCalculation.grandTotal,
       workerCommission: technicianCommission,
     });
 
@@ -148,11 +160,12 @@ async function handlePOST(request: Request) {
               laborTotal: manualCalculation.laborTotal,
               taxRate: manualCalculation.taxRate,
               taxAmount: manualCalculation.taxAmount,
-              cardSurchargeRate: 0,
-              cardSurchargeAmount: 0,
+              cardSurchargeRate: manualCalculation.cardSurchargeRate,
+              cardSurchargeAmount: manualCalculation.cardSurchargeAmount,
               grandTotal: manualCalculation.grandTotal,
               totalAmountCollected,
-              taxCollected: body.taxCollected,
+              // Stripe Tax is always on for pending card invoices.
+              taxCollected: pendingCardPayment ? true : body.taxCollected,
               cogsAmount,
               paymentStatus,
               paymentMethod: payment,

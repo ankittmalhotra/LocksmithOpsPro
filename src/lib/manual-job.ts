@@ -47,10 +47,21 @@ export function normalizeManualJobInvoice<
       totalAmountCollected: number;
       grandTotal: number;
       taxCollected: boolean;
+      paymentStatus?: string | null;
+      paymentMethod?: string | null;
+      paymentProvider?: string | null;
     } | null;
   }
 >(job: T): T {
   if (!job.isManual || !job.invoice) return job;
+
+  // Pending Stripe-card quotes store a pre-tax service amount and a separate
+  // card fee. Once paid, the webhook stores Stripe's authoritative tax and
+  // total. Never reinterpret either shape as a legacy tax-inclusive manual
+  // amount while reading jobs.
+  const isPendingCard = job.invoice.paymentStatus === 'PENDING'
+    && ['CREDIT_CARD', 'DEBIT_CARD'].includes(job.invoice.paymentMethod || '');
+  if (isPendingCard || job.invoice.paymentProvider === 'STRIPE') return job;
 
   const calculation = calculateManualInvoice({
     amountCollected: job.invoice.totalAmountCollected || job.invoice.grandTotal,

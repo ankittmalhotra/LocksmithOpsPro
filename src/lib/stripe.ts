@@ -24,6 +24,8 @@ export interface CreatePaymentLinkParams {
   subtotal: number;
   taxAmount: number;
   cardSurchargeAmount: number;
+  /** Enables Stripe Tax for the pending manual-card pricing path. */
+  automaticTax?: boolean;
   returnUrl: string;
   idempotencyKey?: string;
 }
@@ -37,6 +39,8 @@ export interface PaymentLinkResult {
   createdAt: Date;
   stripeInvoiceId: string | null;
   stripePaymentIntentId: string | null;
+  amountTotal: number | null;
+  amountTax: number | null;
 }
 
 interface StripeResponse {
@@ -47,6 +51,9 @@ interface StripeResponse {
   created?: unknown;
   invoice?: unknown;
   payment_intent?: unknown;
+  amount_total?: unknown;
+  amount_subtotal?: unknown;
+  total_details?: { amount_tax?: unknown };
   error?: { message?: unknown };
 }
 
@@ -107,6 +114,7 @@ function addLineItem(
   index: number,
   amount: number,
   name: string,
+  automaticTax = false,
 ) {
   const cents = toStripeCents(amount, name);
   // Zero-value line items are not useful in Checkout and can be rejected by
@@ -115,6 +123,13 @@ function addLineItem(
   params.set(`line_items[${index}][price_data][currency]`, 'cad');
   params.set(`line_items[${index}][price_data][unit_amount]`, String(cents));
   params.set(`line_items[${index}][price_data][product_data][name]`, name);
+  if (automaticTax) {
+    // General services makes both the locksmith service and the explicitly
+    // disclosed card fee taxable, allowing Stripe Tax to calculate Ontario
+    // HST from the customer's billing location.
+    params.set(`line_items[${index}][price_data][product_data][tax_code]`, 'txcd_20030000');
+    params.set(`line_items[${index}][price_data][tax_behavior]`, 'exclusive');
+  }
   params.set(`line_items[${index}][quantity]`, '1');
   return true;
 }
@@ -186,6 +201,7 @@ export async function createStripePaymentLink(
   const surchargeCents = toStripeCents(params.cardSurchargeAmount, 'Card surcharge');
   const totalCents = toStripeCents(params.grandTotal, 'Grand total');
   const itemizedCents = subtotalCents + taxCents + surchargeCents;
+  const automaticTax = params.automaticTax === true;
 
   // The invoice total is authoritative. Normally the rounded component sum
   // equals it; if legacy data has a one-cent drift, use one total line item so
@@ -231,6 +247,12 @@ export async function createStripePaymentLink(
     'metadata[customerId]': params.customerId,
   });
 
+  if (automaticTax) {
+    body.set('automatic_tax[enabled]', 'true');
+    body.set('billing_address_collection', 'required');
+    body.set('invoice_creation[invoice_data][rendering_options][amount_tax_display]', 'exclude_tax');
+  }
+
   if (stripeCustomerId) {
     body.set('customer', stripeCustomerId);
     body.set('customer_update[name]', 'auto');
@@ -241,14 +263,11 @@ export async function createStripePaymentLink(
 
   if (useItemizedLines) {
     let index = 0;
-    if (addLineItem(body, index, params.subtotal, `Locksmith Service - Job #${params.jobNumber}`)) index += 1;
-    if (addLineItem(body, index, params.taxAmount, 'Ontario HST (13%)')) index += 1;
-    addLineItem(body, index, params.cardSurchargeAmount, 'Card Processing Surcharge');
+    if (addLineItem(body, index, params.subtotal, `Locksmith Service - Job #${params.jobNumber}`, automaticTax)) index += 1;
+    if (!automaticTax && addLineItem(body, index, params.taxAmount, 'Ontario HST (13%)')) index += 1;
+    addLineItem(body, index, params.cardSurchargeAmount, automaticTax ? 'Card Processing Fee' : 'Card Processing Surcharge', automaticTax);
   } else {
-    body.set('line_items[0][price_data][currency]', 'cad');
-    body.set('line_items[0][price_data][unit_amount]', String(totalCents));
-    body.set('line_items[0][price_data][product_data][name]', `Locksmith Service - Job #${params.jobNumber}`);
-    body.set('line_items[0][quantity]', '1');
+    addLineItem(body, 0, params.grandTotal, `Locksmith Service - Job #${params.jobNumber}`, automaticTax);
   }
 
   const response = await stripePost(
@@ -278,6 +297,8 @@ export async function createStripePaymentLink(
     createdAt,
     stripeInvoiceId: getProviderId(response.invoice),
     stripePaymentIntentId: getProviderId(response.payment_intent),
+    amountTotal: typeof response.amount_total === 'number' ? response.amount_total / 100 : null,
+    amountTax: typeof response.total_details?.amount_tax === 'number' ? response.total_details.amount_tax / 100 : null,
   };
 }
 

@@ -2,14 +2,21 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
-import { calculateJobSettlementPosition, calculateManualInvoice, type SupportedPaymentMethod } from '@/lib/calculations';
+import {
+  calculateJobSettlementPosition,
+  calculateManualInvoice,
+  calculatePendingManualCardInvoice,
+  DEFAULT_MANUAL_CARD_SURCHARGE_RATE,
+  isCardPaymentMethod,
+  type SupportedPaymentMethod,
+} from '@/lib/calculations';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { torontoDateToMidnightIso } from '@/lib/timezone';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
+import { ManualJobInputError, parseManualAmount, parseManualPercentage } from '@/lib/manual-amount';
 
 const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
 type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
@@ -136,11 +143,6 @@ async function handlePATCH(
       body.technicianCommission === undefined ? job.workerCommission : body.technicianCommission,
       'Technician commission'
     );
-    const manualCalculation = calculateManualInvoice({
-      amountCollected: totalAmountCollected,
-      taxCollected,
-    });
-
     const technician = isOtherTechnician || !technicianId
       ? null
       : await prisma.user.findUnique({
@@ -156,11 +158,37 @@ async function handlePATCH(
 
     const payment = paymentMethod as SupportedPaymentMethod;
     const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
+    const pendingCardPayment = paymentStatus === 'PENDING' && isCardPaymentMethod(payment);
+    const cardSurchargeRate = pendingCardPayment
+      ? parseManualPercentage(
+          body.cardSurchargeRate === undefined
+            ? (invoice.paymentStatus === 'PENDING' && isCardPaymentMethod(invoice.paymentMethod || '')
+              ? Number(invoice.cardSurchargeRate ?? DEFAULT_MANUAL_CARD_SURCHARGE_RATE) * 100
+              : DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100)
+            : body.cardSurchargeRate,
+          'Card processing fee',
+        )
+      : 0;
+    const manualCalculation = pendingCardPayment
+      ? calculatePendingManualCardInvoice({ amountToBeCollected: totalAmountCollected, cardSurchargeRate })
+      : calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected });
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
-      grandTotal: totalAmountCollected,
+      grandTotal: manualCalculation.grandTotal,
       workerCommission: technicianCommission,
     });
+
+    const shouldInvalidatePaymentLink = Boolean(invoice.stripeSessionId || invoice.stripePaymentUrl)
+      && (
+        !pendingCardPayment
+        || invoice.paymentMethod !== payment
+        || invoice.paymentStatus !== paymentStatus
+        || Number(invoice.totalAmountCollected || invoice.grandTotal || 0) !== totalAmountCollected
+        || Number(invoice.cardSurchargeRate || 0) !== cardSurchargeRate
+        || customerName !== job.customer.name
+        || customerPhone !== job.customer.phone
+        || serviceAddress !== job.serviceAddress
+      );
 
     const updatedJob = await prisma.$transaction(async (tx) => {
       let customerId = job.customerId;
@@ -200,11 +228,11 @@ async function handlePATCH(
           laborTotal: manualCalculation.laborTotal,
           taxRate: manualCalculation.taxRate,
           taxAmount: manualCalculation.taxAmount,
-          cardSurchargeRate: 0,
-          cardSurchargeAmount: 0,
+          cardSurchargeRate: manualCalculation.cardSurchargeRate,
+          cardSurchargeAmount: manualCalculation.cardSurchargeAmount,
           grandTotal: manualCalculation.grandTotal,
           totalAmountCollected,
-          taxCollected,
+          taxCollected: pendingCardPayment ? true : taxCollected,
           cogsAmount,
           paymentStatus,
           paymentMethod: payment,
@@ -212,6 +240,18 @@ async function handlePATCH(
           paidAt: paymentStatus === 'PAID'
             ? (manualTimestamp || invoice.paidAt || new Date())
             : null,
+          ...(shouldInvalidatePaymentLink ? {
+            paymentProvider: null,
+            stripeSessionId: null,
+            stripeSessionStatus: null,
+            stripeSessionExpiresAt: null,
+            stripePaymentUrl: null,
+            stripePaymentLinkCreatedAt: null,
+            stripePaymentLinkExpiresAt: null,
+            stripeInvoiceId: null,
+            stripePaymentIntentId: null,
+            stripeChargeId: null,
+          } : {}),
         },
       });
 

@@ -94,6 +94,7 @@ async function handlePOST(
       subtotal: invoice.subtotal,
       taxAmount: invoice.taxAmount,
       cardSurchargeAmount: invoice.cardSurchargeAmount,
+      automaticTax: true,
       returnUrl: getReturnUrl(request, job.id),
       // A stable key makes a retry safe if the response was lost before the
       // URL could be persisted locally.
@@ -128,6 +129,8 @@ async function handlePOST(
           stripePaymentLinkExpiresAt: result.expiresAt,
           stripeInvoiceId: result.stripeInvoiceId,
           stripePaymentIntentId: result.stripePaymentIntentId,
+          ...(result.amountTotal !== null ? { grandTotal: result.amountTotal } : {}),
+          ...(result.amountTax !== null ? { taxAmount: result.amountTax } : {}),
         },
       });
       return invoiceUpdate.count === 1;

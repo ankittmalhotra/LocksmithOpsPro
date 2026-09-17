@@ -178,6 +178,12 @@ Vercel will run `prisma generate && next build` automatically. Within 60 seconds
    - `invoice.payment_failed`
    - `invoice.sent`
 4. Copy the Signing Secret into Vercel as `STRIPE_WEBHOOK_SECRET`.
+5. Enable **Stripe Tax** and configure the business address and Ontario tax
+   registration in Stripe Tax settings. Pending manual card Checkout Sessions
+   send two taxable exclusive line items: the service amount and the
+   dispatcher-configured card processing fee (default 4%). Stripe calculates
+   the final tax from the customer's billing address and displays the service,
+   card fee, and tax separately.
 
 For local testing, use the Stripe CLI instead of a Dashboard endpoint:
 
@@ -190,6 +196,10 @@ Copy the `whsec_...` value printed by the CLI into local `.env`. The CLI
 secret and a Dashboard endpoint secret are different and must not be mixed.
 
 Pending Credit Card/Debit Card manual jobs create a hosted Checkout Session.
+The dispatcher enters the service amount before tax and can change the card
+processing fee percentage (default 4%). For example, a $100 service amount
+creates a $100 service line, a $4 card processing fee line, and Stripe Tax
+calculates the Ontario tax on the taxable $104 subtotal.
 The customer enters their email on Stripe Checkout. Stripe then creates and
 sends the paid invoice after successful payment. The application updates its
 invoice only from verified Stripe webhooks, not from the success redirect.

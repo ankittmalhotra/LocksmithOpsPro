@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
-import { roundToTwo } from '@/lib/calculations';
+import { DEFAULT_MANUAL_CARD_SURCHARGE_RATE, roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import type { SmsDraft } from '@/lib/sms-draft';
@@ -21,6 +21,8 @@ function phoneDigitCount(value: string) {
 }
 
 function validateManualForm(form: Record<string, string>) {
+  const pendingCardPayment = form.paymentStatus === 'PENDING'
+    && (form.paymentMethod === 'CREDIT_CARD' || form.paymentMethod === 'DEBIT_CARD');
   if (!parseTorontoDateOnly(form.jobDate)) {
     return 'Job date must be a valid date.';
   }
@@ -37,13 +39,21 @@ function validateManualForm(form: Record<string, string>) {
     return 'Enter the other job type.';
   }
   if (!Number.isFinite(Number(form.totalAmountCollected)) || Number(form.totalAmountCollected) <= 0) {
-    return 'Total amount collected must be greater than 0.';
+    return pendingCardPayment
+      ? 'Amount to be collected excluding tax must be greater than 0.'
+      : 'Total amount collected must be greater than 0.';
   }
   if (!Number.isFinite(Number(form.cogsAmount)) || Number(form.cogsAmount) < 0) {
     return 'COGS must be a valid non-negative amount.';
   }
   if (!Number.isFinite(Number(form.technicianCommission)) || Number(form.technicianCommission) < 0) {
     return 'Technician commission must be a valid non-negative amount.';
+  }
+  if (pendingCardPayment) {
+    const cardFeePercent = Number(form.cardSurchargeRate);
+    if (!Number.isFinite(cardFeePercent) || cardFeePercent < 0 || cardFeePercent > 100) {
+      return 'Card processing fee must be between 0% and 100%.';
+    }
   }
   if (!form.technicianId) {
     return 'Select a technician or choose Other.';
@@ -99,6 +109,7 @@ interface Job {
     cogsAmount?: number;
     paymentMethod: string;
     taxCollected?: boolean;
+    cardSurchargeRate?: number;
     paidAt?: string | null;
     paymentStatus: string;
     stripePaymentUrl?: string | null;
@@ -220,6 +231,7 @@ export default function DispatchPage() {
     description: '',
     paymentMethod: 'CASH',
     paymentStatus: 'PAID',
+    cardSurchargeRate: String(DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100),
     cogsAmount: '0.00',
     totalAmountCollected: '',
     taxCollected: 'yes',
@@ -434,6 +446,7 @@ export default function DispatchPage() {
       jobNumber: '', jobDate: formatTorontoDateInput(), customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
       serviceType: MANUAL_SERVICE_TYPES[0], jobReceivedTimeSlot: '', otherServiceType: '', description: '', paymentMethod: 'CASH',
       paymentStatus: 'PAID',
+      cardSurchargeRate: String(DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100),
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
       otherTechnicianName: '',
       technicianCommission: '0.00',
@@ -466,6 +479,10 @@ export default function DispatchPage() {
       description: job.problemDescription,
       paymentMethod: job.invoice?.paymentMethod || 'CASH',
       paymentStatus: job.invoice?.paymentStatus === 'PENDING' ? 'PENDING' : 'PAID',
+      cardSurchargeRate: (job.invoice?.paymentStatus === 'PENDING'
+        && isCardPaymentMethod(job.invoice?.paymentMethod || '')
+        ? Number(job.invoice?.cardSurchargeRate ?? DEFAULT_MANUAL_CARD_SURCHARGE_RATE) * 100
+        : DEFAULT_MANUAL_CARD_SURCHARGE_RATE).toFixed(2),
       cogsAmount: Number(job.invoice?.cogsAmount || 0).toFixed(2),
       totalAmountCollected: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
       taxCollected: job.invoice?.taxCollected === false ? 'no' : 'yes',
@@ -1501,20 +1518,45 @@ export default function DispatchPage() {
                 )}
               </div>
               <div>
-                <label className="field-label">Total amount collected *</label>
-                <input aria-label="Total amount collected" required type="number" min="0.01" step="0.01" value={manualForm.totalAmountCollected} onChange={(e) => updateManualField('totalAmountCollected', e.target.value)} className="field-input" />
+                <label className="field-label">
+                  {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod)
+                    ? 'Amount to be collected (excluding tax) *'
+                    : 'Total amount collected *'}
+                </label>
+                <input
+                  aria-label={manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod)
+                    ? 'Amount to be collected excluding tax'
+                    : 'Total amount collected'}
+                  required
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={manualForm.totalAmountCollected}
+                  onChange={(e) => updateManualField('totalAmountCollected', e.target.value)}
+                  className="field-input"
+                />
+                {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod) && (
+                  <p className="mt-1 text-[10px] text-blue-700">Stripe will calculate Ontario HST at Checkout.</p>
+                )}
               </div>
+              {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod) && (
+                <div>
+                  <label className="field-label">Card processing fee (%) *</label>
+                  <input aria-label="Card processing fee percentage" required type="number" min="0" max="100" step="0.01" value={manualForm.cardSurchargeRate} onChange={(e) => updateManualField('cardSurchargeRate', e.target.value)} className="field-input" />
+                  <p className="mt-1 text-[10px] text-slate-500">Default 4%. This appears as a separate taxable card fee.</p>
+                </div>
+              )}
               <div>
                 <label className="field-label">COGS (Parts, etc.) amount *</label>
                 <input aria-label="COGS (Parts, etc.) amount" required type="number" min="0" step="0.01" value={manualForm.cogsAmount} onChange={(e) => updateManualField('cogsAmount', e.target.value)} className="field-input" />
               </div>
-              <div>
+              {!(manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod)) && <div>
                 <label className="field-label">Tax collected *</label>
                 <select aria-label="Tax collected status" value={manualForm.taxCollected} onChange={(e) => updateManualField('taxCollected', e.target.value)} className="field-input bg-white">
                   <option value="yes">Yes — on books</option><option value="no">No — off books transaction</option>
                 </select>
                 <p className="text-[10px] text-slate-500 mt-1">Bookkeeping status only; this does not calculate Ontario tax.</p>
-              </div>
+              </div>}
               <div>
                 <label className="field-label">Technician name *</label>
                 <select aria-label="Technician name" required value={manualForm.technicianId} onChange={(e) => updateManualField('technicianId', e.target.value)} className="field-input bg-white">

@@ -41,6 +41,25 @@ function emailValue(value: unknown): string | null {
   return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
+function amountFromCents(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value) / 100
+    : null;
+}
+
+function taxAmountFromStripeObject(object: StripeObject): number | null {
+  const totalDetails = asRecord(object.total_details);
+  const directTax = amountFromCents(totalDetails?.amount_tax);
+  if (directTax !== null) return directTax;
+
+  const totalTaxes = Array.isArray(object.total_taxes) ? object.total_taxes : [];
+  const taxTotal = totalTaxes.reduce((sum, tax) => {
+    const taxRecord = asRecord(tax);
+    return sum + (typeof taxRecord?.amount === 'number' ? taxRecord.amount : 0);
+  }, 0);
+  return taxTotal > 0 ? amountFromCents(taxTotal) : null;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'P2002');
 }
@@ -91,6 +110,10 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     ? new Date(object.expires_at * 1000)
     : undefined;
   const sessionStatus = stringValue(object.status);
+  const stripeTotal = amountFromCents(object.amount_total)
+    ?? amountFromCents(object.amount_paid)
+    ?? amountFromCents(object.total);
+  const stripeTaxAmount = taxAmountFromStripeObject(object);
 
   const customer = await tx.customer.findUnique({
     where: { id: invoice.job.customerId },
@@ -120,6 +143,8 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     ...(sessionStatus ? { stripeSessionStatus: sessionStatus } : {}),
     ...(sessionExpiresAt ? { stripeSessionExpiresAt: sessionExpiresAt, stripePaymentLinkExpiresAt: sessionExpiresAt } : {}),
     ...(customerEmail ? { customerEmailCollectedAt: invoice.customerEmailCollectedAt || now } : {}),
+    ...(stripeTotal !== null ? { grandTotal: stripeTotal } : {}),
+    ...(stripeTaxAmount !== null ? { taxAmount: stripeTaxAmount } : {}),
   };
 
   const confirmedPayment =
@@ -142,7 +167,7 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
   // webhook change a cash/Interac invoice to PAID.
   if (confirmedPayment && isCardPaymentMethod(invoice.paymentMethod)) {
     invoiceData.paymentStatus = 'PAID';
-    invoiceData.totalAmountCollected = invoice.grandTotal;
+    invoiceData.totalAmountCollected = stripeTotal ?? invoice.grandTotal;
     invoiceData.paidAt = invoice.paidAt || now;
     invoiceData.paymentProvider = 'STRIPE';
     invoiceData.paymentFailedAt = null;

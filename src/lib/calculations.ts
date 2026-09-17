@@ -9,6 +9,9 @@
 
 export const ONTARIO_HST_RATE = 0.13;
 export const STRIPE_CARD_SURCHARGE_RATE = 0.024; // 2.4% Canadian Code of Conduct compliant merchant acceptance cap
+// Pending manual card jobs are quoted before tax. This is intentionally
+// separate from the legacy closeout surcharge used by other flows.
+export const DEFAULT_MANUAL_CARD_SURCHARGE_RATE = 0.04;
 export const CRA_HST_BUSINESS_NUMBER = '83921 4092 RT0001';
 
 export interface CalculationBreakdown {
@@ -145,6 +148,33 @@ export function calculateManualInvoice(params: {
     cardSurchargeRate: 0,
     cardSurchargeAmount: 0,
     grandTotal,
+  };
+}
+
+/**
+ * Pending manual card invoice mode:
+ * The dispatcher enters the service amount before tax. Stripe Tax calculates
+ * the tax during Checkout; locally we retain the taxable subtotal and the
+ * card fee while leaving the final tax/total to the Stripe webhook.
+ */
+export function calculatePendingManualCardInvoice(params: {
+  amountToBeCollected: number;
+  cardSurchargeRate: number;
+}): CalculationBreakdown {
+  const subtotal = roundToTwo(params.amountToBeCollected);
+  const cardSurchargeRate = roundToTwo(params.cardSurchargeRate);
+  const cardSurchargeAmount = roundToTwo(subtotal * cardSurchargeRate);
+
+  return {
+    subtotal,
+    partsTotal: 0,
+    laborTotal: subtotal,
+    taxRate: ONTARIO_HST_RATE,
+    taxAmount: 0,
+    cardSurchargeRate,
+    cardSurchargeAmount,
+    // Before Checkout, this is the pre-tax amount Stripe will charge.
+    grandTotal: roundToTwo(subtotal + cardSurchargeAmount),
   };
 }
 

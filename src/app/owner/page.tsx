@@ -307,7 +307,7 @@ export default function AdminDashboardPage() {
       'Subtotal',
       'HST (13%)',
       'Tax Collected (On Books / Off Books)',
-      'Card Surcharge (2.4%)',
+      'Card Surcharge Amount',
       'Total Amount Collected',
       'COGS Amount',
       'Worker Commission',

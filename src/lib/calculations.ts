@@ -1,7 +1,8 @@
 /**
  * Financial Calculation Engine for Locksmith Operations
  * - Ontario 13% HST (Tax)
- * - Fixed 4% Credit Card Surcharge for Stripe
+ * - Legacy 2.4% surcharge for existing closeout/forward flows
+ * - Configurable 4% default surcharge for pending manual card invoices
  * - Forward calculation (Items -> Subtotal + Tax + Surcharge)
  * - Reverse calculation (Lump sum received -> Subtotal + Tax breakdown)
  * - Contractor Commission & Cash-in-hand Settlement Ledger

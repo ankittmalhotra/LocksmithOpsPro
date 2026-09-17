@@ -183,7 +183,7 @@ async function handleGET(request: Request) {
     const requestedGoogleAdsRange = new URL(request.url).searchParams.get('googleAdsRange');
     const googleAdsRange: GoogleAdsRoiRange = GOOGLE_ADS_RANGE_OPTIONS.includes(requestedGoogleAdsRange as GoogleAdsRoiRange)
       ? requestedGoogleAdsRange as GoogleAdsRoiRange
-      : 'yesterday';
+      : 'today';
     const googleAdsDateKeys = getGoogleAdsDateKeys(googleAdsRange);
     const googleAdsStartDate = googleAdsDateKeys[0];
     const googleAdsEndDate = googleAdsDateKeys[googleAdsDateKeys.length - 1];

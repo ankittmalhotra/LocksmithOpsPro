@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
+import { formatTorontoDateInput } from '@/lib/timezone';
 
 interface TechLedgerItem {
   id: string;
@@ -76,7 +77,7 @@ export default function AdminDashboardPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [googleAdsSyncing, setGoogleAdsSyncing] = useState(false);
-  const [googleAdsRange, setGoogleAdsRange] = useState<GoogleAdsRoiRange>('yesterday');
+  const [googleAdsRange, setGoogleAdsRange] = useState<GoogleAdsRoiRange>('today');
   const [googleAdsView, setGoogleAdsView] = useState<GoogleAdsRoiView>('partner');
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
@@ -889,13 +890,17 @@ export default function AdminDashboardPage() {
             <thead>
               <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
                 <th className="py-2.5 px-3">Job #</th>
-                <th className="py-2.5 px-3">Client</th>
+                <th className="py-2.5 px-3">Date</th>
+                <th className="py-2.5 px-3">Customer</th>
+                <th className="py-2.5 px-3">Type</th>
+                <th className="py-2.5 px-3">Received Time</th>
                 <th className="py-2.5 px-3">Location</th>
                 <th className="py-2.5 px-3">Technician</th>
                 <th className="py-2.5 px-3">Payment</th>
-                <th className="py-2.5 px-3">Tax Collected</th>
-                <th className="py-2.5 px-3">HST Amount</th>
                 <th className="py-2.5 px-3">Total Collected</th>
+                <th className="py-2.5 px-3">COGS (Parts, etc.)</th>
+                <th className="py-2.5 px-3">HST Amount</th>
+                <th className="py-2.5 px-3">Tax Status</th>
                 <th className="py-2.5 px-3">Commission</th>
                 <th className="py-2.5 px-3 text-right">Status</th>
               </tr>
@@ -907,37 +912,41 @@ export default function AdminDashboardPage() {
                     <div>#{job.jobNumber}</div>
                     {job.isManual && <span className="text-[9px] text-violet-700 uppercase">Manual</span>}
                   </td>
+                  <td className="py-3 px-3 text-slate-600 whitespace-nowrap">
+                    {formatTorontoDateInput(job.completedAt || job.invoice?.paidAt || job.createdAt) || '—'}
+                  </td>
                   <td className="py-3 px-3">
                     <div className="font-bold text-slate-800">{job.customer.name}</div>
                     <div className="text-[10px] text-slate-500">{job.customer.phone}</div>
                   </td>
+                  <td className="py-3 px-3 text-slate-600 max-w-[180px]">{job.serviceType || '—'}</td>
+                  <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{job.jobReceivedTimeSlot || '—'}</td>
                   <td className="py-3 px-3 text-slate-600 max-w-[200px] truncate">
                     {job.serviceAddress}
                   </td>
                   <td className="py-3 px-3 text-slate-700 font-semibold">
                     {job.technician?.name || job.technicianName || 'Unassigned'}
                   </td>
-                  <td className="py-3 px-3">
+                  <td className="py-3 px-3 font-bold text-slate-700">
                     {job.invoice?.paymentMethod ? (
-                      <span className="font-bold text-slate-700 uppercase">
-                        {job.invoice.paymentMethod.replace('_', ' ')}
-                      </span>
+                      <span className="uppercase">{job.invoice.paymentMethod.replace('_', ' ')}</span>
                     ) : (
                       <span className="text-slate-400 italic">Pending</span>
                     )}
                   </td>
-                  <td className="py-3 px-3 text-slate-600">
-                    {job.invoice?.taxCollected === false ? (
-                      <span className="font-bold text-rose-700">No — Off Books</span>
-                    ) : (
-                      <span className="font-bold text-emerald-700">Yes — On Books</span>
-                    )}
+                  <td className="py-3 px-3 font-extrabold text-slate-900 text-sm">
+                    ${Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2)}
+                  </td>
+                  <td className="py-3 px-3 text-slate-700">
+                    ${Number(job.invoice?.cogsAmount || 0).toFixed(2)}
                   </td>
                   <td className="py-3 px-3 font-black text-amber-700">
                     ${Number(job.invoice?.taxAmount || 0).toFixed(2)}
                   </td>
-                  <td className="py-3 px-3 font-extrabold text-slate-900 text-sm">
-                    ${(job.invoice?.grandTotal || 0).toFixed(2)}
+                  <td className="py-3 px-3">
+                    <span className={job.invoice?.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>
+                      {job.invoice?.taxCollected === false ? 'Off Books' : 'On Books'}
+                    </span>
                   </td>
                   <td className="py-3 px-3 font-bold text-emerald-700">
                     ${job.workerCommission.toFixed(2)}

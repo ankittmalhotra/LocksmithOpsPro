@@ -16,7 +16,7 @@ async function handlePOST(request: Request) {
     const requestedRange = new URL(request.url).searchParams.get('range');
     const selectedRange: RingCentralAnalyticsRange = requestedRange === 'today' || requestedRange === 'yesterday' || requestedRange === 'last-week'
       ? requestedRange
-      : 'last-week';
+      : 'today';
 
     const result = await refreshRingCentralCallCache();
     if (result.busy) {

@@ -84,7 +84,7 @@ type AnalyticsRange = (typeof rangeOptions)[number]['value'];
 
 export default function RingCentralCallAnalytics({ canManageConnection = false }: { canManageConnection?: boolean }) {
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
-  const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('last-week');
+  const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
   const [loading, setLoading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
@@ -140,27 +140,18 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
   const summary = analytics?.summary || { received: 0, converted: 0, conversionRate: 0 };
   const maxDailyCalls = useMemo(() => Math.max(1, ...daily.map((day) => Math.max(day.received, day.converted))), [daily]);
 
-  const disconnect = async () => {
-    await fetch('/api/ringcentral/disconnect', { method: 'POST' });
-    await fetchAnalytics();
-  };
-
   return (
     <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-sm" aria-labelledby="call-analytics-title">
       <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 id="call-analytics-title" className="flex items-center gap-2 text-base font-black">
             <span>📞</span> Call analytics
-            {analytics?.connected && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Connected</span>}
           </h2>
           <p className="mt-0.5 text-xs text-slate-600">
             Inbound calls received by {(analytics?.targetPhoneNumbers || [analytics?.targetPhoneNumber]).filter(Boolean).map((number) => formatPhoneNumber(number)).join(', ') || '(416) 240-0593'}, grouped by Toronto calendar day.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {analytics?.connected && canManageConnection && (
-            <button onClick={disconnect} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100">Disconnect</button>
-          )}
           <button
             type="button"
             onClick={() => setShowDetails(true)}

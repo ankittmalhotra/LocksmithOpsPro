@@ -26,7 +26,7 @@ async function handlePOST(request: Request) {
     const requestedRange = new URL(request.url).searchParams.get('range');
     const range: GoogleAdsRoiRange = GOOGLE_ADS_RANGE_OPTIONS.includes(requestedRange as GoogleAdsRoiRange)
       ? requestedRange as GoogleAdsRoiRange
-      : 'yesterday';
+      : 'today';
     const dates = getGoogleAdsDateKeys(range);
     const metrics = await Promise.all(dates.map((date) => fetchGoogleAdsDailyMetrics(date)));
     const savedMetrics = [];

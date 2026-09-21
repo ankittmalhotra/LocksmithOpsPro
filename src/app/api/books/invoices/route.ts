@@ -1,0 +1,100 @@
+import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
+import { getCurrentUser } from '@/lib/auth';
+import { getAccountingEntityAccess, requirePartnerInvoiceIssuanceAccess } from '@/lib/accounting-auth';
+import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { getApiErrorMessage } from '@/lib/api-error';
+import { ONTARIO_HST_RATE_BPS, buildPartnerInvoiceDescription } from '@/lib/accounting';
+import { centsToDecimal, decimalToCents, isBooksEntityCode, parseDateOnly, serializeDecimal } from '@/lib/books-api';
+import { formatTorontoDateInput } from '@/lib/timezone';
+
+function mapInvoice(invoice: any, redactIssuer = false) {
+  const { issuerEntity, issuerSnapshot, ...safeInvoice } = invoice;
+  const billingPeriod = invoice.billingPeriod ? (() => {
+    const { issuerEntity: periodIssuerEntity, sourceSnapshot, ...safePeriod } = invoice.billingPeriod;
+    return {
+      ...safePeriod,
+      ...(redactIssuer ? {} : { issuerEntity: periodIssuerEntity, sourceSnapshot }),
+      revenueAmount: serializeDecimal(invoice.billingPeriod.revenueAmount),
+      operationalProfitAmount: serializeDecimal(invoice.billingPeriod.operationalProfitAmount),
+      adjustedProfitAmount: serializeDecimal(invoice.billingPeriod.adjustedProfitAmount),
+      negativeCarryForward: serializeDecimal(invoice.billingPeriod.negativeCarryForward),
+    };
+  })() : undefined;
+  return {
+    ...safeInvoice,
+    ...(redactIssuer ? {} : { issuerEntity, issuerSnapshot }),
+    serviceAmount: serializeDecimal(invoice.serviceAmount), hstAmount: serializeDecimal(invoice.hstAmount), totalAmount: serializeDecimal(invoice.totalAmount), hstRate: Number(invoice.hstRate),
+    billingPeriod,
+  };
+}
+
+async function handleGET(request: Request) {
+  try {
+    const user = await getCurrentUser();
+    const requested = new URL(request.url).searchParams.get('entityCode');
+    const code = isBooksEntityCode(requested) ? requested : user?.role === 'DISPATCHER' ? 'LOCKSMITH' : 'IT_MARKETING';
+    const access = await getAccountingEntityAccess(code, user);
+    if (!access?.canView) return NextResponse.json({ success: false, error: 'Forbidden: Books access required' }, { status: 403 });
+    const invoices = await prisma.partnerInvoice.findMany({
+      where: code === 'LOCKSMITH' ? { recipientEntityId: access.entity.id } : { issuerEntityId: access.entity.id },
+      include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const redactIssuer = user?.role === 'DISPATCHER' && code === 'LOCKSMITH';
+    return NextResponse.json({ success: true, invoices: invoices.map((invoice) => mapInvoice(invoice, redactIssuer)) });
+  } catch (error) {
+    logCaughtRequestError(request, '/api/books/invoices', error);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to load invoices') }, { status: 500 });
+  }
+}
+
+async function handlePOST(request: Request) {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.role !== 'ADMIN') return NextResponse.json({ success: false, error: 'Forbidden: Admin access required' }, { status: 403 });
+    const body = await request.json();
+    if (typeof body?.billingPeriodId !== 'string' || !body.billingPeriodId) return NextResponse.json({ success: false, error: 'billingPeriodId is required' }, { status: 400 });
+    const issuer = await requirePartnerInvoiceIssuanceAccess('IT_MARKETING', ONTARIO_HST_RATE_BPS, user);
+    // PostgreSQL DATE values are materialized as UTC midnight by Prisma. Keep
+    // that value as a calendar date; converting it through Toronto can shift
+    // it to the previous day during daylight-saving time.
+    if (issuer.entity.hstEffectiveDate
+      && issuer.entity.hstEffectiveDate.toISOString().slice(0, 10) > formatTorontoDateInput(new Date())) {
+      return NextResponse.json({ success: false, error: 'HST effective date has not started' }, { status: 409 });
+    }
+    const period = await prisma.partnerBillingPeriod.findFirst({ where: { id: body.billingPeriodId, issuerEntityId: issuer.entity.id, recipientEntity: { code: 'LOCKSMITH' } }, include: { invoice: true, recipientEntity: true } });
+    if (!period) return NextResponse.json({ success: false, error: 'Billing period not found' }, { status: 404 });
+    if (period.invoice) return NextResponse.json({ success: false, error: 'This billing period already has an invoice' }, { status: 409 });
+    const serviceCents = decimalToCents(period.partnerFeeAmount);
+    if (serviceCents <= 0) return NextResponse.json({ success: false, error: 'No invoice is due for a zero or negative adjusted-profit period' }, { status: 409 });
+    const hstCents = Math.round(serviceCents * ONTARIO_HST_RATE_BPS / 10_000);
+    const totalCents = serviceCents + hstCents;
+    const dueAt = body.dueDate ? new Date(`${parseDateOnly(body.dueDate, 'dueDate')}T00:00:00.000Z`) : undefined;
+    const result = await prisma.$transaction(async (tx) => {
+      const counter = await tx.accountingEntity.update({ where: { id: issuer.entity.id }, data: { nextPartnerInvoiceNumber: { increment: 1 } }, select: { nextPartnerInvoiceNumber: true } });
+      const sequence = counter.nextPartnerInvoiceNumber - 1;
+      const invoice = await tx.partnerInvoice.create({
+        data: {
+          billingPeriodId: period.id, issuerEntityId: issuer.entity.id, recipientEntityId: period.recipientEntityId,
+          invoiceNumber: `INV-${String(sequence).padStart(6, '0')}`, status: 'ISSUED', paymentStatus: 'PENDING',
+          lineDescription: buildPartnerInvoiceDescription(serviceCents), serviceAmount: centsToDecimal(serviceCents), hstRate: new Prisma.Decimal(0.13), hstAmount: centsToDecimal(hstCents), totalAmount: centsToDecimal(totalCents), currency: 'CAD',
+          periodStart: period.periodStart, periodEnd: period.periodEnd, issuedAt: new Date(), dueAt,
+          hstRegistrationSnapshot: issuer.entity.hstRegistrationNumber,
+          issuerSnapshot: issuer.entity, recipientSnapshot: period.recipientEntity, issuedById: user.id,
+        }, include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: true },
+      });
+      await tx.partnerBillingPeriod.update({ where: { id: period.id }, data: { status: 'INVOICED', hstRate: new Prisma.Decimal(0.13), hstAmount: centsToDecimal(hstCents) } });
+      await tx.accountingAuditEvent.create({ data: { entityId: issuer.entity.id, invoiceId: invoice.id, actorId: user.id, action: 'ISSUED', resourceType: 'PartnerInvoice', resourceId: invoice.id, metadata: { invoiceNumber: invoice.invoiceNumber, totalAmount: totalCents / 100 } } });
+      return invoice;
+    });
+    return NextResponse.json({ success: true, invoice: mapInvoice(result) }, { status: 201 });
+  } catch (error: any) {
+    logCaughtRequestError(request, '/api/books/invoices', error);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to issue invoice') }, { status: error?.code === 'P2002' ? 409 : 400 });
+  }
+}
+
+export const GET = withRequestLogging('/api/books/invoices', handleGET);
+export const POST = withRequestLogging('/api/books/invoices', handlePOST);

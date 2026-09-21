@@ -111,7 +111,9 @@ async function handlePOST(request: Request) {
     const redirectUrl =
       user.role === 'ADMIN' || user.role === 'DISPATCHER'
         ? '/dispatch'
-        : '/tech';
+        : user.role === 'ACCOUNTANT'
+          ? '/books'
+          : '/tech';
 
     return NextResponse.json({
       success: true,

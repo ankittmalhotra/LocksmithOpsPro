@@ -13,11 +13,12 @@ export function middleware(request: NextRequest) {
 
   // Paths that require role protection
   const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner');
+  const isBooksRoute = pathname.startsWith('/books') || pathname.startsWith('/api/books');
   const isJobApi = pathname.startsWith('/api/jobs');
   const isDispatchRoute = pathname.startsWith('/dispatch');
   const isTechRoute = pathname.startsWith('/tech');
 
-  if (!isAdminRoute && !isDispatchRoute && !isTechRoute && !isJobApi) {
+  if (!isAdminRoute && !isBooksRoute && !isDispatchRoute && !isTechRoute && !isJobApi) {
     return NextResponse.next();
   }
 
@@ -44,6 +45,15 @@ export function middleware(request: NextRequest) {
       logFailedRequest(request, pathname, 403, requestId, 'Forbidden: Admin access required');
       return addRequestId(response, requestId);
     }
+    if (isBooksRoute && !['ADMIN', 'DISPATCHER', 'ACCOUNTANT'].includes(user.role)) {
+      const requestId = getRequestId(request);
+      const response = NextResponse.json(
+        { success: false, error: 'Forbidden: Books access required' },
+        { status: 403 },
+      );
+      logFailedRequest(request, pathname, 403, requestId, 'Forbidden: Books access required');
+      return addRequestId(response, requestId);
+    }
     return NextResponse.next();
   }
 
@@ -56,8 +66,12 @@ export function middleware(request: NextRequest) {
 
   // Role Checks for Pages
   if (isAdminRoute && user.role !== 'ADMIN') {
-    const redirectTarget = user.role === 'DISPATCHER' ? '/dispatch' : '/tech';
+    const redirectTarget = user.role === 'DISPATCHER' ? '/dispatch' : user.role === 'ACCOUNTANT' ? '/books' : '/tech';
     return NextResponse.redirect(new URL(redirectTarget, request.url));
+  }
+
+  if (isBooksRoute && !['ADMIN', 'DISPATCHER', 'ACCOUNTANT'].includes(user.role)) {
+    return NextResponse.redirect(new URL('/tech', request.url));
   }
 
   if (isDispatchRoute && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
@@ -74,9 +88,11 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/owner/:path*',
+    '/books/:path*',
     '/dispatch/:path*',
     '/tech/:path*',
     '/api/owner/:path*',
+    '/api/books/:path*',
     '/api/jobs/:path*',
   ],
 };

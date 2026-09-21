@@ -56,7 +56,7 @@ async function runProductionE2E() {
 
   // TEST 3: RBAC Session Tokens and Role Validation
   console.log('\n[Test 3] Role-Based Access Control (RBAC) & Sessions');
-  console.assert(APP_ROLES.join(',') === 'ADMIN,DISPATCHER,TECHNICIAN', 'App role set must contain exactly three roles');
+  console.assert(APP_ROLES.join(',') === 'ADMIN,DISPATCHER,TECHNICIAN,ACCOUNTANT', 'App role set must contain the supported application roles');
   const adminUser: AuthSession = { id: 'u-1', name: 'Alex Vance', phone: '4165550100', role: 'ADMIN' };
   const dispatchUser: AuthSession = { id: 'u-2', name: 'Sarah Connor', phone: '4165550200', role: 'DISPATCHER' };
   const techUser: AuthSession = { id: 'u-3', name: 'Dave Miller', phone: '6475550301', role: 'TECHNICIAN' };

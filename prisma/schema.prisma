@@ -12,6 +12,56 @@ enum Role {
   ADMIN
   DISPATCHER
   TECHNICIAN
+  ACCOUNTANT
+}
+
+// Books entities are intentionally separate from the operational Job/Invoice
+// domain. The codes are stable identifiers used by authorization helpers and
+// must not be changed when an entity's legal name is updated.
+enum AccountingEntityCode {
+  IT_MARKETING
+  LOCKSMITH
+}
+
+enum AccountingExpensePaymentStatus {
+  UNPAID
+  PAID
+}
+
+enum AccountingExpensePaymentMethod {
+  CASH
+  BANK_TRANSFER
+  INTERAC
+  CREDIT_CARD
+  DEBIT_CARD
+  OTHER
+}
+
+enum PartnerBillingPeriodStatus {
+  OPEN
+  CARRIED_FORWARD
+  INVOICED
+}
+
+enum PartnerInvoiceStatus {
+  DRAFT
+  ISSUED
+  VOID
+}
+
+enum PartnerInvoicePaymentStatus {
+  PENDING
+  RECEIVED
+}
+
+enum AccountingEntityAuditAction {
+  CREATED
+  UPDATED
+  ISSUED
+  VOIDED
+  PAYMENT_STATUS_CHANGED
+  MARKED_PAID
+  MARKED_UNPAID
 }
 
 enum JobStatus {
@@ -57,9 +107,17 @@ model User {
   commissionRate Float    @default(0.0)
   createdAt      DateTime @default(now())
 
-  dispatchedJobs Job[]        @relation("DispatcherJobs")
-  assignedJobs   Job[]        @relation("TechnicianJobs")
-  settlements    Settlement[] @relation("TechnicianSettlements")
+  dispatchedJobs               Job[]                        @relation("DispatcherJobs")
+  assignedJobs                 Job[]                        @relation("TechnicianJobs")
+  settlements                  Settlement[]                 @relation("TechnicianSettlements")
+  accountingMemberships        AccountingEntityMembership[]
+  accountingExpensesCreated    AccountingExpense[]          @relation("AccountingExpenseCreatedBy")
+  accountingExpensesUpdated    AccountingExpense[]          @relation("AccountingExpenseUpdatedBy")
+  partnerInvoicesIssued        PartnerInvoice[]             @relation("PartnerInvoiceIssuedBy")
+  partnerInvoicesVoided        PartnerInvoice[]             @relation("PartnerInvoiceVoidedBy")
+  partnerBillingPeriodsCreated PartnerBillingPeriod[]       @relation("PartnerBillingPeriodCreatedBy")
+  accountingPaymentEvents      PartnerInvoicePaymentEvent[]
+  accountingAuditEvents        AccountingAuditEvent[]
 }
 
 model Customer {
@@ -184,10 +242,10 @@ model Invoice {
   stripePaymentLinkExpiresAt DateTime?
   stripeInvoiceId            String?   @unique(map: "invoice_stripe_invoice_id_key")
   stripePaymentIntentId      String?
-  stripeChargeId              String?
+  stripeChargeId             String?
   customerEmailCollectedAt   DateTime?
   invoiceSentAt              DateTime?
-  paymentFailedAt             DateTime?
+  paymentFailedAt            DateTime?
 
   paidAt    DateTime?
   createdAt DateTime  @default(now())
@@ -345,4 +403,232 @@ model RingCentralCallSyncState {
   @@index([phoneNumberId, syncType], map: "rc_sync_phone_type_idx")
   @@index([status, lastAttemptAt], map: "rc_sync_status_attempt_idx")
   @@index([lastSuccessAt], map: "rc_sync_last_success_idx")
+}
+
+// ---------------------------------------------------------------------------
+// Books / accounting domain
+// ---------------------------------------------------------------------------
+// These models intentionally do not reference Job or the operational Invoice.
+// PartnerBillingPeriod stores a read-only snapshot of the operational numbers
+// used for partner billing; issued invoices never recalculate from live jobs.
+
+model AccountingEntity {
+  id                    String               @id @default(uuid())
+  code                  AccountingEntityCode @unique
+  legalName             String
+  corporationNumber     String?
+  email                 String?
+  addressLine1          String?
+  city                  String?
+  province              String?
+  postalCode            String?
+  country               String               @default("Canada")
+  authorizedPersonName  String?
+  authorizedPersonTitle String?
+  hstRegistrationNumber String?
+  hstEffectiveDate      DateTime?            @db.Date
+  hstEnabled            Boolean              @default(false)
+  currency              String               @default("CAD")
+
+  // The first two-week period is 2026-09-07 through 2026-09-20.
+  partnerBillingAnchor     DateTime @db.Date
+  nextPartnerInvoiceNumber Int      @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships             AccountingEntityMembership[]
+  expenses                AccountingExpense[]
+  expenseCategories       AccountingExpenseCategory[]
+  issuedPartnerPeriods    PartnerBillingPeriod[]       @relation("PartnerPeriodIssuer")
+  receivedPartnerPeriods  PartnerBillingPeriod[]       @relation("PartnerPeriodRecipient")
+  issuedPartnerInvoices   PartnerInvoice[]             @relation("PartnerInvoiceIssuer")
+  receivedPartnerInvoices PartnerInvoice[]             @relation("PartnerInvoiceRecipient")
+  auditEvents             AccountingAuditEvent[]
+
+  @@index([legalName])
+}
+
+model AccountingEntityMembership {
+  id       String           @id @default(uuid())
+  userId   String
+  entityId String
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entity   AccountingEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  // Capabilities are explicit so a future accountant can be restricted to
+  // read/export access without adding another application-wide role.
+  canView           Boolean  @default(true)
+  canManageExpenses Boolean  @default(false)
+  canIssueInvoices  Boolean  @default(false)
+  canMarkPayments   Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, entityId])
+  @@index([entityId, canView])
+}
+
+model AccountingExpenseCategory {
+  id        String           @id @default(uuid())
+  entityId  String
+  entity    AccountingEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  name      String
+  active    Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  expenses AccountingExpense[]
+
+  @@unique([entityId, name])
+  @@index([entityId, active])
+}
+
+model AccountingExpense {
+  id             String                          @id @default(uuid())
+  entityId       String
+  entity         AccountingEntity                @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  categoryId     String?
+  category       AccountingExpenseCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  vendorName     String
+  description    String?
+  expenseDate    DateTime                        @db.Date
+  subtotalAmount Decimal                         @db.Decimal(12, 2)
+  hstAmount      Decimal                         @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal                         @db.Decimal(12, 2)
+  hstRate        Decimal?                        @db.Decimal(5, 4)
+  paymentStatus  AccountingExpensePaymentStatus  @default(UNPAID)
+  paymentMethod  AccountingExpensePaymentMethod?
+  paidAt         DateTime?
+  receiptUrl     String?
+  notes          String?
+  createdById    String
+  createdBy      User                            @relation("AccountingExpenseCreatedBy", fields: [createdById], references: [id])
+  updatedById    String?
+  updatedBy      User?                           @relation("AccountingExpenseUpdatedBy", fields: [updatedById], references: [id])
+  voidedAt       DateTime?
+  createdAt      DateTime                        @default(now())
+  updatedAt      DateTime                        @updatedAt
+
+  @@index([entityId, expenseDate])
+  @@index([entityId, paymentStatus])
+  @@index([categoryId])
+}
+
+model PartnerBillingPeriod {
+  id                String                     @id @default(uuid())
+  issuerEntityId    String
+  issuerEntity      AccountingEntity           @relation("PartnerPeriodIssuer", fields: [issuerEntityId], references: [id])
+  recipientEntityId String
+  recipientEntity   AccountingEntity           @relation("PartnerPeriodRecipient", fields: [recipientEntityId], references: [id])
+  periodStart       DateTime                   @db.Date
+  periodEnd         DateTime                   @db.Date
+  status            PartnerBillingPeriodStatus @default(OPEN)
+
+  // Snapshot of Revenue - HST - COGS - technician commissions.
+  revenueAmount               Decimal @db.Decimal(12, 2)
+  hstDeductedAmount           Decimal @db.Decimal(12, 2)
+  cogsAmount                  Decimal @db.Decimal(12, 2)
+  technicianCommissionsAmount Decimal @db.Decimal(12, 2)
+  operationalProfitAmount     Decimal @db.Decimal(12, 2)
+
+  // Carry values are positive amounts. Prior losses reduce the next period's
+  // profit before the 50% split. A negative adjusted result is carried again.
+  priorNegativeCarryForward Decimal  @default(0) @db.Decimal(12, 2)
+  adjustedProfitAmount      Decimal  @db.Decimal(12, 2)
+  negativeCarryForward      Decimal  @default(0) @db.Decimal(12, 2)
+  shareRate                 Decimal  @default(0.5) @db.Decimal(5, 4)
+  partnerFeeAmount          Decimal  @default(0) @db.Decimal(12, 2)
+  hstRate                   Decimal  @default(0) @db.Decimal(5, 4)
+  hstAmount                 Decimal  @default(0) @db.Decimal(12, 2)
+  sourceSnapshot            Json?
+  calculationNote           String?
+  createdById               String
+  createdBy                 User     @relation("PartnerBillingPeriodCreatedBy", fields: [createdById], references: [id])
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  invoice PartnerInvoice?
+
+  @@unique([recipientEntityId, periodStart, periodEnd])
+  @@index([issuerEntityId, periodStart])
+  @@index([recipientEntityId, periodStart])
+  @@index([status])
+}
+
+model PartnerInvoice {
+  id                      String                      @id @default(uuid())
+  billingPeriodId         String                      @unique
+  billingPeriod           PartnerBillingPeriod        @relation(fields: [billingPeriodId], references: [id])
+  issuerEntityId          String
+  issuerEntity            AccountingEntity            @relation("PartnerInvoiceIssuer", fields: [issuerEntityId], references: [id])
+  recipientEntityId       String
+  recipientEntity         AccountingEntity            @relation("PartnerInvoiceRecipient", fields: [recipientEntityId], references: [id])
+  invoiceNumber           String                      @unique
+  status                  PartnerInvoiceStatus        @default(DRAFT)
+  paymentStatus           PartnerInvoicePaymentStatus @default(PENDING)
+  lineDescription         String
+  serviceAmount           Decimal                     @db.Decimal(12, 2)
+  hstRate                 Decimal                     @default(0) @db.Decimal(5, 4)
+  hstAmount               Decimal                     @default(0) @db.Decimal(12, 2)
+  totalAmount             Decimal                     @db.Decimal(12, 2)
+  currency                String                      @default("CAD")
+  periodStart             DateTime                    @db.Date
+  periodEnd               DateTime                    @db.Date
+  issuedAt                DateTime?
+  dueAt                   DateTime?
+  hstRegistrationSnapshot String?
+  issuerSnapshot          Json
+  recipientSnapshot       Json
+  issuedById              String?
+  issuedBy                User?                       @relation("PartnerInvoiceIssuedBy", fields: [issuedById], references: [id])
+  voidedById              String?
+  voidedBy                User?                       @relation("PartnerInvoiceVoidedBy", fields: [voidedById], references: [id])
+  voidedAt                DateTime?
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+
+  paymentEvents PartnerInvoicePaymentEvent[]
+  auditEvents   AccountingAuditEvent[]
+
+  @@index([issuerEntityId, issuedAt])
+  @@index([recipientEntityId, issuedAt])
+  @@index([recipientEntityId, paymentStatus])
+}
+
+model PartnerInvoicePaymentEvent {
+  id            String                      @id @default(uuid())
+  invoiceId     String
+  invoice       PartnerInvoice              @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  fromStatus    PartnerInvoicePaymentStatus
+  toStatus      PartnerInvoicePaymentStatus
+  amount        Decimal                     @db.Decimal(12, 2)
+  paidAt        DateTime?
+  paymentMethod String?
+  reference     String?
+  note          String?
+  recordedById  String
+  recordedBy    User                        @relation(fields: [recordedById], references: [id])
+  createdAt     DateTime                    @default(now())
+
+  @@index([invoiceId, createdAt])
+}
+
+model AccountingAuditEvent {
+  id           String                      @id @default(uuid())
+  entityId     String?
+  entity       AccountingEntity?           @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  invoiceId    String?
+  invoice      PartnerInvoice?             @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  actorId      String
+  actor        User                        @relation(fields: [actorId], references: [id])
+  action       AccountingEntityAuditAction
+  resourceType String
+  resourceId   String
+  metadata     Json?
+  createdAt    DateTime                    @default(now())
+
+  @@index([entityId, createdAt])
+  @@index([resourceType, resourceId, createdAt])
+  @@index([invoiceId, createdAt])
 }

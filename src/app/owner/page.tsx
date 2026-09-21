@@ -83,13 +83,13 @@ export default function AdminDashboardPage() {
   const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
 
-  // Team Member Management State (Admin can add all three app roles)
+  // Team Member Management State (Admin can add all four app roles)
   const [showAddMember, setShowAddMember] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberPassword, setNewMemberPassword] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState<'ADMIN' | 'DISPATCHER' | 'TECHNICIAN'>('TECHNICIAN');
+  const [newMemberRole, setNewMemberRole] = useState<'ADMIN' | 'DISPATCHER' | 'TECHNICIAN' | 'ACCOUNTANT'>('TECHNICIAN');
   const [newMemberCommission, setNewMemberCommission] = useState('0.00');
   const [addingMember, setAddingMember] = useState(false);
 
@@ -135,6 +135,8 @@ export default function AdminDashboardPage() {
           ? 'Admin'
           : data.user.role === 'DISPATCHER'
           ? 'Dispatcher'
+          : data.user.role === 'ACCOUNTANT'
+          ? 'Accountant'
           : 'Technician';
 
       setSuccessMsg(`Successfully added ${data.user.name} as ${roleLabel}!`);
@@ -989,7 +991,7 @@ export default function AdminDashboardPage() {
 
             <p className="text-xs text-slate-500 mb-4">
               {currentUser?.role === 'ADMIN'
-                ? 'Admins can register Admins, Dispatchers, or Field Technicians.'
+                ? 'Admins can register Admins, Dispatchers, Accountants, or Field Technicians.'
                 : 'Admins can register Field Technicians.'}
             </p>
 
@@ -1053,6 +1055,7 @@ export default function AdminDashboardPage() {
                     <option value="TECHNICIAN">🛠️ Technician (Field Mobile & Invoicing)</option>
                     <option value="ADMIN">🛡️ Admin (Full System Access)</option>
                     <option value="DISPATCHER">📞 Dispatcher (Call Intake & Assignment)</option>
+                    <option value="ACCOUNTANT">📚 Accountant (Books & Expenses)</option>
                   </select>
                 ) : (
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">

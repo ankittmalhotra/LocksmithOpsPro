@@ -95,6 +95,20 @@ export default function NavigationHeader() {
             </>
           )}
 
+          {(!user || user.role === 'ADMIN' || user.role === 'DISPATCHER' || user.role === 'ACCOUNTANT') && (
+            <Link
+              href="/books"
+              className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
+                pathname.startsWith('/books')
+                  ? 'bg-amber-500 text-slate-950 font-bold'
+                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-200'
+              }`}
+            >
+              <span>📚</span>
+              <span>Books</span>
+            </Link>
+          )}
+
           {(!user || user.role === 'ADMIN' || user.role === 'TECHNICIAN') && (
             <Link
               href="/tech"
@@ -115,7 +129,7 @@ export default function NavigationHeader() {
               <span className="text-xs text-slate-300 font-bold hidden md:inline">
                 {user.name.split(' ')[0]} (
                 <span className="text-amber-400 text-[11px]">
-                  {user.role === 'ADMIN' ? 'Admin' : user.role === 'DISPATCHER' ? 'Dispatcher' : 'Technician'}
+                  {user.role === 'ADMIN' ? 'Admin' : user.role === 'DISPATCHER' ? 'Dispatcher' : user.role === 'ACCOUNTANT' ? 'Accountant' : 'Technician'}
                 </span>)
               </span>
 

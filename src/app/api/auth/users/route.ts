@@ -6,6 +6,7 @@ import { APP_ROLES, type AppRole } from '@/lib/session';
 import { hashPassword } from '@/lib/password';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { ACCOUNTING_ENTITY_DEFAULTS } from '@/lib/accounting-types';
 
 function canViewTechnicians(role?: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
@@ -146,16 +147,43 @@ async function handlePOST(request: Request) {
       );
     }
 
-    const newUser = await prisma.user.create({
-      data: {
-        name: name.trim(),
-        phone: cleanPhone,
-        role,
-        email: email || null,
-        active: true,
-        commissionRate: role === 'TECHNICIAN' ? (requestedRate ?? 0) : 0,
-        passwordHash: hashPassword(password),
-      },
+    const newUser = await prisma.$transaction(async (tx) => {
+      const createdUser = await tx.user.create({
+        data: {
+          name: name.trim(),
+          phone: cleanPhone,
+          role,
+          email: email || null,
+          active: true,
+          commissionRate: role === 'TECHNICIAN' ? (requestedRate ?? 0) : 0,
+          passwordHash: hashPassword(password),
+        },
+      });
+
+      if (role === 'ACCOUNTANT') {
+        for (const entityDefaults of Object.values(ACCOUNTING_ENTITY_DEFAULTS)) {
+          const entity = await tx.accountingEntity.upsert({
+            where: { code: entityDefaults.code },
+            update: { partnerBillingAnchor: new Date(`${entityDefaults.partnerBillingAnchor}T00:00:00.000Z`) },
+            create: {
+              ...entityDefaults,
+              partnerBillingAnchor: new Date(`${entityDefaults.partnerBillingAnchor}T00:00:00.000Z`),
+            },
+          });
+          await tx.accountingEntityMembership.create({
+            data: {
+              userId: createdUser.id,
+              entityId: entity.id,
+              canView: true,
+              canManageExpenses: true,
+              canIssueInvoices: false,
+              canMarkPayments: false,
+            },
+          });
+        }
+      }
+
+      return createdUser;
     });
 
     return NextResponse.json({

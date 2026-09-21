@@ -24,6 +24,8 @@ function LoginFormContent() {
       destination = requestedDestination;
     } else if (role === 'ADMIN' || role === 'DISPATCHER') {
       destination = '/dispatch';
+    } else if (role === 'ACCOUNTANT') {
+      destination = '/books';
     }
 
     // A full navigation makes the browser send the new session cookie with

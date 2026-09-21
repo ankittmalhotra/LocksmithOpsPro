@@ -90,4 +90,36 @@ CREATE INDEX IF NOT EXISTS "AccountingAuditEvent_entityId_createdAt_idx" ON "Acc
 CREATE INDEX IF NOT EXISTS "AccountingAuditEvent_resourceType_resourceId_createdAt_idx" ON "AccountingAuditEvent" ("resourceType", "resourceId", "createdAt");
 CREATE INDEX IF NOT EXISTS "AccountingAuditEvent_invoiceId_createdAt_idx" ON "AccountingAuditEvent" ("invoiceId", "createdAt");
 
+-- Bootstrap the fixed entities and grant existing staff the access described
+-- by the application. This makes the migration complete on an existing
+-- production database; rerunning it is safe because all writes are upserts.
+INSERT INTO "AccountingEntity" ("code", "legalName", "corporationNumber", "email", "addressLine1", "city", "province", "postalCode", "country", "authorizedPersonName", "authorizedPersonTitle", "partnerBillingAnchor")
+VALUES
+  ('IT_MARKETING', '1001744934 ONTARIO INC.', '1001744934', NULL, NULL, NULL, 'Ontario', NULL, 'Canada', NULL, NULL, DATE '2026-09-07'),
+  ('LOCKSMITH', '1001348245 ONTARIO INC.', '1001348245', 'bcltoronto1@gmail.com', '27 Knollside Drive', 'Richmond Hill', 'Ontario', 'L4C4W7', 'Canada', 'UMAR QURESHI', 'Director', DATE '2026-09-07')
+ON CONFLICT ("code") DO UPDATE SET
+  "legalName" = EXCLUDED."legalName",
+  "corporationNumber" = EXCLUDED."corporationNumber",
+  "email" = COALESCE("AccountingEntity"."email", EXCLUDED."email"),
+  "addressLine1" = COALESCE("AccountingEntity"."addressLine1", EXCLUDED."addressLine1"),
+  "city" = COALESCE("AccountingEntity"."city", EXCLUDED."city"),
+  "province" = COALESCE("AccountingEntity"."province", EXCLUDED."province"),
+  "postalCode" = COALESCE("AccountingEntity"."postalCode", EXCLUDED."postalCode"),
+  "authorizedPersonName" = COALESCE("AccountingEntity"."authorizedPersonName", EXCLUDED."authorizedPersonName"),
+  "authorizedPersonTitle" = COALESCE("AccountingEntity"."authorizedPersonTitle", EXCLUDED."authorizedPersonTitle");
+
+INSERT INTO "AccountingEntityMembership" ("userId", "entityId", "canView", "canManageExpenses", "canIssueInvoices", "canMarkPayments")
+SELECT u."id", e."id", true, true, true, true
+FROM "User" u CROSS JOIN "AccountingEntity" e
+WHERE u."role" = 'ADMIN' AND u."active" = true
+ON CONFLICT ("userId", "entityId") DO UPDATE SET
+  "canView" = true, "canManageExpenses" = true, "canIssueInvoices" = true, "canMarkPayments" = true;
+
+INSERT INTO "AccountingEntityMembership" ("userId", "entityId", "canView", "canManageExpenses", "canIssueInvoices", "canMarkPayments")
+SELECT u."id", e."id", true, true, false, false
+FROM "User" u CROSS JOIN "AccountingEntity" e
+WHERE u."role" = 'DISPATCHER' AND u."active" = true AND e."code" = 'LOCKSMITH'
+ON CONFLICT ("userId", "entityId") DO UPDATE SET
+  "canView" = true, "canManageExpenses" = true;
+
 COMMIT;

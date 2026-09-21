@@ -1,7 +1,7 @@
 import { prisma } from './prisma';
 import { getCurrentUser } from './auth';
 import type { AuthSession } from './session';
-import type { AccountingEntityCode, AccountingPermission } from './accounting-types';
+import { ACCOUNTING_ENTITY_DEFAULTS, type AccountingEntityCode, type AccountingPermission } from './accounting-types';
 
 export interface AccountingEntityAccess {
   user: AuthSession;
@@ -49,6 +49,46 @@ const ENTITY_SELECT = {
 } as const;
 
 /**
+ * Production deployments may have the additive Books tables but have skipped
+ * the one-time seed. Resolve the stable entity from the database, creating
+ * only the requested fixed entity when an Admin (or Locksmith Dispatcher)
+ * first opens Books. This keeps the access check fail-closed while allowing a
+ * deployment to recover from a missing seed without exposing either entity to
+ * an unauthorized role.
+ */
+async function findOrBootstrapEntity(entityCode: AccountingEntityCode, currentUser: AuthSession) {
+  const existing = await prisma.accountingEntity.findUnique({
+    where: { code: entityCode },
+    select: ENTITY_SELECT,
+  });
+  if (existing) return existing;
+  if (currentUser.role !== 'ADMIN' && !(currentUser.role === 'DISPATCHER' && entityCode === 'LOCKSMITH')) {
+    return null;
+  }
+
+  const defaults = ACCOUNTING_ENTITY_DEFAULTS[entityCode];
+  return prisma.accountingEntity.upsert({
+    where: { code: entityCode },
+    update: {},
+    create: {
+      code: defaults.code,
+      legalName: defaults.legalName,
+      corporationNumber: defaults.corporationNumber,
+      email: defaults.email,
+      addressLine1: defaults.addressLine1,
+      city: defaults.city,
+      province: defaults.province,
+      postalCode: defaults.postalCode,
+      country: defaults.country,
+      authorizedPersonName: defaults.authorizedPersonName,
+      authorizedPersonTitle: defaults.authorizedPersonTitle,
+      partnerBillingAnchor: new Date(`${defaults.partnerBillingAnchor}T00:00:00.000Z`),
+    },
+    select: ENTITY_SELECT,
+  });
+}
+
+/**
  * Resolve Books access on the server. Never trust an entity id supplied by a
  * browser: callers should pass the stable code and this function resolves it
  * against the database.
@@ -60,10 +100,7 @@ export async function getAccountingEntityAccess(
   const currentUser = user ?? await getCurrentUser();
   if (!currentUser) return null;
 
-  const entity = await prisma.accountingEntity.findUnique({
-    where: { code: entityCode },
-    select: ENTITY_SELECT,
-  });
+  const entity = await findOrBootstrapEntity(entityCode, currentUser);
   if (!entity) return null;
 
   if (currentUser.role === 'ADMIN') {
@@ -75,10 +112,21 @@ export async function getAccountingEntityAccess(
   // grant a dispatcher visibility into the IT/marketing entity.
   if (currentUser.role === 'DISPATCHER' && entityCode !== 'LOCKSMITH') return null;
 
-  const membership = await prisma.accountingEntityMembership.findUnique({
+  let membership = await prisma.accountingEntityMembership.findUnique({
     where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
     select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
   });
+
+  // Existing Dispatchers are also provisioned lazily for the Locksmith book;
+  // they never receive a membership for the private IT/marketing entity.
+  if (!membership && currentUser.role === 'DISPATCHER' && entityCode === 'LOCKSMITH') {
+    membership = await prisma.accountingEntityMembership.upsert({
+      where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
+      update: {},
+      create: { userId: currentUser.id, entityId: entity.id, canView: true, canManageExpenses: true, canIssueInvoices: false, canMarkPayments: false },
+      select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
+    });
+  }
 
   // Membership is the source of truth for entity-level Books access. The
   // deployment seed provisions existing Admins and Dispatchers; a missing row

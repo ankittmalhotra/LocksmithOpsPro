@@ -19,6 +19,8 @@ type Expense = {
   paymentStatus: 'PAID' | 'UNPAID';
   paymentMethod?: string | null;
   notes?: string | null;
+  systemGenerated?: boolean;
+  source?: string;
 };
 
 type BillingPeriod = {
@@ -385,7 +387,7 @@ export default function BooksPage() {
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-blue-700">Expense ledger</p><h2 className="mt-1 text-xl font-black text-slate-950">{state.expenses.length ? `${state.expenses.length} expense${state.expenses.length === 1 ? '' : 's'}` : 'No expenses yet'}</h2></div>{canManageExpenses && <button onClick={() => { resetExpenseForm(); setExpenseFormOpen(true); }} className="rounded-xl bg-slate-950 px-3.5 py-2.5 text-sm font-black text-white transition hover:bg-slate-800">+ Add expense</button>}</div>
             <div className="divide-y divide-slate-100">
-              {state.expenses.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">Add a vendor bill, receipt, or other company expense to begin.</div> : state.expenses.map((expense) => <div key={expense.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-slate-900">{expense.vendorName}</p><StatusBadge status={expense.paymentStatus} /></div><p className="mt-1 truncate text-sm text-slate-500">{expense.description || 'Expense'} · {formatDate(expense.expenseDate)}</p></div><div className="flex items-center justify-between gap-4 sm:justify-end"><p className="font-black text-slate-950">{formatMoney(expense.totalAmount)}</p>{canManageExpenses && <button onClick={() => openEditExpense(expense)} className="text-xs font-black text-blue-700 hover:text-blue-900">Edit</button>}</div></div>)}
+              {state.expenses.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">Add a vendor bill, receipt, or other company expense to begin.</div> : state.expenses.map((expense) => <div key={expense.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-slate-900">{expense.vendorName}</p><StatusBadge status={expense.paymentStatus} />{expense.systemGenerated && <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-blue-700 ring-1 ring-blue-200">Auto-synced</span>}</div><p className="mt-1 truncate text-sm text-slate-500">{expense.description || 'Expense'} · {formatDate(expense.expenseDate)}</p></div><div className="flex items-center justify-between gap-4 sm:justify-end"><p className="font-black text-slate-950">{formatMoney(expense.totalAmount)}</p>{canManageExpenses && !expense.systemGenerated && <button onClick={() => openEditExpense(expense)} className="text-xs font-black text-blue-700 hover:text-blue-900">Edit</button>}</div></div>)}
             </div>
           </section>
 

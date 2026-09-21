@@ -5,6 +5,8 @@ import { getAccountingEntityAccess } from '@/lib/accounting-auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { centsToDecimal, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
+import { getPartnerBillingPeriod } from '@/lib/accounting';
+import { dateKeyToUtcDate, getMissingGoogleAdsConfigVariables } from '@/lib/google-ads';
 
 function entityCodeFrom(request: Request, body?: Record<string, unknown>) {
   const value = new URL(request.url).searchParams.get('entityCode') || body?.entityCode;
@@ -19,6 +21,53 @@ function mapExpense(expense: any) {
     totalAmount: serializeDecimal(expense.totalAmount),
     hstRate: expense.hstRate === null ? null : Number(expense.hstRate),
   };
+}
+
+/**
+ * Google Ads spend is a shared operating bill, not a manually editable
+ * receipt. Once the Admin syncs daily metrics, show one read-only ledger row
+ * per anchored biweekly period in either entity's Books view. It remains
+ * separate from the operational profit snapshot and cannot be edited twice.
+ */
+async function getGoogleAdsLedgerExpenses() {
+  if (getMissingGoogleAdsConfigVariables().length > 0) return [];
+  try {
+    const metrics = await prisma.googleAdsDailyMetric.findMany({
+      where: { date: { gte: dateKeyToUtcDate('2026-09-07') } },
+      orderBy: { date: 'asc' },
+      select: { customerId: true, date: true, spend: true },
+    });
+    const grouped = new Map<string, { customerId: string; periodStart: string; periodEnd: string; totalCents: number }>();
+    for (const metric of metrics) {
+      const dateKey = metric.date.toISOString().slice(0, 10);
+      const period = getPartnerBillingPeriod(dateKey);
+      if (period.periodIndex < 0 || metric.spend <= 0) continue;
+      const key = `${metric.customerId}:${period.periodStart}`;
+      const current = grouped.get(key) || { customerId: metric.customerId, periodStart: period.periodStart, periodEnd: period.periodEnd, totalCents: 0 };
+      current.totalCents += Math.round(metric.spend * 100);
+      grouped.set(key, current);
+    }
+    return [...grouped.values()].map((entry) => ({
+      id: `google-ads-${entry.customerId}-${entry.periodStart}`,
+      vendorName: 'Google Ads',
+      description: `Google Ads billing · ${entry.periodStart} – ${entry.periodEnd}`,
+      expenseDate: new Date(`${entry.periodEnd}T00:00:00.000Z`),
+      subtotalAmount: entry.totalCents / 100,
+      hstAmount: 0,
+      totalAmount: entry.totalCents / 100,
+      hstRate: null,
+      paymentStatus: 'PAID',
+      paymentMethod: 'CREDIT_CARD',
+      notes: 'Automatically included from synced Google Ads daily billing. Read-only ledger entry.',
+      systemGenerated: true,
+      source: 'GOOGLE_ADS',
+    }));
+  } catch (error: any) {
+    // The Google Ads cache is optional. A missing cache migration must not
+    // make the core Books expense ledger unavailable.
+    if (error?.code === 'P2021') return [];
+    throw error;
+  }
 }
 
 async function handleGET(request: Request) {
@@ -42,7 +91,10 @@ async function handleGET(request: Request) {
       include: { category: true },
       orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
     });
-    return NextResponse.json({ success: true, entity: access.entity, expenses: expenses.map(mapExpense) });
+    const googleAdsExpenses = await getGoogleAdsLedgerExpenses();
+    const mappedExpenses = [...expenses.map(mapExpense), ...googleAdsExpenses]
+      .sort((left, right) => new Date(right.expenseDate).getTime() - new Date(left.expenseDate).getTime());
+    return NextResponse.json({ success: true, entity: access.entity, expenses: mappedExpenses });
   } catch (error) {
     logCaughtRequestError(request, '/api/books/expenses', error);
     return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to load expenses') }, { status: 500 });

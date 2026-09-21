@@ -128,6 +128,14 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    edit concurrency and `Job.jobReceivedTimeSlot` for manual-job intake windows.
    Verify both columns exist before serving the new application build.
 
+7. Before opening **Books & accounting** on an existing production database,
+   apply `prisma/books-accounting-migration.sql` once in the production SQL
+   editor. It creates the entity-scoped Books tables, bootstraps both legal
+   entities, and provisions Admin/Dispatcher access. The migration is safe to
+   rerun. If Google Ads billing is enabled, also apply
+   `prisma/google-ads-daily-metric-migration.sql` once so synced spend can appear
+   automatically in each Books period ledger.
+
 Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ---

@@ -3,8 +3,13 @@ import { ArrowRight, Check, Sparkles } from 'lucide-react';
 import { siteUrl } from '@/lib/site';
 import type { MarketingPageDefinition } from '@/lib/public-seo-pages';
 import { PublicMarketingFooter, PublicMarketingHeader } from '@/components/PublicMarketingShell';
+import Breadcrumbs from '@/components/Breadcrumbs';
 
 export default function MarketingContentPage({ page }: { page: MarketingPageDefinition }) {
+  const breadcrumbItems = page.path === '/features'
+    ? [{ label: 'Home', href: '/' }, { label: page.breadcrumbLabel }]
+    : [{ label: 'Home', href: '/' }, { label: 'Features', href: '/features' }, { label: page.breadcrumbLabel }];
+
   return (
     <div className="min-h-full bg-slate-950 text-white">
       <script
@@ -12,18 +17,34 @@ export default function MarketingContentPage({ page }: { page: MarketingPageDefi
         dangerouslySetInnerHTML={{
           __html: JSON.stringify({
             '@context': 'https://schema.org',
-            '@type': 'WebPage',
-            '@id': `${siteUrl}${page.path}#webpage`,
-            url: `${siteUrl}${page.path}`,
-            name: page.seoTitle,
-            description: page.description,
-            isPartOf: { '@id': `${siteUrl}/#website` },
-            about: { '@type': 'SoftwareApplication', name: 'LockOps Pro', applicationCategory: 'BusinessApplication', operatingSystem: 'Web' },
-            publisher: { '@type': 'Organization', name: 'LockOps Pro', url: siteUrl, email: 'info@locksmithsnearme.ca' },
+            '@graph': [
+              {
+                '@type': 'WebPage',
+                '@id': `${siteUrl}${page.path}#webpage`,
+                url: `${siteUrl}${page.path}`,
+                name: page.seoTitle,
+                description: page.description,
+                isPartOf: { '@id': `${siteUrl}/#website` },
+                about: { '@type': 'SoftwareApplication', name: 'LockOps Pro', applicationCategory: 'BusinessApplication', operatingSystem: 'Web' },
+                publisher: { '@type': 'Organization', name: 'LockOps Pro', url: siteUrl, email: 'info@locksmithsnearme.ca' },
+                breadcrumb: { '@id': `${siteUrl}${page.path}#breadcrumb` },
+              },
+              {
+                '@type': 'BreadcrumbList',
+                '@id': `${siteUrl}${page.path}#breadcrumb`,
+                itemListElement: breadcrumbItems.map((item, index) => ({
+                  '@type': 'ListItem',
+                  position: index + 1,
+                  name: item.label,
+                  ...(item.href ? { item: `${siteUrl}${item.href}` } : {}),
+                })),
+              },
+            ],
           }),
         }}
       />
       <PublicMarketingHeader />
+      <Breadcrumbs items={breadcrumbItems} dark />
       <main>
         <section className="hero-grid border-b border-white/10">
           <div className="mx-auto grid max-w-7xl gap-12 px-5 py-20 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:px-10 lg:py-28">

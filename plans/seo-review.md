@@ -66,6 +66,10 @@ Added a crawlable `/contact` page with:
 
 Added `/llms.txt` as a concise, accurate product summary for agents and retrieval systems. It distinguishes current capabilities from roadmap items and links to the official public pages. This is an optional interoperability aid, not a Google ranking shortcut.
 
+### 7. Breadcrumb navigation
+
+Added visible breadcrumb trails and matching `BreadcrumbList` JSON-LD to `/contact` and every public interior marketing page. The trails use crawlable links for Home and Features, plus the current page as the final item.
+
 ## Content and technical SEO recommendations
 
 ### Before publishing
@@ -77,6 +81,7 @@ Added `/llms.txt` as a concise, accurate product summary for agents and retrieva
 - Submit `https://your-domain.example/sitemap.xml` in Search Console.
 - Use URL Inspection to request indexing for `/` and `/contact` after deployment.
 - Test structured data with Google’s Rich Results Test and Schema Markup Validator.
+- In Search Console, review the Breadcrumbs enhancement report after Google recrawls the public pages.
 - Share the homepage with real locksmith operators and collect genuine, permissioned customer proof; rankings improve through usefulness, trust, and independent discovery over time, not metadata alone.
 
 ### Ongoing SEO work
@@ -95,6 +100,7 @@ Added `/llms.txt` as a concise, accurate product summary for agents and retrieva
 - [Google Search Central generative AI search guidance](https://developers.google.com/search/docs/fundamentals/ai-optimization-guide)
 - [Google Search Central spam policies](https://developers.google.com/search/docs/essentials/spam-policies)
 - [Google Search Central metadata guidance](https://developers.google.com/search/docs/crawling-indexing/special-tags)
+- [Google Search Central breadcrumb structured data](https://developers.google.com/search/docs/appearance/structured-data/breadcrumb)
 - [Google Search Central sitemap guidance](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap)
 - [Next.js Metadata API](https://nextjs.org/docs/app/api-reference/functions/generate-metadata)
 - [Next.js sitemap convention](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/sitemap)

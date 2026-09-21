@@ -7,6 +7,7 @@ export interface MarketingSection {
 
 export interface MarketingPageDefinition {
   path: string;
+  breadcrumbLabel: string;
   seoTitle: string;
   description: string;
   eyebrow: string;
@@ -21,6 +22,7 @@ export interface MarketingPageDefinition {
 export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   features: {
     path: '/features',
+    breadcrumbLabel: 'Features',
     seoTitle: 'Locksmith Software Features | LockOps Pro',
     description: 'Explore LockOps Pro features for locksmith dispatch, mobile technicians, payment closeout, cash reconciliation, reporting, and role-based operations.',
     eyebrow: 'The complete platform',
@@ -42,6 +44,7 @@ export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   },
   dispatch: {
     path: '/locksmith-dispatch-software',
+    breadcrumbLabel: 'Locksmith Dispatch Software',
     seoTitle: 'Locksmith Dispatch Software | LockOps Pro',
     description: 'Locksmith dispatch software for call intake, scheduling, technician assignment, job status, customer details, and clean handoffs to the field.',
     eyebrow: 'For dispatch teams',
@@ -62,6 +65,7 @@ export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   },
   field: {
     path: '/locksmith-field-service-management',
+    breadcrumbLabel: 'Field Service Management',
     seoTitle: 'Locksmith Field Service Management Software | LockOps Pro',
     description: 'Field service management software for locksmith technicians with mobile job details, maps, calls, statuses, signatures, photos, billing, and commissions.',
     eyebrow: 'For field technicians',
@@ -82,6 +86,7 @@ export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   },
   business: {
     path: '/locksmith-business-management',
+    breadcrumbLabel: 'Business Management',
     seoTitle: 'Locksmith Business Management Software | LockOps Pro',
     description: 'Locksmith business management software for owners who need revenue, tax, commissions, cash handovers, call conversion, exports, and team control.',
     eyebrow: 'For owners',
@@ -103,6 +108,7 @@ export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   },
   automotive: {
     path: '/automotive-locksmith-software',
+    breadcrumbLabel: 'Automotive Locksmith Software',
     seoTitle: 'Automotive Locksmith Software | LockOps Pro',
     description: 'Automotive locksmith software for vehicle job intake, VIN and key details, technician dispatch, proof of work, payment closeout, and owner visibility.',
     eyebrow: 'For automotive locksmith work',
@@ -123,6 +129,7 @@ export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   },
   commercial: {
     path: '/commercial-locksmith-software',
+    breadcrumbLabel: 'Commercial Locksmith Software',
     seoTitle: 'Commercial Locksmith Software | LockOps Pro',
     description: 'Commercial locksmith software for scheduled service, door details, technician assignments, job history, proof of work, payment closeout, and follow-up.',
     eyebrow: 'For commercial locksmith work',
@@ -143,6 +150,7 @@ export const publicSeoPages: Record<string, MarketingPageDefinition> = {
   },
   costing: {
     path: '/locksmith-job-costing',
+    breadcrumbLabel: 'Job Costing',
     seoTitle: 'Locksmith Job Costing and Cash Reconciliation | LockOps Pro',
     description: 'Locksmith job costing software for labor, parts, HST, payment methods, commissions, contractor cash handovers, and accountant-ready exports.',
     eyebrow: 'For clean closeouts',

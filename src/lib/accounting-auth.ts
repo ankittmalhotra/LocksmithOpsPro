@@ -48,6 +48,15 @@ const ENTITY_SELECT = {
   currency: true,
 } as const;
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'P2002',
+  );
+}
+
 /**
  * Production deployments may have the additive Books tables but have skipped
  * the one-time seed. Resolve the stable entity from the database, creating
@@ -67,27 +76,37 @@ async function findOrBootstrapEntity(entityCode: AccountingEntityCode, currentUs
   }
 
   const codes = currentUser.role === 'ADMIN' ? ['IT_MARKETING', 'LOCKSMITH'] as const : [entityCode];
-  const entities = await Promise.all(codes.map((code) => {
+  const entities = await Promise.all(codes.map(async (code) => {
     const defaults = ACCOUNTING_ENTITY_DEFAULTS[code];
-    return prisma.accountingEntity.upsert({
-      where: { code },
-      update: {},
-      create: {
-        code: defaults.code,
-        legalName: defaults.legalName,
-        corporationNumber: defaults.corporationNumber,
-        email: defaults.email,
-        addressLine1: defaults.addressLine1,
-        city: defaults.city,
-        province: defaults.province,
-        postalCode: defaults.postalCode,
-        country: defaults.country,
-        authorizedPersonName: defaults.authorizedPersonName,
-        authorizedPersonTitle: defaults.authorizedPersonTitle,
-        partnerBillingAnchor: new Date(`${defaults.partnerBillingAnchor}T00:00:00.000Z`),
-      },
-      select: ENTITY_SELECT,
-    });
+    try {
+      return await prisma.accountingEntity.upsert({
+        where: { code },
+        update: {},
+        create: {
+          code: defaults.code,
+          legalName: defaults.legalName,
+          corporationNumber: defaults.corporationNumber,
+          email: defaults.email,
+          addressLine1: defaults.addressLine1,
+          city: defaults.city,
+          province: defaults.province,
+          postalCode: defaults.postalCode,
+          country: defaults.country,
+          authorizedPersonName: defaults.authorizedPersonName,
+          authorizedPersonTitle: defaults.authorizedPersonTitle,
+          partnerBillingAnchor: new Date(`${defaults.partnerBillingAnchor}T00:00:00.000Z`),
+        },
+        select: ENTITY_SELECT,
+      });
+    } catch (error) {
+      // Concurrent Books requests can both observe a missing seed row. Prisma's
+      // upsert may surface the losing insert as P2002 instead of returning the
+      // row, so resolve the row created by the winning request.
+      if (!isUniqueConstraintError(error)) throw error;
+      const existing = await prisma.accountingEntity.findUnique({ where: { code }, select: ENTITY_SELECT });
+      if (!existing) throw error;
+      return existing;
+    }
   }));
   return entities.find((entity) => entity.code === entityCode) || existing;
 }
@@ -124,12 +143,24 @@ export async function getAccountingEntityAccess(
   // Existing Dispatchers are also provisioned lazily for the Locksmith book;
   // they never receive a membership for the private IT/marketing entity.
   if (!membership && currentUser.role === 'DISPATCHER' && entityCode === 'LOCKSMITH') {
-    membership = await prisma.accountingEntityMembership.upsert({
-      where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
-      update: {},
-      create: { userId: currentUser.id, entityId: entity.id, canView: true, canManageExpenses: true, canIssueInvoices: false, canMarkPayments: false },
-      select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
-    });
+    try {
+      membership = await prisma.accountingEntityMembership.upsert({
+        where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
+        update: {},
+        create: { userId: currentUser.id, entityId: entity.id, canView: true, canManageExpenses: true, canIssueInvoices: false, canMarkPayments: false },
+        select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
+      });
+    } catch (error) {
+      // Several Books API requests load in parallel on first visit. If another
+      // request wins the composite-key insert, reuse its membership instead of
+      // surfacing a false Books access error to the dispatcher.
+      if (!isUniqueConstraintError(error)) throw error;
+      membership = await prisma.accountingEntityMembership.findUnique({
+        where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
+        select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
+      });
+      if (!membership) throw error;
+    }
   }
 
   // Membership is the source of truth for entity-level Books access. The

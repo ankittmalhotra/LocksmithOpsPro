@@ -24,10 +24,11 @@ function mapExpense(expense: any) {
 }
 
 /**
- * Google Ads spend is a shared operating bill, not a manually editable
- * receipt. Once the Admin syncs daily metrics, show one read-only ledger row
- * per anchored biweekly period in either entity's Books view. It remains
- * separate from the operational profit snapshot and cannot be edited twice.
+ * Google Ads spend belongs to the IT/marketing company's books, not the
+ * Locksmith company's books. Once the Admin syncs daily metrics, show one
+ * read-only ledger row per anchored biweekly period in the IT ledger only. It
+ * remains separate from the operational profit snapshot and cannot be edited
+ * twice.
  */
 async function getGoogleAdsLedgerExpenses(from?: string, to?: string) {
   if (getMissingGoogleAdsConfigVariables().length > 0) return [];
@@ -95,7 +96,9 @@ async function handleGET(request: Request) {
     });
     const queryFrom = query.get('from') ? parseDateOnly(query.get('from'), 'from') : undefined;
     const queryTo = query.get('to') ? parseDateOnly(query.get('to'), 'to') : undefined;
-    const googleAdsExpenses = await getGoogleAdsLedgerExpenses(queryFrom, queryTo);
+    const googleAdsExpenses = code === 'IT_MARKETING'
+      ? await getGoogleAdsLedgerExpenses(queryFrom, queryTo)
+      : [];
     const mappedExpenses = [...expenses.map(mapExpense), ...googleAdsExpenses]
       .sort((left, right) => new Date(right.expenseDate).getTime() - new Date(left.expenseDate).getTime());
     return NextResponse.json({ success: true, entity: access.entity, expenses: mappedExpenses });

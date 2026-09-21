@@ -12,11 +12,25 @@ Reviewed the public route, middleware, global metadata, navigation, manifest, an
 
 Status: fixed. `/` now remains public. Private application routes remain protected.
 
-### 2. No sitemap or robots metadata existed
+### 2. The public sitemap was too small to support discovery
 
-Added:
+Added a focused public content set and sitemap entries for:
 
-- `/sitemap.xml` containing only the public homepage and `/contact`.
+- `/`
+- `/contact`
+- `/features`
+- `/locksmith-dispatch-software`
+- `/locksmith-field-service-management`
+- `/locksmith-business-management`
+- `/automotive-locksmith-software`
+- `/commercial-locksmith-software`
+- `/locksmith-job-costing`
+
+Each solution page targets a distinct search intent and contains original product-specific content. These are not doorway pages or keyword variants; they explain different workflows the product actually supports.
+
+Also added:
+
+- `/sitemap.xml` containing the nine public marketing URLs above.
 - `/robots.txt` allowing public pages and disallowing API, login, payment, tracking, dispatch, technician, owner, and accounting routes.
 
 Private operational screens are intentionally excluded from the sitemap because they are not public marketing content.
@@ -68,6 +82,7 @@ Added `/llms.txt` as a concise, accurate product summary for agents and retrieva
 ### Ongoing SEO work
 
 - Create dedicated pages for high-intent topics such as locksmith dispatch software, locksmith field service management, contractor cash reconciliation, and automotive locksmith operations only when each page has unique, useful content.
+- Keep the sitemap limited to public pages that are useful without authentication. A larger sitemap is helpful only when the additional URLs are genuinely valuable and internally linked.
 - Add customer proof, reviews, or case studies only when real and permissioned.
 - Monitor Search Console indexing, queries, impressions, clicks, and Core Web Vitals.
 - Keep the public homepage focused on the product; do not index authenticated dashboards or customer/job URLs.

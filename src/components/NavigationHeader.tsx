@@ -45,7 +45,20 @@ export default function NavigationHeader() {
     router.refresh();
   };
 
-  if (pathname === '/' || pathname === '/login' || pathname === '/contact') {
+  const publicMarketingPaths = new Set([
+    '/',
+    '/login',
+    '/contact',
+    '/features',
+    '/locksmith-dispatch-software',
+    '/locksmith-field-service-management',
+    '/locksmith-business-management',
+    '/automotive-locksmith-software',
+    '/commercial-locksmith-software',
+    '/locksmith-job-costing',
+  ]);
+
+  if (publicMarketingPaths.has(pathname)) {
     return null;
   }
 

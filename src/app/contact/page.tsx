@@ -12,6 +12,7 @@ export const metadata: Metadata = {
     description: 'Talk with LockOps Pro about running a better locksmith operation across North America.',
     url: `${siteUrl}/contact`,
     type: 'website',
+    images: ['/opengraph-image'],
   },
 };
 

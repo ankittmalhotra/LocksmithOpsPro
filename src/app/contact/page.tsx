@@ -18,6 +18,30 @@ export const metadata: Metadata = {
 export default function ContactPage() {
   return (
     <div className="min-h-full bg-slate-950 text-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'ContactPage',
+            '@id': `${siteUrl}/contact#webpage`,
+            url: `${siteUrl}/contact`,
+            name: 'Contact LockOps Pro',
+            description: 'Contact LockOps Pro about locksmith dispatch, field operations, payments, and business management across North America.',
+            mainEntity: {
+              '@type': 'Organization',
+              name: 'LockOps Pro',
+              url: siteUrl,
+              email: 'info@locksmithsnearme.ca',
+              areaServed: [
+                { '@type': 'Country', name: 'United States' },
+                { '@type': 'Country', name: 'Canada' },
+                { '@type': 'Country', name: 'Mexico' },
+              ],
+            },
+          }),
+        }}
+      />
       <header className="border-b border-white/10">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
           <Link href="/" className="group flex items-center gap-3" aria-label="LockOps Pro home">

@@ -61,31 +61,35 @@ async function findOrBootstrapEntity(entityCode: AccountingEntityCode, currentUs
     where: { code: entityCode },
     select: ENTITY_SELECT,
   });
-  if (existing) return existing;
+  if (existing && currentUser.role !== 'ADMIN') return existing;
   if (currentUser.role !== 'ADMIN' && !(currentUser.role === 'DISPATCHER' && entityCode === 'LOCKSMITH')) {
-    return null;
+    return existing;
   }
 
-  const defaults = ACCOUNTING_ENTITY_DEFAULTS[entityCode];
-  return prisma.accountingEntity.upsert({
-    where: { code: entityCode },
-    update: {},
-    create: {
-      code: defaults.code,
-      legalName: defaults.legalName,
-      corporationNumber: defaults.corporationNumber,
-      email: defaults.email,
-      addressLine1: defaults.addressLine1,
-      city: defaults.city,
-      province: defaults.province,
-      postalCode: defaults.postalCode,
-      country: defaults.country,
-      authorizedPersonName: defaults.authorizedPersonName,
-      authorizedPersonTitle: defaults.authorizedPersonTitle,
-      partnerBillingAnchor: new Date(`${defaults.partnerBillingAnchor}T00:00:00.000Z`),
-    },
-    select: ENTITY_SELECT,
-  });
+  const codes = currentUser.role === 'ADMIN' ? ['IT_MARKETING', 'LOCKSMITH'] as const : [entityCode];
+  const entities = await Promise.all(codes.map((code) => {
+    const defaults = ACCOUNTING_ENTITY_DEFAULTS[code];
+    return prisma.accountingEntity.upsert({
+      where: { code },
+      update: {},
+      create: {
+        code: defaults.code,
+        legalName: defaults.legalName,
+        corporationNumber: defaults.corporationNumber,
+        email: defaults.email,
+        addressLine1: defaults.addressLine1,
+        city: defaults.city,
+        province: defaults.province,
+        postalCode: defaults.postalCode,
+        country: defaults.country,
+        authorizedPersonName: defaults.authorizedPersonName,
+        authorizedPersonTitle: defaults.authorizedPersonTitle,
+        partnerBillingAnchor: new Date(`${defaults.partnerBillingAnchor}T00:00:00.000Z`),
+      },
+      select: ENTITY_SELECT,
+    });
+  }));
+  return entities.find((entity) => entity.code === entityCode) || existing;
 }
 
 /**

@@ -6,17 +6,9 @@ import { addRequestId, getRequestId, logFailedRequest } from '@/lib/request-logg
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Root path handling: direct user to their workspace if authenticated, or login
+  // The root page is public so search engines and prospective customers can crawl it.
   if (pathname === '/') {
-    const sessionToken = request.cookies.get('locksmith_user_session')?.value;
-    const user = sessionToken ? deserializeSession(sessionToken) : null;
-    if (!user) {
-      return NextResponse.redirect(new URL('/login', request.url));
-    }
-    const target = user.role === 'ADMIN' || user.role === 'DISPATCHER'
-      ? '/dispatch'
-      : '/tech';
-    return NextResponse.redirect(new URL(target, request.url));
+    return NextResponse.next();
   }
 
   // Paths that require role protection

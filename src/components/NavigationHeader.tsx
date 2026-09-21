@@ -45,7 +45,7 @@ export default function NavigationHeader() {
     router.refresh();
   };
 
-  if (pathname === '/' || pathname === '/login') {
+  if (pathname === '/' || pathname === '/login' || pathname === '/contact') {
     return null;
   }
 

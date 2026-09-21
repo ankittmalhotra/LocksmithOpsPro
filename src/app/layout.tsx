@@ -2,10 +2,39 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import NavigationHeader from '@/components/NavigationHeader';
 import SiteFooter from '@/components/SiteFooter';
+import { siteUrl } from '@/lib/site';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: 'LockOps Pro | Locksmith Operations Management',
   description: 'Run every locksmith job from first call to final payment with LockOps Pro: dispatch, field workflows, payments, proof of work, settlements, and owner reporting.',
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    type: 'website',
+    url: siteUrl,
+    siteName: 'LockOps Pro',
+    title: 'LockOps Pro | Locksmith Operations Management',
+    description: 'Run every locksmith job from first call to final payment with dispatch, field workflows, payments, proof of work, settlements, and owner reporting.',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'LockOps Pro | Locksmith Operations Management',
+    description: 'Run every locksmith job from first call to final payment.',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
+  },
+  manifest: '/manifest.json',
 };
 
 export const viewport: Viewport = {

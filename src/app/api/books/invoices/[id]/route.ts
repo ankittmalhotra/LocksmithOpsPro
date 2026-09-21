@@ -26,7 +26,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ id: s
     const access = await getAccountingEntityAccess(code, user);
     if (!access?.canView) return NextResponse.json({ success: false, error: 'Forbidden: Books access required' }, { status: 403 });
     const { id } = await params;
-    const invoice = await prisma.partnerInvoice.findFirst({ where: { id, ...(code === 'LOCKSMITH' ? { recipientEntityId: access.entity.id } : { issuerEntityId: access.entity.id }) }, include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } }, auditEvents: { orderBy: { createdAt: 'asc' } } } });
+    const invoice = await prisma.partnerInvoice.findFirst({ where: { id, ...(code === 'LOCKSMITH' ? { recipientEntityId: access.entity.id, status: 'ISSUED' } : { issuerEntityId: access.entity.id }) }, include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } }, auditEvents: { orderBy: { createdAt: 'asc' } } } });
     if (!invoice) return NextResponse.json({ success: false, error: 'Invoice not found' }, { status: 404 });
     return NextResponse.json({ success: true, invoice: mapInvoice(invoice, user?.role === 'DISPATCHER' && code === 'LOCKSMITH') });
   } catch (error) {

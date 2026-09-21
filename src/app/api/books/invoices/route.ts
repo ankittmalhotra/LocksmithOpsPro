@@ -38,8 +38,8 @@ async function handleGET(request: Request) {
     const access = await getAccountingEntityAccess(code, user);
     if (!access?.canView) return NextResponse.json({ success: false, error: 'Forbidden: Books access required' }, { status: 403 });
     const invoices = await prisma.partnerInvoice.findMany({
-      where: code === 'LOCKSMITH' ? { recipientEntityId: access.entity.id } : { issuerEntityId: access.entity.id },
-      include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } } },
+      where: code === 'LOCKSMITH' ? { recipientEntityId: access.entity.id, status: 'ISSUED' } : { issuerEntityId: access.entity.id },
+      include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } }, auditEvents: { orderBy: { createdAt: 'asc' } } },
       orderBy: { createdAt: 'desc' },
     });
     const redactIssuer = user?.role === 'DISPATCHER' && code === 'LOCKSMITH';

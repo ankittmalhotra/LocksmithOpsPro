@@ -25,6 +25,9 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
     if (targetStatus !== 'RECEIVED' && targetStatus !== 'PENDING') return NextResponse.json({ success: false, error: 'Payment status must be RECEIVED or PENDING' }, { status: 400 });
     const existing = await prisma.partnerInvoice.findUnique({ where: { id }, include: { issuerEntity: true, recipientEntity: true } });
     if (!existing) return NextResponse.json({ success: false, error: 'Invoice not found' }, { status: 404 });
+    if (existing.issuerEntity.code !== 'IT_MARKETING' || existing.recipientEntity.code !== 'LOCKSMITH') {
+      return NextResponse.json({ success: false, error: 'Only IT & Marketing invoices to Locksmith can be paid here' }, { status: 409 });
+    }
     if (existing.status !== 'ISSUED') return NextResponse.json({ success: false, error: 'Only issued invoices can have payment status changed' }, { status: 409 });
     if (existing.paymentStatus === targetStatus) return NextResponse.json({ success: true, invoice: mapPaymentInvoice(existing) });
     const paidAt = targetStatus === 'RECEIVED' ? (body?.paidAt ? new Date(body.paidAt) : new Date()) : null;

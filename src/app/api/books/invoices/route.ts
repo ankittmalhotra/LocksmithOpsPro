@@ -55,6 +55,9 @@ async function handlePOST(request: Request) {
     const user = await getCurrentUser();
     if (!user || user.role !== 'ADMIN') return NextResponse.json({ success: false, error: 'Forbidden: Admin access required' }, { status: 403 });
     const body = await request.json();
+    if (body?.entityCode !== 'IT_MARKETING') {
+      return NextResponse.json({ success: false, error: 'Only IT & Marketing can issue partner invoices to Locksmith' }, { status: 400 });
+    }
     if (typeof body?.billingPeriodId !== 'string' || !body.billingPeriodId) return NextResponse.json({ success: false, error: 'billingPeriodId is required' }, { status: 400 });
     const issuer = await requirePartnerInvoiceIssuanceAccess('IT_MARKETING', ONTARIO_HST_RATE_BPS, user);
     // PostgreSQL DATE values are materialized as UTC midnight by Prisma. Keep

@@ -1,17 +1,18 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import NavigationHeader from '@/components/NavigationHeader';
+import SiteFooter from '@/components/SiteFooter';
 
 export const metadata: Metadata = {
-  title: 'LockOps Pro - Locksmith Operations Management',
-  description: 'Mobile-first cloud operations platform for locksmith services',
+  title: 'LockOps Pro | Locksmith Operations Management',
+  description: 'Run every locksmith job from first call to final payment with LockOps Pro: dispatch, field workflows, payments, proof of work, settlements, and owner reporting.',
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
+  userScalable: true,
 };
 
 export default function RootLayout({
@@ -26,9 +27,7 @@ export default function RootLayout({
 
         <main className="flex-1 flex flex-col">{children}</main>
 
-        <footer className="bg-white border-t border-slate-200 py-3 text-center text-xs text-slate-500">
-          LockOps Pro © 2026 • Field Service Operations Platform
-        </footer>
+        <SiteFooter />
       </body>
     </html>
   );

@@ -28,3 +28,41 @@ body {
 input, select, textarea, button {
   touch-action: manipulation;
 }
+
+@layer components {
+  .public-nav-link {
+    @apply text-sm font-semibold text-slate-300 transition hover:text-white;
+  }
+
+  .button-amber {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:ring-offset-2 focus:ring-offset-slate-950;
+  }
+
+  .button-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 px-5 py-3 text-sm font-black text-white transition hover:border-white/30 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/50;
+  }
+
+  .section-kicker {
+    @apply text-xs font-black uppercase tracking-[0.2em] text-blue-700;
+  }
+
+  .section-title {
+    @apply max-w-3xl text-4xl font-black leading-[1.05] tracking-[-0.045em] text-slate-950 sm:text-5xl;
+  }
+}
+
+.hero-grid {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

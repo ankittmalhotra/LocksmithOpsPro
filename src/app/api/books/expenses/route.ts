@@ -29,7 +29,7 @@ function mapExpense(expense: any) {
  * per anchored biweekly period in either entity's Books view. It remains
  * separate from the operational profit snapshot and cannot be edited twice.
  */
-async function getGoogleAdsLedgerExpenses() {
+async function getGoogleAdsLedgerExpenses(from?: string, to?: string) {
   if (getMissingGoogleAdsConfigVariables().length > 0) return [];
   try {
     const metrics = await prisma.googleAdsDailyMetric.findMany({
@@ -47,21 +47,23 @@ async function getGoogleAdsLedgerExpenses() {
       current.totalCents += Math.round(metric.spend * 100);
       grouped.set(key, current);
     }
-    return [...grouped.values()].map((entry) => ({
-      id: `google-ads-${entry.customerId}-${entry.periodStart}`,
-      vendorName: 'Google Ads',
-      description: `Google Ads billing · ${entry.periodStart} – ${entry.periodEnd}`,
-      expenseDate: new Date(`${entry.periodEnd}T00:00:00.000Z`),
-      subtotalAmount: entry.totalCents / 100,
-      hstAmount: 0,
-      totalAmount: entry.totalCents / 100,
-      hstRate: null,
-      paymentStatus: 'PAID',
-      paymentMethod: 'CREDIT_CARD',
-      notes: 'Automatically included from synced Google Ads daily billing. Read-only ledger entry.',
-      systemGenerated: true,
-      source: 'GOOGLE_ADS',
-    }));
+    return [...grouped.values()]
+      .filter((entry) => (!from || entry.periodEnd >= from) && (!to || entry.periodStart <= to))
+      .map((entry) => ({
+        id: `google-ads-${entry.customerId}-${entry.periodStart}`,
+        vendorName: 'Google Ads',
+        description: `Google Ads billing · ${entry.periodStart} – ${entry.periodEnd}`,
+        expenseDate: new Date(`${entry.periodEnd}T00:00:00.000Z`),
+        subtotalAmount: entry.totalCents / 100,
+        hstAmount: 0,
+        totalAmount: entry.totalCents / 100,
+        hstRate: null,
+        paymentStatus: 'PAID',
+        paymentMethod: 'CREDIT_CARD',
+        notes: 'Automatically included from synced Google Ads daily billing. Read-only ledger entry.',
+        systemGenerated: true,
+        source: 'GOOGLE_ADS',
+      }));
   } catch (error: any) {
     // The Google Ads cache is optional. A missing cache migration must not
     // make the core Books expense ledger unavailable.
@@ -91,7 +93,9 @@ async function handleGET(request: Request) {
       include: { category: true },
       orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
     });
-    const googleAdsExpenses = await getGoogleAdsLedgerExpenses();
+    const queryFrom = query.get('from') ? parseDateOnly(query.get('from'), 'from') : undefined;
+    const queryTo = query.get('to') ? parseDateOnly(query.get('to'), 'to') : undefined;
+    const googleAdsExpenses = await getGoogleAdsLedgerExpenses(queryFrom, queryTo);
     const mappedExpenses = [...expenses.map(mapExpense), ...googleAdsExpenses]
       .sort((left, right) => new Date(right.expenseDate).getTime() - new Date(left.expenseDate).getTime());
     return NextResponse.json({ success: true, entity: access.entity, expenses: mappedExpenses });

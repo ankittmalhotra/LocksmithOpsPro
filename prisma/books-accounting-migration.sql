@@ -8,6 +8,7 @@ ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'ACCOUNTANT';
 DO $$ BEGIN CREATE TYPE "AccountingEntityCode" AS ENUM ('IT_MARKETING', 'LOCKSMITH'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "AccountingExpensePaymentStatus" AS ENUM ('UNPAID', 'PAID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "AccountingExpensePaymentMethod" AS ENUM ('CASH', 'BANK_TRANSFER', 'INTERAC', 'CREDIT_CARD', 'DEBIT_CARD', 'OTHER'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "AccountingExpenseReceiptStatus" AS ENUM ('ATTACHED', 'MISSING', 'NOT_REQUIRED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerBillingPeriodStatus" AS ENUM ('OPEN', 'CARRIED_FORWARD', 'INVOICED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerInvoiceStatus" AS ENUM ('DRAFT', 'ISSUED', 'VOID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerInvoicePaymentStatus" AS ENUM ('PENDING', 'RECEIVED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -49,8 +50,17 @@ CREATE TABLE IF NOT EXISTS "AccountingExpense" (
   "receiptUrl" TEXT, "notes" TEXT, "createdById" TEXT NOT NULL, "updatedById" TEXT, "voidedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "AccountingExpense_pkey" PRIMARY KEY ("id"), CONSTRAINT "AccountingExpense_entityId_fkey" FOREIGN KEY ("entityId") REFERENCES "AccountingEntity"("id") ON DELETE CASCADE, CONSTRAINT "AccountingExpense_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "AccountingExpenseCategory"("id") ON DELETE SET NULL, CONSTRAINT "AccountingExpense_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id"), CONSTRAINT "AccountingExpense_updatedById_fkey" FOREIGN KEY ("updatedById") REFERENCES "User"("id")
 );
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "businessPurpose" TEXT;
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptStatus" "AccountingExpenseReceiptStatus" NOT NULL DEFAULT 'MISSING';
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptStorageKey" TEXT;
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptData" BYTEA;
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptFileName" TEXT;
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptMimeType" TEXT;
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptSize" INTEGER;
+ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptUploadedAt" TIMESTAMP(3);
 CREATE INDEX IF NOT EXISTS "AccountingExpense_entityId_expenseDate_idx" ON "AccountingExpense" ("entityId", "expenseDate");
 CREATE INDEX IF NOT EXISTS "AccountingExpense_entityId_paymentStatus_idx" ON "AccountingExpense" ("entityId", "paymentStatus");
+CREATE INDEX IF NOT EXISTS "AccountingExpense_entityId_receiptStatus_idx" ON "AccountingExpense" ("entityId", "receiptStatus");
 CREATE INDEX IF NOT EXISTS "AccountingExpense_categoryId_idx" ON "AccountingExpense" ("categoryId");
 
 CREATE TABLE IF NOT EXISTS "PartnerBillingPeriod" (

@@ -6,12 +6,43 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { centsToDecimal, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
 
 function mapExpense(expense: any) {
-  return { ...expense, subtotalAmount: serializeDecimal(expense.subtotalAmount), hstAmount: serializeDecimal(expense.hstAmount), totalAmount: serializeDecimal(expense.totalAmount), hstRate: expense.hstRate === null ? null : Number(expense.hstRate) };
+  const { receiptStorageKey: _receiptStorageKey, receiptData: _receiptData, ...safeExpense } = expense;
+  return { ...safeExpense, subtotalAmount: serializeDecimal(safeExpense.subtotalAmount), hstAmount: serializeDecimal(safeExpense.hstAmount), totalAmount: serializeDecimal(safeExpense.totalAmount), hstRate: safeExpense.hstRate === null ? null : Number(safeExpense.hstRate) };
 }
+
+const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
+const RECEIPT_TYPES = new Map([
+  ['application/pdf', '.pdf'],
+  ['image/jpeg', '.jpg'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp'],
+]);
+
+async function storeReceipt(entityId: string, file: File) {
+  const extension = RECEIPT_TYPES.get(file.type);
+  if (!extension) throw new Error('Receipt must be a PDF, JPG, PNG, or WEBP file');
+  if (file.size <= 0 || file.size > RECEIPT_MAX_BYTES) throw new Error('Receipt must be between 1 byte and 10 MB');
+  const { randomUUID } = await import('node:crypto');
+  const storageKey = `${entityId}/${randomUUID()}${extension}`;
+  return { storageKey, data: Buffer.from(await file.arrayBuffer()), fileName: file.name.slice(0, 255), mimeType: file.type, size: file.size };
+}
+async function readExpenseBody(request: Request): Promise<{ body: Record<string, any>; file: File | null }> {
+  const contentType = request.headers.get('content-type') || '';
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await request.formData();
+    const fileValue = formData.get('receipt');
+    const body: Record<string, any> = {};
+    for (const [key, value] of formData.entries()) if (key !== 'receipt' && typeof value === 'string') body[key] = value;
+    return { body, file: fileValue instanceof File && fileValue.size > 0 ? fileValue : null };
+  }
+  return { body: await request.json(), file: null };
+}
+function receiptStatus(value: unknown) { return value === 'ATTACHED' || value === 'MISSING' || value === 'NOT_REQUIRED' ? value : null; }
 
 async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const body = await request.json();
+    const parsed = await readExpenseBody(request);
+    const body = parsed.body;
     const code = isBooksEntityCode(body?.entityCode) ? body.entityCode : new URL(request.url).searchParams.get('entityCode');
     if (!isBooksEntityCode(code)) return NextResponse.json({ success: false, error: 'entityCode must be IT_MARKETING or LOCKSMITH' }, { status: 400 });
     const access = await getAccountingEntityAccess(code);
@@ -34,12 +65,23 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
         if (!category) return NextResponse.json({ success: false, error: 'Expense category not found' }, { status: 400 });
       }
     }
+    const businessPurpose = body.businessPurpose === undefined ? existing.businessPurpose || '' : String(body.businessPurpose).trim();
+    if (!businessPurpose) return NextResponse.json({ success: false, error: 'Business purpose is required' }, { status: 400 });
+    const requestedReceiptStatus = body.receiptStatus === undefined ? existing.receiptStatus : receiptStatus(body.receiptStatus);
+    if (!requestedReceiptStatus) return NextResponse.json({ success: false, error: 'Invalid receipt status' }, { status: 400 });
+    const status = parsed.file ? 'ATTACHED' : requestedReceiptStatus;
+    const notes = body.notes === undefined ? (existing.notes || '') : String(body.notes).trim();
+    if (status === 'ATTACHED' && !parsed.file && !existing.receiptStorageKey) return NextResponse.json({ success: false, error: 'Attach the receipt file or choose a different receipt status' }, { status: 400 });
+    if (status !== 'ATTACHED' && !notes) return NextResponse.json({ success: false, error: 'Add a note explaining why a receipt is missing or not required' }, { status: 400 });
+    const storedReceipt = parsed.file ? await storeReceipt(access.entity.id, parsed.file) : null;
+    const receiptChanged = Boolean(storedReceipt) || status !== 'ATTACHED';
     const expense = await prisma.$transaction(async (tx) => {
       const updated = await tx.accountingExpense.update({
         where: { id },
         data: {
         vendorName: body.vendorName === undefined ? undefined : String(body.vendorName).trim(),
         categoryId,
+        businessPurpose,
         description: body.description === undefined ? undefined : (String(body.description).trim() || null),
         expenseDate: body.expenseDate === undefined ? undefined : new Date(`${parseDateOnly(body.expenseDate, 'expenseDate')}T00:00:00.000Z`),
         subtotalAmount: centsToDecimal(subtotalCents), hstAmount: centsToDecimal(hstCents), totalAmount: centsToDecimal(totalCents),
@@ -47,11 +89,27 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
         paymentStatus, paymentMethod: body.paymentMethod === undefined ? undefined : body.paymentMethod || null,
         paidAt: paymentStatus === 'PAID' ? (existing.paidAt || new Date()) : null,
         receiptUrl: body.receiptUrl === undefined ? undefined : String(body.receiptUrl).trim() || null,
-        notes: body.notes === undefined ? undefined : String(body.notes).trim() || null,
+        receiptStatus: status,
+        ...(storedReceipt ? {
+          receiptStorageKey: storedReceipt.storageKey,
+          receiptData: storedReceipt.data,
+          receiptFileName: storedReceipt.fileName,
+          receiptMimeType: storedReceipt.mimeType,
+          receiptSize: storedReceipt.size,
+          receiptUploadedAt: new Date(),
+        } : receiptChanged ? {
+          receiptStorageKey: null,
+          receiptData: null,
+          receiptFileName: null,
+          receiptMimeType: null,
+          receiptSize: null,
+          receiptUploadedAt: null,
+        } : {}),
+        notes: notes || null,
         updatedById: access.user.id,
         }, include: { category: true },
       });
-      await tx.accountingAuditEvent.create({ data: { entityId: access.entity.id, actorId: access.user.id, action: 'UPDATED', resourceType: 'AccountingExpense', resourceId: id, metadata: { totalAmount: totalCents / 100 } } });
+      await tx.accountingAuditEvent.create({ data: { entityId: access.entity.id, actorId: access.user.id, action: 'UPDATED', resourceType: 'AccountingExpense', resourceId: id, metadata: { totalAmount: totalCents / 100, receiptStatus: status, hasReceipt: status === 'ATTACHED', businessPurpose } } });
       return updated;
     });
     return NextResponse.json({ success: true, expense: mapExpense(expense) });

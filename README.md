@@ -131,8 +131,10 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
 7. Before opening **Books & accounting** on an existing production database,
    apply `prisma/books-accounting-migration.sql` once in the production SQL
    editor. It creates the entity-scoped Books tables, bootstraps both legal
-   entities, and provisions Admin/Dispatcher access. The migration is safe to
-   rerun. If Google Ads billing is enabled, also apply
+   entities, provisions Admin/Dispatcher access, and adds receipt evidence
+   storage/status fields for expense records. Uploaded receipts are retained
+   in the database and served only through authenticated Books access. The
+   migration is safe to rerun. If Google Ads billing is enabled, also apply
    `prisma/google-ads-daily-metric-migration.sql` once so synced spend can appear
    automatically in each Books period ledger.
 

@@ -14,8 +14,9 @@ DO $$ BEGIN CREATE TYPE "PartnerBillingPeriodStatus" AS ENUM ('OPEN', 'CARRIED_F
 DO $$ BEGIN CREATE TYPE "PartnerInvoiceStatus" AS ENUM ('DRAFT', 'ISSUED', 'VOID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerInvoicePaymentStatus" AS ENUM ('PENDING', 'RECEIVED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerInvoiceKind" AS ENUM ('PARTNER_SERVICE', 'CUSTOMER_SERVICE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE "AccountingEntityAuditAction" AS ENUM ('CREATED', 'UPDATED', 'RECEIPT_PARSED', 'ISSUED', 'VOIDED', 'PAYMENT_STATUS_CHANGED', 'MARKED_PAID', 'MARKED_UNPAID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "AccountingEntityAuditAction" AS ENUM ('CREATED', 'UPDATED', 'RECEIPT_PARSED', 'ISSUED', 'VOIDED', 'PAYMENT_STATUS_CHANGED', 'MARKED_PAID', 'MARKED_UNPAID', 'EMAIL_SENT'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 ALTER TYPE "AccountingEntityAuditAction" ADD VALUE IF NOT EXISTS 'RECEIPT_PARSED';
+ALTER TYPE "AccountingEntityAuditAction" ADD VALUE IF NOT EXISTS 'EMAIL_SENT';
 
 CREATE TABLE IF NOT EXISTS "AccountingEntity" (
   "id" TEXT NOT NULL DEFAULT gen_random_uuid(), "code" "AccountingEntityCode" NOT NULL, "legalName" TEXT NOT NULL,
@@ -94,7 +95,7 @@ CREATE INDEX IF NOT EXISTS "PartnerBillingPeriod_status_idx" ON "PartnerBillingP
 
 CREATE TABLE IF NOT EXISTS "PartnerInvoice" (
   "id" TEXT NOT NULL DEFAULT gen_random_uuid(), "billingPeriodId" TEXT, "issuerEntityId" TEXT NOT NULL, "recipientEntityId" TEXT, "invoiceNumber" TEXT NOT NULL,
-  "invoiceKind" "PartnerInvoiceKind" NOT NULL DEFAULT 'PARTNER_SERVICE', "status" "PartnerInvoiceStatus" NOT NULL DEFAULT 'DRAFT', "paymentStatus" "PartnerInvoicePaymentStatus" NOT NULL DEFAULT 'PENDING', "lineDescription" TEXT NOT NULL, "quantity" DECIMAL(12,2) NOT NULL DEFAULT 1, "serviceAmount" DECIMAL(12,2) NOT NULL, "hstRate" DECIMAL(5,4) NOT NULL DEFAULT 0, "hstAmount" DECIMAL(12,2) NOT NULL DEFAULT 0, "totalAmount" DECIMAL(12,2) NOT NULL, "currency" TEXT NOT NULL DEFAULT 'CAD', "periodStart" DATE, "periodEnd" DATE, "issuedAt" TIMESTAMP(3), "dueAt" TIMESTAMP(3), "hstRegistrationSnapshot" TEXT, "issuerSnapshot" JSONB NOT NULL, "recipientSnapshot" JSONB NOT NULL, "paymentTerms" TEXT, "notes" TEXT, "issuedById" TEXT, "voidedById" TEXT, "voidedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "invoiceKind" "PartnerInvoiceKind" NOT NULL DEFAULT 'PARTNER_SERVICE', "status" "PartnerInvoiceStatus" NOT NULL DEFAULT 'DRAFT', "paymentStatus" "PartnerInvoicePaymentStatus" NOT NULL DEFAULT 'PENDING', "lineDescription" TEXT NOT NULL, "quantity" DECIMAL(12,2) NOT NULL DEFAULT 1, "serviceAmount" DECIMAL(12,2) NOT NULL, "hstRate" DECIMAL(5,4) NOT NULL DEFAULT 0, "hstAmount" DECIMAL(12,2) NOT NULL DEFAULT 0, "totalAmount" DECIMAL(12,2) NOT NULL, "currency" TEXT NOT NULL DEFAULT 'CAD', "periodStart" DATE, "periodEnd" DATE, "issuedAt" TIMESTAMP(3), "dueAt" TIMESTAMP(3), "hstRegistrationSnapshot" TEXT, "issuerSnapshot" JSONB NOT NULL, "recipientSnapshot" JSONB NOT NULL, "paymentTerms" TEXT, "notes" TEXT, "emailSentAt" TIMESTAMP(3), "emailSentTo" TEXT, "emailMessageId" TEXT, "issuedById" TEXT, "voidedById" TEXT, "voidedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "PartnerInvoice_pkey" PRIMARY KEY ("id"), CONSTRAINT "PartnerInvoice_billingPeriodId_fkey" FOREIGN KEY ("billingPeriodId") REFERENCES "PartnerBillingPeriod"("id"), CONSTRAINT "PartnerInvoice_issuerEntityId_fkey" FOREIGN KEY ("issuerEntityId") REFERENCES "AccountingEntity"("id"), CONSTRAINT "PartnerInvoice_recipientEntityId_fkey" FOREIGN KEY ("recipientEntityId") REFERENCES "AccountingEntity"("id"), CONSTRAINT "PartnerInvoice_issuedById_fkey" FOREIGN KEY ("issuedById") REFERENCES "User"("id"), CONSTRAINT "PartnerInvoice_voidedById_fkey" FOREIGN KEY ("voidedById") REFERENCES "User"("id")
 );
 ALTER TABLE "PartnerInvoice" ALTER COLUMN "billingPeriodId" DROP NOT NULL;
@@ -105,6 +106,9 @@ ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "invoiceKind" "PartnerInvo
 ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "quantity" DECIMAL(12,2) NOT NULL DEFAULT 1;
 ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "paymentTerms" TEXT;
 ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "notes" TEXT;
+ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "emailSentAt" TIMESTAMP(3);
+ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "emailSentTo" TEXT;
+ALTER TABLE "PartnerInvoice" ADD COLUMN IF NOT EXISTS "emailMessageId" TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS "PartnerInvoice_billingPeriodId_key" ON "PartnerInvoice" ("billingPeriodId");
 CREATE UNIQUE INDEX IF NOT EXISTS "PartnerInvoice_invoiceNumber_key" ON "PartnerInvoice" ("invoiceNumber");
 CREATE INDEX IF NOT EXISTS "PartnerInvoice_issuerEntityId_issuedAt_idx" ON "PartnerInvoice" ("issuerEntityId", "issuedAt");

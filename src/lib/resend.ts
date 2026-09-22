@@ -284,3 +284,61 @@ export function buildInvoiceReceiptEmail(params: {
     `,
   };
 }
+
+function escapeEmailHtml(value: unknown): string {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+export function buildAccountingInvoiceEmail(params: {
+  invoiceNumber: string;
+  recipientName: string;
+  recipientEmail: string;
+  issuerName: string;
+  issuerAddress?: string;
+  issuerEmail?: string;
+  issuerHstNumber?: string;
+  description: string;
+  quantity: number;
+  serviceAmount: number;
+  hstRate: number;
+  hstAmount: number;
+  totalAmount: number;
+  paymentStatus: 'PENDING' | 'RECEIVED';
+  paidAt?: string;
+  issuedAt?: string;
+  dueAt?: string;
+  paymentTerms?: string;
+  notes?: string;
+  currency?: string;
+}): { subject: string; html: string; text: string } {
+  const money = (value: number) => `${params.currency || 'CAD'} ${value.toFixed(2)}`;
+  const date = (value?: string) => value ? new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(value)) : 'Due on receipt';
+  const issuerAddress = params.issuerAddress ? `<div>${escapeEmailHtml(params.issuerAddress)}</div>` : '';
+  const hstLabel = params.hstRate > 0 ? `HST (${(params.hstRate * 100).toFixed(0)}%)` : 'HST';
+  const paid = params.paymentStatus === 'RECEIVED';
+  const subject = paid ? `Payment received — invoice ${params.invoiceNumber}` : `Invoice ${params.invoiceNumber} from ${params.issuerName}`;
+  const text = [
+    `Invoice ${params.invoiceNumber}`,
+    `From: ${params.issuerName}`,
+    `To: ${params.recipientName}`,
+    `Issued: ${date(params.issuedAt)}`,
+    `Due: ${date(params.dueAt)}`,
+    `${params.description} — ${params.quantity} × ${money(params.quantity ? params.serviceAmount / params.quantity : params.serviceAmount)} = ${money(params.serviceAmount)}`,
+    `Subtotal: ${money(params.serviceAmount)}`,
+    `${hstLabel}: ${money(params.hstAmount)}`,
+    `Total: ${money(params.totalAmount)}`,
+    `Payment status: ${paid ? `Paid${params.paidAt ? ` on ${date(params.paidAt)}` : ''}` : 'Payment pending'}`,
+    params.paymentTerms ? `Payment terms: ${params.paymentTerms}` : '',
+    params.notes ? `Notes: ${params.notes}` : '',
+  ].filter(Boolean).join('\n');
+  return {
+    subject,
+    text,
+    html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;color:#0f172a}.card{max-width:680px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden}.header{padding:28px 32px;border-bottom:1px solid #e2e8f0}.content{padding:28px 32px}.parties{display:flex;gap:32px;margin-bottom:28px}.party{flex:1;font-size:13px;line-height:1.55}.label{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b}.items{width:100%;border-collapse:collapse;font-size:13px}.items th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#64748b;border-bottom:1px solid #e2e8f0;padding:10px 0}.items td{padding:16px 0;border-bottom:1px solid #f1f5f9}.right{text-align:right}.totals{margin:24px 0 0 auto;width:260px;font-size:13px}.totals div{display:flex;justify-content:space-between;padding:5px 0}.total{border-top:2px solid #cbd5e1;margin-top:8px;padding-top:10px!important;font-size:18px;font-weight:800}.payment{margin:20px 0 0;padding:12px 14px;border-radius:10px;background:${paid ? '#ecfdf5' : '#fffbeb'};color:${paid ? '#047857' : '#92400e'};font-weight:800}.notes{margin-top:28px;padding-top:18px;border-top:1px solid #e2e8f0;color:#475569;font-size:12px;line-height:1.55}.footer{padding:18px 32px;background:#f8fafc;color:#64748b;font-size:11px}</style></head><body><div class="card"><div class="header"><div style="font-size:30px;font-weight:800">INVOICE</div><div style="margin-top:6px;color:#64748b;font-size:13px">${escapeEmailHtml(params.invoiceNumber)} · Issued ${escapeEmailHtml(date(params.issuedAt))} · Due ${escapeEmailHtml(date(params.dueAt))}</div></div><div class="content"><div class="parties"><div class="party"><div class="label">From</div><strong>${escapeEmailHtml(params.issuerName)}</strong>${issuerAddress}${params.issuerEmail ? `<div>${escapeEmailHtml(params.issuerEmail)}</div>` : ''}${params.issuerHstNumber ? `<div>HST: ${escapeEmailHtml(params.issuerHstNumber)}</div>` : ''}</div><div class="party"><div class="label">Bill to</div><strong>${escapeEmailHtml(params.recipientName)}</strong><div>${escapeEmailHtml(params.recipientEmail)}</div></div></div><table class="items"><thead><tr><th>Description</th><th class="right">Qty</th><th class="right">Amount</th></tr></thead><tbody><tr><td>${escapeEmailHtml(params.description)}</td><td class="right">${params.quantity.toFixed(2).replace(/\\.00$/, '')}</td><td class="right">${escapeEmailHtml(money(params.serviceAmount))}</td></tr></tbody></table><div class="totals"><div><span>Subtotal</span><strong>${escapeEmailHtml(money(params.serviceAmount))}</strong></div><div><span>${escapeEmailHtml(hstLabel)}</span><strong>${escapeEmailHtml(money(params.hstAmount))}</strong></div><div class="total"><span>Total ${escapeEmailHtml(params.currency || 'CAD')}</span><span>${escapeEmailHtml(money(params.totalAmount))}</span></div></div><div class="payment">${paid ? `Paid${params.paidAt ? ` on ${escapeEmailHtml(date(params.paidAt))}` : ''}` : 'Payment pending'}</div>${params.paymentTerms || params.notes ? `<div class="notes">${params.paymentTerms ? `<div><strong>Payment terms:</strong> ${escapeEmailHtml(params.paymentTerms)}</div>` : ''}${params.notes ? `<div>${escapeEmailHtml(params.notes)}</div>` : ''}</div>` : ''}</div><div class="footer">Thank you for your business. Please reply to this email with any billing questions.</div></div></body></html>`,
+  };
+}

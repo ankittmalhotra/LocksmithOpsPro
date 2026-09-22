@@ -4,6 +4,8 @@ import { getCurrentUser } from '@/lib/auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { decimalToCents, serializeDecimal } from '@/lib/books-api';
+import { sendEmail } from '@/lib/resend';
+import { buildBooksInvoiceEmail, invoiceRecipientEmail } from '@/lib/accounting-invoice-email';
 
 function mapPaymentInvoice(invoice: any) {
   return {
@@ -39,7 +41,26 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
       await tx.accountingAuditEvent.create({ data: { entityId: existing.issuerEntityId, invoiceId: id, actorId: user.id, action: 'PAYMENT_STATUS_CHANGED', resourceType: 'PartnerInvoice', resourceId: id, metadata: { fromStatus: existing.paymentStatus, toStatus: targetStatus, amount: decimalToCents(existing.totalAmount) / 100 } } });
       return invoice;
     });
-    return NextResponse.json({ success: true, invoice: mapPaymentInvoice(updated) });
+    let responseInvoice = updated;
+    let emailNotification: { sent: boolean; to?: string; error?: string } | undefined;
+    if (targetStatus === 'RECEIVED') {
+      const recipientEmail = invoiceRecipientEmail(updated);
+      if (recipientEmail) {
+        const email = buildBooksInvoiceEmail(updated, recipientEmail);
+        const result = await sendEmail({ to: recipientEmail, subject: email.subject, html: email.html, text: email.text, replyTo: updated.issuerEntity.email || undefined });
+        if (result.success) {
+          responseInvoice = await prisma.$transaction(async (tx) => {
+            const saved = await tx.partnerInvoice.update({ where: { id }, data: { emailSentAt: new Date(), emailSentTo: recipientEmail, emailMessageId: result.id || null }, include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } } } });
+            await tx.accountingAuditEvent.create({ data: { entityId: existing.issuerEntityId, invoiceId: id, actorId: user.id, action: 'EMAIL_SENT', resourceType: 'PartnerInvoice', resourceId: id, metadata: { invoiceNumber: existing.invoiceNumber, recipientEmail, paymentStatus: targetStatus, messageId: result.id || null } } });
+            return saved;
+          });
+          emailNotification = { sent: true, to: recipientEmail };
+        } else {
+          emailNotification = { sent: false, to: recipientEmail, error: result.error || 'Unable to send paid invoice email' };
+        }
+      }
+    }
+    return NextResponse.json({ success: true, invoice: mapPaymentInvoice(responseInvoice), emailNotification });
   } catch (error) {
     logCaughtRequestError(request, '/api/books/invoices/[id]/payment', error);
     return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to update invoice payment') }, { status: 400 });

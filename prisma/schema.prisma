@@ -82,6 +82,7 @@ enum AccountingEntityAuditAction {
   PAYMENT_STATUS_CHANGED
   MARKED_PAID
   MARKED_UNPAID
+  EMAIL_SENT
 }
 
 enum JobStatus {
@@ -642,6 +643,9 @@ model PartnerInvoice {
   recipientSnapshot       Json
   paymentTerms            String?
   notes                   String?
+  emailSentAt             DateTime?
+  emailSentTo             String?
+  emailMessageId          String?
   issuedById              String?
   issuedBy                User?                       @relation("PartnerInvoiceIssuedBy", fields: [issuedById], references: [id])
   voidedById              String?

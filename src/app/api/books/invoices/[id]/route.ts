@@ -12,6 +12,7 @@ function mapInvoice(invoice: any, redactIssuer = false) {
     ...safeInvoice,
     ...(redactIssuer ? {} : { issuerEntity, issuerSnapshot }),
     serviceAmount: serializeDecimal(invoice.serviceAmount),
+    quantity: serializeDecimal(invoice.quantity || 1),
     hstAmount: serializeDecimal(invoice.hstAmount),
     totalAmount: serializeDecimal(invoice.totalAmount),
     hstRate: Number(invoice.hstRate),

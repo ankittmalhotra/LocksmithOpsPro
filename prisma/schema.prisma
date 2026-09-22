@@ -68,6 +68,11 @@ enum PartnerInvoicePaymentStatus {
   RECEIVED
 }
 
+enum PartnerInvoiceKind {
+  PARTNER_SERVICE
+  CUSTOMER_SERVICE
+}
+
 enum AccountingEntityAuditAction {
   CREATED
   UPDATED
@@ -611,28 +616,32 @@ model PartnerBillingPeriod {
 
 model PartnerInvoice {
   id                      String                      @id @default(uuid())
-  billingPeriodId         String                      @unique
-  billingPeriod           PartnerBillingPeriod        @relation(fields: [billingPeriodId], references: [id])
+  billingPeriodId         String?                     @unique
+  billingPeriod           PartnerBillingPeriod?       @relation(fields: [billingPeriodId], references: [id])
   issuerEntityId          String
   issuerEntity            AccountingEntity            @relation("PartnerInvoiceIssuer", fields: [issuerEntityId], references: [id])
-  recipientEntityId       String
-  recipientEntity         AccountingEntity            @relation("PartnerInvoiceRecipient", fields: [recipientEntityId], references: [id])
+  recipientEntityId       String?
+  recipientEntity         AccountingEntity?           @relation("PartnerInvoiceRecipient", fields: [recipientEntityId], references: [id])
   invoiceNumber           String                      @unique
+  invoiceKind             PartnerInvoiceKind          @default(PARTNER_SERVICE)
   status                  PartnerInvoiceStatus        @default(DRAFT)
   paymentStatus           PartnerInvoicePaymentStatus @default(PENDING)
   lineDescription         String
+  quantity                Decimal                     @default(1) @db.Decimal(12, 2)
   serviceAmount           Decimal                     @db.Decimal(12, 2)
   hstRate                 Decimal                     @default(0) @db.Decimal(5, 4)
   hstAmount               Decimal                     @default(0) @db.Decimal(12, 2)
   totalAmount             Decimal                     @db.Decimal(12, 2)
   currency                String                      @default("CAD")
-  periodStart             DateTime                    @db.Date
-  periodEnd               DateTime                    @db.Date
+  periodStart             DateTime?                   @db.Date
+  periodEnd               DateTime?                   @db.Date
   issuedAt                DateTime?
   dueAt                   DateTime?
   hstRegistrationSnapshot String?
   issuerSnapshot          Json
   recipientSnapshot       Json
+  paymentTerms            String?
+  notes                   String?
   issuedById              String?
   issuedBy                User?                       @relation("PartnerInvoiceIssuedBy", fields: [issuedById], references: [id])
   voidedById              String?

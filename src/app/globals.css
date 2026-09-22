@@ -66,3 +66,25 @@ input, select, textarea, button {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Books uses one dedicated document surface for browser/PDF printing. This
+   prevents the dashboard, modal backdrop, and duplicated responsive content
+   from being included in an invoice PDF. */
+@media print {
+  @page { size: letter; margin: 0.45in; }
+  body { background: #fff !important; }
+  body * { visibility: hidden !important; }
+  .print-invoice, .print-invoice * { visibility: visible !important; }
+  .print-invoice {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+  .no-print { display: none !important; }
+}

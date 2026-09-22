@@ -510,7 +510,6 @@ model AccountingExpense {
   receiptUrl     String?
   receiptStatus  AccountingExpenseReceiptStatus @default(MISSING)
   receiptStorageKey String?
-  receiptData    Bytes?
   receiptFileName String?
   receiptMimeType String?
   receiptSize    Int?

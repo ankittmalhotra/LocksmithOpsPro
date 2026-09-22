@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getAccountingEntityAccess } from '@/lib/accounting-auth';
@@ -8,6 +7,7 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { centsToDecimal, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
 import { getPartnerBillingPeriod } from '@/lib/accounting';
 import { dateKeyToUtcDate, getMissingGoogleAdsConfigVariables } from '@/lib/google-ads';
+import { deleteAccountingReceipt, uploadAccountingReceipt } from '@/lib/accounting-receipts';
 
 function entityCodeFrom(request: Request, body?: Record<string, unknown>) {
   const value = new URL(request.url).searchParams.get('entityCode') || body?.entityCode;
@@ -15,7 +15,7 @@ function entityCodeFrom(request: Request, body?: Record<string, unknown>) {
 }
 
 function mapExpense(expense: any) {
-  const { receiptStorageKey: _receiptStorageKey, receiptData: _receiptData, ...safeExpense } = expense;
+  const { receiptStorageKey: _receiptStorageKey, ...safeExpense } = expense;
   return {
     ...safeExpense,
     subtotalAmount: serializeDecimal(safeExpense.subtotalAmount),
@@ -23,22 +23,6 @@ function mapExpense(expense: any) {
     totalAmount: serializeDecimal(safeExpense.totalAmount),
     hstRate: safeExpense.hstRate === null ? null : Number(safeExpense.hstRate),
   };
-}
-
-const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
-const RECEIPT_TYPES = new Map([
-  ['application/pdf', '.pdf'],
-  ['image/jpeg', '.jpg'],
-  ['image/png', '.png'],
-  ['image/webp', '.webp'],
-]);
-
-async function storeReceipt(entityId: string, file: File) {
-  const extension = RECEIPT_TYPES.get(file.type);
-  if (!extension) throw new Error('Receipt must be a PDF, JPG, PNG, or WEBP file');
-  if (file.size <= 0 || file.size > RECEIPT_MAX_BYTES) throw new Error('Receipt must be between 1 byte and 10 MB');
-  const storageKey = `${entityId}/${randomUUID()}${extension}`;
-  return { storageKey, data: Buffer.from(await file.arrayBuffer()), fileName: file.name.slice(0, 255), mimeType: file.type, size: file.size };
 }
 
 async function readExpenseBody(request: Request): Promise<{ body: Record<string, any>; file: File | null }> {
@@ -145,6 +129,7 @@ async function handleGET(request: Request) {
 }
 
 async function handlePOST(request: Request) {
+  let uploadedReceiptKey: string | null = null;
   try {
     const parsed = await readExpenseBody(request);
     const body = parsed.body;
@@ -172,7 +157,8 @@ async function handlePOST(request: Request) {
     const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
     if (status === 'ATTACHED' && !parsed.file) return NextResponse.json({ success: false, error: 'Attach the receipt file or choose a different receipt status' }, { status: 400 });
     if (status !== 'ATTACHED' && !notes) return NextResponse.json({ success: false, error: 'Add a note explaining why a receipt is missing or not required' }, { status: 400 });
-    const storedReceipt = parsed.file ? await storeReceipt(access.entity.id, parsed.file) : null;
+    const storedReceipt = parsed.file ? await uploadAccountingReceipt(access.entity.id, parsed.file) : null;
+    uploadedReceiptKey = storedReceipt?.key || null;
     const expense = await prisma.$transaction(async (tx) => {
       const created = await tx.accountingExpense.create({
         data: {
@@ -191,8 +177,7 @@ async function handlePOST(request: Request) {
         paidAt: body.paymentStatus === 'PAID' ? new Date() : null,
         receiptUrl: typeof body.receiptUrl === 'string' ? body.receiptUrl.trim() || null : null,
         receiptStatus: status,
-        receiptStorageKey: storedReceipt?.storageKey || null,
-        receiptData: storedReceipt?.data || null,
+        receiptStorageKey: storedReceipt?.key || null,
         receiptFileName: storedReceipt?.fileName || null,
         receiptMimeType: storedReceipt?.mimeType || null,
         receiptSize: storedReceipt?.size || null,
@@ -209,8 +194,10 @@ async function handlePOST(request: Request) {
       } });
       return created;
     });
+    uploadedReceiptKey = null;
     return NextResponse.json({ success: true, expense: mapExpense(expense) }, { status: 201 });
   } catch (error) {
+    await deleteAccountingReceipt(uploadedReceiptKey);
     logCaughtRequestError(request, '/api/books/expenses', error);
     return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to create expense') }, { status: 400 });
   }

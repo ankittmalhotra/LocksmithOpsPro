@@ -4,28 +4,13 @@ import { getAccountingEntityAccess } from '@/lib/accounting-auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { centsToDecimal, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
+import { deleteAccountingReceipt, uploadAccountingReceipt } from '@/lib/accounting-receipts';
 
 function mapExpense(expense: any) {
-  const { receiptStorageKey: _receiptStorageKey, receiptData: _receiptData, ...safeExpense } = expense;
+  const { receiptStorageKey: _receiptStorageKey, ...safeExpense } = expense;
   return { ...safeExpense, subtotalAmount: serializeDecimal(safeExpense.subtotalAmount), hstAmount: serializeDecimal(safeExpense.hstAmount), totalAmount: serializeDecimal(safeExpense.totalAmount), hstRate: safeExpense.hstRate === null ? null : Number(safeExpense.hstRate) };
 }
 
-const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
-const RECEIPT_TYPES = new Map([
-  ['application/pdf', '.pdf'],
-  ['image/jpeg', '.jpg'],
-  ['image/png', '.png'],
-  ['image/webp', '.webp'],
-]);
-
-async function storeReceipt(entityId: string, file: File) {
-  const extension = RECEIPT_TYPES.get(file.type);
-  if (!extension) throw new Error('Receipt must be a PDF, JPG, PNG, or WEBP file');
-  if (file.size <= 0 || file.size > RECEIPT_MAX_BYTES) throw new Error('Receipt must be between 1 byte and 10 MB');
-  const { randomUUID } = await import('node:crypto');
-  const storageKey = `${entityId}/${randomUUID()}${extension}`;
-  return { storageKey, data: Buffer.from(await file.arrayBuffer()), fileName: file.name.slice(0, 255), mimeType: file.type, size: file.size };
-}
 async function readExpenseBody(request: Request): Promise<{ body: Record<string, any>; file: File | null }> {
   const contentType = request.headers.get('content-type') || '';
   if (contentType.includes('multipart/form-data')) {
@@ -40,6 +25,7 @@ async function readExpenseBody(request: Request): Promise<{ body: Record<string,
 function receiptStatus(value: unknown) { return value === 'ATTACHED' || value === 'MISSING' || value === 'NOT_REQUIRED' ? value : null; }
 
 async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  let uploadedReceiptKey: string | null = null;
   try {
     const parsed = await readExpenseBody(request);
     const body = parsed.body;
@@ -73,7 +59,8 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
     const notes = body.notes === undefined ? (existing.notes || '') : String(body.notes).trim();
     if (status === 'ATTACHED' && !parsed.file && !existing.receiptStorageKey) return NextResponse.json({ success: false, error: 'Attach the receipt file or choose a different receipt status' }, { status: 400 });
     if (status !== 'ATTACHED' && !notes) return NextResponse.json({ success: false, error: 'Add a note explaining why a receipt is missing or not required' }, { status: 400 });
-    const storedReceipt = parsed.file ? await storeReceipt(access.entity.id, parsed.file) : null;
+    const storedReceipt = parsed.file ? await uploadAccountingReceipt(access.entity.id, parsed.file) : null;
+    uploadedReceiptKey = storedReceipt?.key || null;
     const receiptChanged = Boolean(storedReceipt) || status !== 'ATTACHED';
     const expense = await prisma.$transaction(async (tx) => {
       const updated = await tx.accountingExpense.update({
@@ -91,15 +78,13 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
         receiptUrl: body.receiptUrl === undefined ? undefined : String(body.receiptUrl).trim() || null,
         receiptStatus: status,
         ...(storedReceipt ? {
-          receiptStorageKey: storedReceipt.storageKey,
-          receiptData: storedReceipt.data,
+          receiptStorageKey: storedReceipt.key,
           receiptFileName: storedReceipt.fileName,
           receiptMimeType: storedReceipt.mimeType,
           receiptSize: storedReceipt.size,
           receiptUploadedAt: new Date(),
         } : receiptChanged ? {
           receiptStorageKey: null,
-          receiptData: null,
           receiptFileName: null,
           receiptMimeType: null,
           receiptSize: null,
@@ -112,8 +97,13 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
       await tx.accountingAuditEvent.create({ data: { entityId: access.entity.id, actorId: access.user.id, action: 'UPDATED', resourceType: 'AccountingExpense', resourceId: id, metadata: { totalAmount: totalCents / 100, receiptStatus: status, hasReceipt: status === 'ATTACHED', businessPurpose } } });
       return updated;
     });
+    if (existing.receiptStorageKey && (storedReceipt || receiptChanged)) {
+      try { await deleteAccountingReceipt(existing.receiptStorageKey); } catch { /* best-effort cleanup after the database update */ }
+    }
+    uploadedReceiptKey = null;
     return NextResponse.json({ success: true, expense: mapExpense(expense) });
   } catch (error) {
+    await deleteAccountingReceipt(uploadedReceiptKey);
     logCaughtRequestError(request, '/api/books/expenses/[id]', error);
     return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to update expense') }, { status: 400 });
   }

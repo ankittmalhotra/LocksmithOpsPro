@@ -53,7 +53,6 @@ CREATE TABLE IF NOT EXISTS "AccountingExpense" (
 ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "businessPurpose" TEXT;
 ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptStatus" "AccountingExpenseReceiptStatus" NOT NULL DEFAULT 'MISSING';
 ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptStorageKey" TEXT;
-ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptData" BYTEA;
 ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptFileName" TEXT;
 ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptMimeType" TEXT;
 ALTER TABLE "AccountingExpense" ADD COLUMN IF NOT EXISTS "receiptSize" INTEGER;

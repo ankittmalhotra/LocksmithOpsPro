@@ -132,11 +132,17 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    apply `prisma/books-accounting-migration.sql` once in the production SQL
    editor. It creates the entity-scoped Books tables, bootstraps both legal
    entities, provisions Admin/Dispatcher access, and adds receipt evidence
-   storage/status fields for expense records. Uploaded receipts are retained
-   in the database and served only through authenticated Books access. The
-   migration is safe to rerun. If Google Ads billing is enabled, also apply
+   status fields for expense records. Uploaded receipts are retained in the
+   private S3 bucket configured by `ACCOUNTING_RECEIPTS_S3_BUCKET` and served
+   only through authenticated Books access. The migration is safe to rerun.
+   If Google Ads billing is enabled, also apply
    `prisma/google-ads-daily-metric-migration.sql` once so synced spend can appear
    automatically in each Books period ledger.
+
+   For production receipt uploads, configure `AWS_REGION=us-east-1`,
+   `ACCOUNTING_RECEIPTS_S3_BUCKET=locksmith-operations-accounting-receipts-us-east-090819962863`,
+   and an IAM principal with only `s3:PutObject`, `s3:GetObject`, and
+   `s3:DeleteObject` on `arn:aws:s3:::locksmith-operations-accounting-receipts-us-east-090819962863/accounting/*`.
 
 Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.md).
 

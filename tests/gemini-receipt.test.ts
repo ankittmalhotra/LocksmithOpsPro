@@ -11,6 +11,7 @@ test('normalizes a structured Gemini receipt response', () => {
   assert.equal(result.vendorName, 'Example Ads');
   assert.equal(result.currency, 'CAD');
   assert.equal(result.subtotalAmount, 100);
+  assert.equal(result.hstRate, 0.13);
   assert.equal(result.totalAmount, 113);
 });
 

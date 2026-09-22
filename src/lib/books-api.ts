@@ -40,6 +40,20 @@ export function serializeDecimal(value: Prisma.Decimal | number | string | null 
   return decimalToCents(value) / 100;
 }
 
+/**
+ * Normalize a tax rate to the fractional representation used by Prisma
+ * Decimal(5,4) fields. Accept both 0.13 and the user-friendly 13 percent.
+ */
+export function normalizeTaxRate(value: unknown, label = 'hstRate'): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) {
+    throw new Error(`${label} must be a percentage between 0 and 100`);
+  }
+  const fractional = numeric > 1 ? numeric / 100 : numeric;
+  return Math.round(fractional * 10_000) / 10_000;
+}
+
 export function parseDateOnly(value: unknown, label: string): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error(`${label} must be a valid YYYY-MM-DD date`);

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getAccountingEntityAccess } from '@/lib/accounting-auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { centsToDecimal, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
+import { centsToDecimal, isBooksEntityCode, normalizeTaxRate, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
 import { deleteAccountingReceipt, uploadAccountingReceipt } from '@/lib/accounting-receipts';
 
 function mapExpense(expense: any) {
@@ -72,7 +72,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
         description: body.description === undefined ? undefined : (String(body.description).trim() || null),
         expenseDate: body.expenseDate === undefined ? undefined : new Date(`${parseDateOnly(body.expenseDate, 'expenseDate')}T00:00:00.000Z`),
         subtotalAmount: centsToDecimal(subtotalCents), hstAmount: centsToDecimal(hstCents), totalAmount: centsToDecimal(totalCents),
-        hstRate: body.hstRate === undefined ? undefined : body.hstRate === null ? null : Number(body.hstRate),
+        hstRate: body.hstRate === undefined ? undefined : normalizeTaxRate(body.hstRate),
         paymentStatus, paymentMethod: body.paymentMethod === undefined ? undefined : body.paymentMethod || null,
         paidAt: paymentStatus === 'PAID' ? (existing.paidAt || new Date()) : null,
         receiptUrl: body.receiptUrl === undefined ? undefined : String(body.receiptUrl).trim() || null,

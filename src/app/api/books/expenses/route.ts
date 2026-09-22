@@ -5,7 +5,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { getAccountingEntityAccess } from '@/lib/accounting-auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { centsToDecimal, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
+import { centsToDecimal, isBooksEntityCode, normalizeTaxRate, parseCents, parseDateOnly, serializeDecimal } from '@/lib/books-api';
 import { getPartnerBillingPeriod } from '@/lib/accounting';
 import { dateKeyToUtcDate, getMissingGoogleAdsConfigVariables } from '@/lib/google-ads';
 import { deleteAccountingReceipt, uploadAccountingReceipt } from '@/lib/accounting-receipts';
@@ -185,7 +185,7 @@ async function handlePOST(request: Request) {
         subtotalAmount: centsToDecimal(subtotalCents),
         hstAmount: centsToDecimal(hstCents),
         totalAmount: centsToDecimal(totalCents),
-        hstRate: body.hstRate === undefined || body.hstRate === null ? (typeof extracted.hstRate === 'number' ? extracted.hstRate : null) : Number(body.hstRate),
+        hstRate: normalizeTaxRate(body.hstRate === undefined || body.hstRate === null ? extracted.hstRate : body.hstRate),
         paymentStatus: body.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
         paymentMethod: body.paymentMethod || null,
         paidAt: body.paymentStatus === 'PAID' ? new Date() : null,

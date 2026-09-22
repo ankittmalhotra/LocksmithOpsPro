@@ -71,6 +71,13 @@ function nullableNumber(value: unknown) {
   return null;
 }
 
+function normalizeReceiptTaxRate(value: number | null) {
+  if (value === null) return null;
+  // Gemini is prompted for a percentage (13), while Prisma stores a fraction
+  // (0.13) in Decimal(5,4) fields.
+  return Math.round((value > 1 ? value / 100 : value) * 10_000) / 10_000;
+}
+
 /** Parse and normalize the strict JSON returned by Gemini. Exported for tests. */
 export function parseGeminiReceiptResponse(payload: unknown): ReceiptExtraction {
   const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
@@ -83,7 +90,7 @@ export function parseGeminiReceiptResponse(payload: unknown): ReceiptExtraction 
     currency: nullableString(value.currency)?.toUpperCase() || null,
     subtotalAmount: nullableNumber(value.subtotalAmount),
     hstAmount: nullableNumber(value.hstAmount),
-    hstRate: nullableNumber(value.hstRate),
+    hstRate: normalizeReceiptTaxRate(nullableNumber(value.hstRate)),
     totalAmount: nullableNumber(value.totalAmount),
     paymentMethod: nullableString(value.paymentMethod),
     referenceNumber: nullableString(value.referenceNumber),

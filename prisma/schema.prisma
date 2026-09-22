@@ -43,6 +43,14 @@ enum AccountingExpenseReceiptStatus {
   NOT_REQUIRED
 }
 
+enum AccountingReceiptDraftStatus {
+  PROCESSING
+  READY
+  FAILED
+  CONSUMED
+  EXPIRED
+}
+
 enum PartnerBillingPeriodStatus {
   OPEN
   CARRIED_FORWARD
@@ -63,6 +71,7 @@ enum PartnerInvoicePaymentStatus {
 enum AccountingEntityAuditAction {
   CREATED
   UPDATED
+  RECEIPT_PARSED
   ISSUED
   VOIDED
   PAYMENT_STATUS_CHANGED
@@ -119,6 +128,7 @@ model User {
   accountingMemberships        AccountingEntityMembership[]
   accountingExpensesCreated    AccountingExpense[]          @relation("AccountingExpenseCreatedBy")
   accountingExpensesUpdated    AccountingExpense[]          @relation("AccountingExpenseUpdatedBy")
+  accountingReceiptDrafts      AccountingReceiptDraft[]     @relation("AccountingReceiptDraftCreatedBy")
   partnerInvoicesIssued        PartnerInvoice[]             @relation("PartnerInvoiceIssuedBy")
   partnerInvoicesVoided        PartnerInvoice[]             @relation("PartnerInvoiceVoidedBy")
   partnerBillingPeriodsCreated PartnerBillingPeriod[]       @relation("PartnerBillingPeriodCreatedBy")
@@ -451,6 +461,7 @@ model AccountingEntity {
   issuedPartnerInvoices   PartnerInvoice[]             @relation("PartnerInvoiceIssuer")
   receivedPartnerInvoices PartnerInvoice[]             @relation("PartnerInvoiceRecipient")
   auditEvents             AccountingAuditEvent[]
+  receiptDrafts           AccountingReceiptDraft[]
 
   @@index([legalName])
 }
@@ -491,42 +502,70 @@ model AccountingExpenseCategory {
 }
 
 model AccountingExpense {
-  id             String                          @id @default(uuid())
-  entityId       String
-  entity         AccountingEntity                @relation(fields: [entityId], references: [id], onDelete: Cascade)
-  categoryId     String?
-  category       AccountingExpenseCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  vendorName     String
-  businessPurpose String?
-  description    String?
-  expenseDate    DateTime                        @db.Date
-  subtotalAmount Decimal                         @db.Decimal(12, 2)
-  hstAmount      Decimal                         @default(0) @db.Decimal(12, 2)
-  totalAmount    Decimal                         @db.Decimal(12, 2)
-  hstRate        Decimal?                        @db.Decimal(5, 4)
-  paymentStatus  AccountingExpensePaymentStatus  @default(UNPAID)
-  paymentMethod  AccountingExpensePaymentMethod?
-  paidAt         DateTime?
-  receiptUrl     String?
-  receiptStatus  AccountingExpenseReceiptStatus @default(MISSING)
+  id                String                          @id @default(uuid())
+  entityId          String
+  entity            AccountingEntity                @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  categoryId        String?
+  category          AccountingExpenseCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  vendorName        String
+  businessPurpose   String?
+  description       String?
+  expenseDate       DateTime                        @db.Date
+  subtotalAmount    Decimal                         @db.Decimal(12, 2)
+  hstAmount         Decimal                         @default(0) @db.Decimal(12, 2)
+  totalAmount       Decimal                         @db.Decimal(12, 2)
+  hstRate           Decimal?                        @db.Decimal(5, 4)
+  paymentStatus     AccountingExpensePaymentStatus  @default(UNPAID)
+  paymentMethod     AccountingExpensePaymentMethod?
+  paidAt            DateTime?
+  receiptUrl        String?
+  receiptStatus     AccountingExpenseReceiptStatus  @default(MISSING)
   receiptStorageKey String?
-  receiptFileName String?
-  receiptMimeType String?
-  receiptSize    Int?
+  receiptFileName   String?
+  receiptMimeType   String?
+  receiptSize       Int?
   receiptUploadedAt DateTime?
-  notes          String?
-  createdById    String
-  createdBy      User                            @relation("AccountingExpenseCreatedBy", fields: [createdById], references: [id])
-  updatedById    String?
-  updatedBy      User?                           @relation("AccountingExpenseUpdatedBy", fields: [updatedById], references: [id])
-  voidedAt       DateTime?
-  createdAt      DateTime                        @default(now())
-  updatedAt      DateTime                        @updatedAt
+  notes             String?
+  createdById       String
+  createdBy         User                            @relation("AccountingExpenseCreatedBy", fields: [createdById], references: [id])
+  updatedById       String?
+  updatedBy         User?                           @relation("AccountingExpenseUpdatedBy", fields: [updatedById], references: [id])
+  voidedAt          DateTime?
+  createdAt         DateTime                        @default(now())
+  updatedAt         DateTime                        @updatedAt
 
   @@index([entityId, expenseDate])
   @@index([entityId, paymentStatus])
   @@index([entityId, receiptStatus])
   @@index([categoryId])
+}
+
+// A draft is a private, short-lived AI extraction result. It is never an
+// accounting entry until the user reviews it and confirms the expense.
+model AccountingReceiptDraft {
+  id            String                       @id @default(uuid())
+  entityId      String
+  entity        AccountingEntity             @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  createdById   String
+  createdBy     User                         @relation("AccountingReceiptDraftCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  storageKey    String
+  fileName      String
+  mimeType      String
+  size          Int
+  extractedData Json?
+  warnings      Json?
+  confidence    Json?
+  model         String?
+  status        AccountingReceiptDraftStatus @default(PROCESSING)
+  errorMessage  String?
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime                     @default(now())
+  updatedAt     DateTime                     @updatedAt
+
+  @@index([entityId, status])
+  @@index([createdById, status])
+  @@index([expiresAt])
 }
 
 model PartnerBillingPeriod {

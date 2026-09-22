@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getAccountingEntityAccess } from '@/lib/accounting-auth';
@@ -137,13 +138,19 @@ async function handlePOST(request: Request) {
     if (!code) return NextResponse.json({ success: false, error: 'entityCode must be IT_MARKETING or LOCKSMITH' }, { status: 400 });
     const access = await getAccountingEntityAccess(code);
     if (!access?.canManageExpenses) return NextResponse.json({ success: false, error: 'Forbidden: Expense management required' }, { status: 403 });
-    const vendorName = typeof body.vendorName === 'string' ? body.vendorName.trim() : '';
-    const businessPurpose = typeof body.businessPurpose === 'string' ? body.businessPurpose.trim() : '';
+    const requestedDraftId = typeof body.receiptDraftId === 'string' ? body.receiptDraftId.trim() : '';
+    const receiptDraft = requestedDraftId ? await prisma.accountingReceiptDraft.findUnique({ where: { id: requestedDraftId } }) : null;
+    if (requestedDraftId && (!receiptDraft || receiptDraft.entityId !== access.entity.id || receiptDraft.createdById !== access.user.id || receiptDraft.status !== 'READY' || receiptDraft.expiresAt <= new Date())) {
+      return NextResponse.json({ success: false, error: 'Receipt draft is unavailable or expired. Upload the receipt again.' }, { status: 400 });
+    }
+    const extracted = receiptDraft?.extractedData && typeof receiptDraft.extractedData === 'object' ? receiptDraft.extractedData as Record<string, unknown> : {};
+    const vendorName = (typeof body.vendorName === 'string' ? body.vendorName.trim() : '') || (typeof extracted.vendorName === 'string' ? extracted.vendorName.trim() : '');
+    const businessPurpose = (typeof body.businessPurpose === 'string' ? body.businessPurpose.trim() : '') || (typeof extracted.businessPurposeSuggestion === 'string' ? extracted.businessPurposeSuggestion.trim() : '');
     if (!vendorName) return NextResponse.json({ success: false, error: 'Vendor name is required' }, { status: 400 });
     if (!businessPurpose) return NextResponse.json({ success: false, error: 'Business purpose is required' }, { status: 400 });
-    const expenseDate = parseDateOnly(body.expenseDate, 'expenseDate');
-    const subtotalCents = parseCents(body.subtotalAmount, 'subtotalAmount');
-    const hstCents = parseCents(body.hstAmount ?? 0, 'hstAmount');
+    const expenseDate = parseDateOnly(body.expenseDate || extracted.expenseDate, 'expenseDate');
+    const subtotalCents = parseCents(body.subtotalAmount ?? extracted.subtotalAmount, 'subtotalAmount');
+    const hstCents = parseCents(body.hstAmount ?? extracted.hstAmount ?? 0, 'hstAmount');
     const totalCents = body.totalAmount === undefined
       ? subtotalCents + hstCents
       : parseCents(body.totalAmount, 'totalAmount');
@@ -153,12 +160,19 @@ async function handlePOST(request: Request) {
       const category = await prisma.accountingExpenseCategory.findFirst({ where: { id: categoryId, entityId: access.entity.id, active: true }, select: { id: true } });
       if (!category) return NextResponse.json({ success: false, error: 'Expense category not found' }, { status: 400 });
     }
-    const status = parsed.file ? 'ATTACHED' : receiptStatus(body.receiptStatus);
+    const status = parsed.file || receiptDraft ? 'ATTACHED' : receiptStatus(body.receiptStatus);
     const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
-    if (status === 'ATTACHED' && !parsed.file) return NextResponse.json({ success: false, error: 'Attach the receipt file or choose a different receipt status' }, { status: 400 });
+    if (status === 'ATTACHED' && !parsed.file && !receiptDraft) return NextResponse.json({ success: false, error: 'Attach the receipt file or choose a different receipt status' }, { status: 400 });
     if (status !== 'ATTACHED' && !notes) return NextResponse.json({ success: false, error: 'Add a note explaining why a receipt is missing or not required' }, { status: 400 });
-    const storedReceipt = parsed.file ? await uploadAccountingReceipt(access.entity.id, parsed.file) : null;
-    uploadedReceiptKey = storedReceipt?.key || null;
+    const storedReceipt = parsed.file
+      ? await uploadAccountingReceipt(access.entity.id, parsed.file)
+      : receiptDraft
+        ? { key: receiptDraft.storageKey, fileName: receiptDraft.fileName, mimeType: receiptDraft.mimeType, size: receiptDraft.size }
+        : null;
+    // A draft's object becomes the final receipt and must never be cleaned up
+    // by this request's failure handler. Only a newly uploaded manual receipt
+    // is owned by this request until the transaction commits.
+    uploadedReceiptKey = parsed.file ? storedReceipt?.key || null : null;
     const expense = await prisma.$transaction(async (tx) => {
       const created = await tx.accountingExpense.create({
         data: {
@@ -166,12 +180,12 @@ async function handlePOST(request: Request) {
         categoryId,
         vendorName,
         businessPurpose,
-        description: typeof body.description === 'string' ? body.description.trim() || null : null,
+        description: (typeof body.description === 'string' ? body.description.trim() : '') || (typeof extracted.description === 'string' ? extracted.description.trim() : '') || null,
         expenseDate: new Date(`${expenseDate}T00:00:00.000Z`),
         subtotalAmount: centsToDecimal(subtotalCents),
         hstAmount: centsToDecimal(hstCents),
         totalAmount: centsToDecimal(totalCents),
-        hstRate: body.hstRate === undefined || body.hstRate === null ? null : Number(body.hstRate),
+        hstRate: body.hstRate === undefined || body.hstRate === null ? (typeof extracted.hstRate === 'number' ? extracted.hstRate : null) : Number(body.hstRate),
         paymentStatus: body.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
         paymentMethod: body.paymentMethod || null,
         paidAt: body.paymentStatus === 'PAID' ? new Date() : null,
@@ -188,9 +202,13 @@ async function handlePOST(request: Request) {
         },
         include: { category: true },
       });
+      if (receiptDraft) {
+        const consumed = await tx.accountingReceiptDraft.updateMany({ where: { id: receiptDraft.id, status: 'READY', createdById: access.user.id }, data: { status: 'CONSUMED', consumedAt: new Date(), extractedData: Prisma.JsonNull, warnings: Prisma.JsonNull, confidence: Prisma.JsonNull } });
+        if (consumed.count !== 1) throw new Error('Receipt draft was already used. Upload the receipt again.');
+      }
       await tx.accountingAuditEvent.create({ data: {
         entityId: access.entity.id, actorId: access.user.id, action: 'CREATED', resourceType: 'AccountingExpense', resourceId: created.id,
-        metadata: { totalAmount: totalCents / 100, receiptStatus: status, hasReceipt: status === 'ATTACHED', businessPurpose },
+        metadata: { totalAmount: totalCents / 100, receiptStatus: status, hasReceipt: status === 'ATTACHED', businessPurpose, ...(receiptDraft ? { aiReceiptDraftId: receiptDraft.id, aiModel: receiptDraft.model || 'unknown' } : {}) },
       } });
       return created;
     });

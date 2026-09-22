@@ -28,11 +28,20 @@ export function receiptExtension(mimeType: string) {
 }
 
 export async function uploadAccountingReceipt(entityId: string, file: File) {
+  return uploadReceiptWithPrefix(entityId, file, 'accounting');
+}
+
+export async function uploadAccountingReceiptDraft(entityId: string, file: File) {
+  // Keep drafts under the same `accounting/*` IAM prefix as final receipts.
+  return uploadReceiptWithPrefix(entityId, file, 'accounting/drafts');
+}
+
+async function uploadReceiptWithPrefix(entityId: string, file: File, prefix: string) {
   const extension = receiptExtension(file.type);
   if (!extension) throw new Error('Receipt must be a PDF, JPG, PNG, or WEBP file');
   if (file.size <= 0 || file.size > RECEIPT_MAX_BYTES) throw new Error('Receipt must be between 1 byte and 10 MB');
   const { bucket } = receiptConfig();
-  const key = `accounting/${entityId}/${randomUUID()}${extension}`;
+  const key = `${prefix}/${entityId}/${randomUUID()}${extension}`;
   await s3().send(new PutObjectCommand({
     Bucket: bucket,
     Key: key,
@@ -56,4 +65,10 @@ export async function deleteAccountingReceipt(key: string | null | undefined) {
 export async function getAccountingReceipt(key: string) {
   const { bucket } = receiptConfig();
   return s3().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+export async function readAccountingReceiptBytes(key: string) {
+  const object = await getAccountingReceipt(key);
+  if (!object.Body) throw new Error('Receipt object has no content');
+  return new Uint8Array(await object.Body.transformToByteArray());
 }

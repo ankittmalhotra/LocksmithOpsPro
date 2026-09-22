@@ -9,10 +9,12 @@ DO $$ BEGIN CREATE TYPE "AccountingEntityCode" AS ENUM ('IT_MARKETING', 'LOCKSMI
 DO $$ BEGIN CREATE TYPE "AccountingExpensePaymentStatus" AS ENUM ('UNPAID', 'PAID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "AccountingExpensePaymentMethod" AS ENUM ('CASH', 'BANK_TRANSFER', 'INTERAC', 'CREDIT_CARD', 'DEBIT_CARD', 'OTHER'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "AccountingExpenseReceiptStatus" AS ENUM ('ATTACHED', 'MISSING', 'NOT_REQUIRED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "AccountingReceiptDraftStatus" AS ENUM ('PROCESSING', 'READY', 'FAILED', 'CONSUMED', 'EXPIRED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerBillingPeriodStatus" AS ENUM ('OPEN', 'CARRIED_FORWARD', 'INVOICED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerInvoiceStatus" AS ENUM ('DRAFT', 'ISSUED', 'VOID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "PartnerInvoicePaymentStatus" AS ENUM ('PENDING', 'RECEIVED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE "AccountingEntityAuditAction" AS ENUM ('CREATED', 'UPDATED', 'ISSUED', 'VOIDED', 'PAYMENT_STATUS_CHANGED', 'MARKED_PAID', 'MARKED_UNPAID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "AccountingEntityAuditAction" AS ENUM ('CREATED', 'UPDATED', 'RECEIPT_PARSED', 'ISSUED', 'VOIDED', 'PAYMENT_STATUS_CHANGED', 'MARKED_PAID', 'MARKED_UNPAID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TYPE "AccountingEntityAuditAction" ADD VALUE IF NOT EXISTS 'RECEIPT_PARSED';
 
 CREATE TABLE IF NOT EXISTS "AccountingEntity" (
   "id" TEXT NOT NULL DEFAULT gen_random_uuid(), "code" "AccountingEntityCode" NOT NULL, "legalName" TEXT NOT NULL,
@@ -61,6 +63,21 @@ CREATE INDEX IF NOT EXISTS "AccountingExpense_entityId_expenseDate_idx" ON "Acco
 CREATE INDEX IF NOT EXISTS "AccountingExpense_entityId_paymentStatus_idx" ON "AccountingExpense" ("entityId", "paymentStatus");
 CREATE INDEX IF NOT EXISTS "AccountingExpense_entityId_receiptStatus_idx" ON "AccountingExpense" ("entityId", "receiptStatus");
 CREATE INDEX IF NOT EXISTS "AccountingExpense_categoryId_idx" ON "AccountingExpense" ("categoryId");
+
+CREATE TABLE IF NOT EXISTS "AccountingReceiptDraft" (
+  "id" TEXT NOT NULL DEFAULT gen_random_uuid(), "entityId" TEXT NOT NULL, "createdById" TEXT NOT NULL,
+  "storageKey" TEXT NOT NULL, "fileName" TEXT NOT NULL, "mimeType" TEXT NOT NULL, "size" INTEGER NOT NULL,
+  "extractedData" JSONB, "warnings" JSONB, "confidence" JSONB, "model" TEXT,
+  "status" "AccountingReceiptDraftStatus" NOT NULL DEFAULT 'PROCESSING', "errorMessage" TEXT,
+  "expiresAt" TIMESTAMP(3) NOT NULL, "consumedAt" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "AccountingReceiptDraft_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "AccountingReceiptDraft_entityId_fkey" FOREIGN KEY ("entityId") REFERENCES "AccountingEntity"("id") ON DELETE CASCADE,
+  CONSTRAINT "AccountingReceiptDraft_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "AccountingReceiptDraft_entityId_status_idx" ON "AccountingReceiptDraft" ("entityId", "status");
+CREATE INDEX IF NOT EXISTS "AccountingReceiptDraft_createdById_status_idx" ON "AccountingReceiptDraft" ("createdById", "status");
+CREATE INDEX IF NOT EXISTS "AccountingReceiptDraft_expiresAt_idx" ON "AccountingReceiptDraft" ("expiresAt");
 
 CREATE TABLE IF NOT EXISTS "PartnerBillingPeriod" (
   "id" TEXT NOT NULL DEFAULT gen_random_uuid(), "issuerEntityId" TEXT NOT NULL, "recipientEntityId" TEXT NOT NULL, "periodStart" DATE NOT NULL, "periodEnd" DATE NOT NULL,

@@ -143,6 +143,12 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    `ACCOUNTING_RECEIPTS_S3_BUCKET=locksmith-operations-accounting-receipts-us-east-090819962863`,
    and an IAM principal with only `s3:PutObject`, `s3:GetObject`, and
    `s3:DeleteObject` on `arn:aws:s3:::locksmith-operations-accounting-receipts-us-east-090819962863/accounting/*`.
+   To enable the optional review-first receipt auto-fill workflow, also set
+   `GEMINI_API_KEY` (server-only) and optionally `GEMINI_RECEIPT_MODEL` (default
+   `gemini-2.5-flash`). For Vertex AI, use ADC with `VERTEX_AI_PROJECT` and
+   `VERTEX_AI_LOCATION` (default `us-central1`) instead of an API key. The upload
+   is sent to Gemini Flash for extraction, but the user must review and confirm
+   the suggested fields before an expense is created. Drafts expire after 24 hours.
 
 Detailed step-by-step instructions can be found in [DEPLOYMENT.md](./DEPLOYMENT.md).
 

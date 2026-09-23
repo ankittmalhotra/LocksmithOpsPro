@@ -39,11 +39,20 @@ type BillingPeriod = {
   cogsAmount: number;
   technicianCommissionsAmount: number;
   operationalProfitAmount: number;
+  priorNegativeCarryForward: number;
   adjustedProfitAmount: number;
   negativeCarryForward: number;
+  shareRate: number;
   partnerFeeAmount: number;
   hstAmount: number;
   invoice?: Invoice | null;
+};
+
+type CurrentBillingPeriod = Pick<BillingPeriod, 'periodStart' | 'periodEnd' | 'revenueAmount' | 'hstDeductedAmount' | 'cogsAmount' | 'technicianCommissionsAmount' | 'operationalProfitAmount' | 'priorNegativeCarryForward' | 'adjustedProfitAmount' | 'negativeCarryForward' | 'partnerFeeAmount' | 'shareRate'> & {
+  hstAmount: number;
+  hstRate: number;
+  invoiceTotalAmount: number;
+  contributionCount: number;
 };
 
 type Invoice = {
@@ -81,10 +90,11 @@ type ApiState = {
   entity: Entity | null;
   expenses: Expense[];
   periods: BillingPeriod[];
+  currentPeriod: CurrentBillingPeriod | null;
   invoices: Invoice[];
 };
 
-const EMPTY_STATE: ApiState = { entity: null, expenses: [], periods: [], invoices: [] };
+const EMPTY_STATE: ApiState = { entity: null, expenses: [], periods: [], currentPeriod: null, invoices: [] };
 function formatMoney(value: number | null | undefined) {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(Number(value || 0));
 }
@@ -231,7 +241,7 @@ export default function BooksPage() {
       const [expenseData, periodsData, invoicesData] = await Promise.all([expenseRes.json(), periodsRes.json(), invoicesRes.json()]);
       const firstError = [expenseData, periodsData, invoicesData].find((data) => !data.success);
       if (firstError) throw new Error(firstError.error || 'Unable to load Books');
-      setState({ entity: expenseData.entity || null, expenses: expenseData.expenses || [], periods: periodsData.periods || [], invoices: invoicesData.invoices || [] });
+      setState({ entity: expenseData.entity || null, expenses: expenseData.expenses || [], periods: periodsData.periods || [], currentPeriod: periodsData.currentPeriod || null, invoices: invoicesData.invoices || [] });
       setHstNumber(expenseData.entity?.hstRegistrationNumber || '');
       setHstEffectiveDate(dateOnly(expenseData.entity?.hstEffectiveDate));
     } catch (err) {
@@ -516,8 +526,11 @@ export default function BooksPage() {
     expenses: state.expenses.reduce((sum, expense) => sum + expense.totalAmount, 0),
     unpaidExpenses: state.expenses.filter((expense) => expense.paymentStatus === 'UNPAID').reduce((sum, expense) => sum + expense.totalAmount, 0),
     invoiced: state.invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0),
-    outstanding: state.invoices.filter((invoice) => invoice.paymentStatus === 'PENDING' && invoice.status === 'ISSUED').reduce((sum, invoice) => sum + invoice.totalAmount, 0),
-  }), [state.expenses, state.invoices]);
+    settledPartnerAmount: state.invoices.filter((invoice) => invoice.invoiceKind !== 'CUSTOMER_SERVICE' && invoice.status === 'ISSUED' && invoice.paymentStatus === 'RECEIVED').reduce((sum, invoice) => sum + invoice.totalAmount, 0),
+    issuedPendingPartnerAmount: state.invoices.filter((invoice) => invoice.invoiceKind !== 'CUSTOMER_SERVICE' && invoice.status === 'ISSUED' && invoice.paymentStatus === 'PENDING').reduce((sum, invoice) => sum + invoice.totalAmount, 0),
+    completedUnbilledPartnerAmount: state.periods.filter((period) => !period.invoice && period.partnerFeeAmount > 0).reduce((sum, period) => sum + period.partnerFeeAmount * (1 + (state.currentPeriod?.hstRate || 0)), 0),
+    currentUnbilledPartnerAmount: state.currentPeriod?.invoiceTotalAmount || 0,
+  }), [state.currentPeriod, state.expenses, state.invoices]);
 
   const visibleExpenses = useMemo(
     () => receiptFilter === 'REVIEW' ? state.expenses.filter((expense) => expense.receiptStatus === 'MISSING') : state.expenses,
@@ -566,8 +579,8 @@ export default function BooksPage() {
             ['Expenses recorded', formatMoney(totals.expenses), 'All active expense records'],
             ['Unpaid expenses', formatMoney(totals.unpaidExpenses), 'Needs payment tracking'],
             [entityCode === 'IT_MARKETING' ? 'Invoices issued' : 'Invoices received', formatMoney(totals.invoiced), `${state.invoices.length} invoice${state.invoices.length === 1 ? '' : 's'}`],
-            ['Outstanding partner invoices', formatMoney(totals.outstanding), 'Payment status: Pending'],
           ].map(([label, value, hint]) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-slate-950">{value}</p><p className="mt-1 text-xs text-slate-500">{hint}</p></div>)}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Partner settlement</p><div className="mt-3 grid grid-cols-2 gap-3"><div><p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Settled</p><p className="mt-1 text-lg font-black text-slate-950">{formatMoney(totals.settledPartnerAmount)}</p><p className="mt-1 text-[11px] text-slate-500">Received</p></div><div><p className="text-[11px] font-bold uppercase tracking-wide text-amber-700">Unsettled</p><p className="mt-1 text-lg font-black text-slate-950">{formatMoney(totals.issuedPendingPartnerAmount + totals.completedUnbilledPartnerAmount + totals.currentUnbilledPartnerAmount)}</p><p className="mt-1 text-[11px] text-slate-500">Unbilled + awaiting payment</p></div></div><p className="mt-3 text-xs text-slate-500">Current period share: {state.currentPeriod ? `${formatMoney(state.currentPeriod.partnerFeeAmount)} before HST · ${periodLabel(state.currentPeriod.periodStart, state.currentPeriod.periodEnd)}` : 'Not available yet'}</p></div>
         </section>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">

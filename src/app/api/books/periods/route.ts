@@ -5,7 +5,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { getAccountingEntityAccess } from '@/lib/accounting-auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { calculatePartnerBilling } from '@/lib/accounting';
+import { calculatePartnerBilling, getPartnerBillingPeriod } from '@/lib/accounting';
 import { calculateOperationalPeriodSnapshot, centsToDecimal, decimalToCents, isBooksEntityCode, parseCents, periodDates, serializeDecimal } from '@/lib/books-api';
 import { formatTorontoDateInput } from '@/lib/timezone';
 
@@ -120,6 +120,65 @@ async function ensureCompletedPartnerBillingPeriods(userId: string) {
   }
 }
 
+/**
+ * Calculate the live, still-open partner share without creating a Books
+ * snapshot. The card on the Books dashboard uses this so it reflects the
+ * current operating period rather than only previously issued invoices.
+ */
+async function calculateCurrentPartnerPeriod() {
+  const today = formatTorontoDateInput(new Date());
+  let dates;
+  try {
+    dates = periodDates(getPartnerBillingPeriod(today).periodStart);
+  } catch {
+    // The portal should remain usable before the configured billing anchor.
+    return null;
+  }
+
+  const [issuer, recipient] = await Promise.all([
+    prisma.accountingEntity.findUnique({ where: { code: 'IT_MARKETING' } }),
+    prisma.accountingEntity.findUnique({ where: { code: 'LOCKSMITH' } }),
+  ]);
+  if (!issuer || !recipient) return null;
+
+  const [snapshot, prior] = await Promise.all([
+    calculateOperationalPeriodSnapshot(dates.periodStart, dates.periodEnd),
+    prisma.partnerBillingPeriod.findFirst({
+      where: { recipientEntityId: recipient.id, periodEnd: { lt: new Date(`${dates.periodStart}T00:00:00.000Z`) } },
+      orderBy: { periodEnd: 'desc' },
+      select: { negativeCarryForward: true },
+    }),
+  ]);
+  const hstRateBps = issuer.hstEnabled && issuer.hstRegistrationNumber && issuer.hstEffectiveDate && issuer.hstEffectiveDate.toISOString().slice(0, 10) <= today ? 1_300 : 0;
+  const calculation = calculatePartnerBilling({
+    revenueCents: snapshot.revenueCents,
+    hstDeductedCents: snapshot.hstCents,
+    cogsCents: snapshot.cogsCents,
+    technicianCommissionsCents: snapshot.commissionCents,
+    priorNegativeCarryForwardCents: decimalToCents(prior?.negativeCarryForward),
+    hstRateBps,
+  });
+
+  return {
+    periodStart: dates.periodStart,
+    periodEnd: dates.periodEnd,
+    revenueAmount: snapshot.revenueCents / 100,
+    hstDeductedAmount: snapshot.hstCents / 100,
+    cogsAmount: snapshot.cogsCents / 100,
+    technicianCommissionsAmount: snapshot.commissionCents / 100,
+    operationalProfitAmount: calculation.operationalProfitCents / 100,
+    priorNegativeCarryForward: calculation.priorNegativeCarryForwardCents / 100,
+    adjustedProfitAmount: calculation.adjustedProfitCents / 100,
+    negativeCarryForward: calculation.negativeCarryForwardCents / 100,
+    shareRate: 0.5,
+    hstRate: hstRateBps / 10_000,
+    partnerFeeAmount: calculation.partnerFeeCents / 100,
+    hstAmount: calculation.hstCents / 100,
+    invoiceTotalAmount: calculation.invoiceTotalCents / 100,
+    contributionCount: snapshot.contributions.length,
+  };
+}
+
 async function handleGET(request: Request) {
   try {
     const user = await getCurrentUser();
@@ -134,7 +193,8 @@ async function handleGET(request: Request) {
       include: { invoice: true, issuerEntity: true, recipientEntity: true },
       orderBy: { periodStart: 'desc' },
     });
-    return NextResponse.json({ success: true, periods: periods.map((period) => mapPeriod(period, user?.role === 'DISPATCHER' && code === 'LOCKSMITH')) });
+    const currentPeriod = await calculateCurrentPartnerPeriod();
+    return NextResponse.json({ success: true, periods: periods.map((period) => mapPeriod(period, user?.role === 'DISPATCHER' && code === 'LOCKSMITH')), currentPeriod });
   } catch (error) {
     logCaughtRequestError(request, '/api/books/periods', error);
     return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to load billing periods') }, { status: 500 });

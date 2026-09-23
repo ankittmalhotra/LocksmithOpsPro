@@ -159,7 +159,13 @@ async function handlePOST(
     }
     if (error instanceof StripeApiError) {
       logCaughtRequestError(request, '/api/jobs/[id]/payment-link', error);
-      return NextResponse.json({ success: false, error: 'Stripe could not create the payment link' }, { status: 502 });
+      const providerMessage = error.message.trim();
+      return NextResponse.json({
+        success: false,
+        error: providerMessage
+          ? `Stripe rejected the payment link request: ${providerMessage}`
+          : 'Stripe could not create the payment link',
+      }, { status: 502 });
     }
     logCaughtRequestError(request, '/api/jobs/[id]/payment-link', error);
     return NextResponse.json(

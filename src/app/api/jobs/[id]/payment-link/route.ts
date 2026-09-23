@@ -12,6 +12,8 @@ import { findJobByIdOrNumber } from '@/lib/job-helper';
 
 const CARD_PAYMENT_METHODS = ['CREDIT_CARD', 'DEBIT_CARD'] as const;
 
+class PaymentLinkStateChangedError extends Error {}
+
 function isActiveCheckoutSession(invoice: {
   stripeSessionId: string | null;
   stripePaymentUrl: string | null;
@@ -96,10 +98,11 @@ async function handlePOST(
       cardSurchargeAmount: invoice.cardSurchargeAmount,
       automaticTax: true,
       returnUrl: getReturnUrl(request, job.id),
+      requestRevision: job.updatedAt.toISOString(),
     };
     const result = await createStripePaymentLink(paymentParams);
 
-    const persisted = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       if (result.customerId) {
         const customerUpdate = await tx.customer.updateMany({
           where: {
@@ -108,7 +111,7 @@ async function handlePOST(
           },
           data: { stripeCustomerId: result.customerId },
         });
-        if (customerUpdate.count !== 1) return null;
+        if (customerUpdate.count !== 1) throw new PaymentLinkStateChangedError();
       }
 
       const invoiceUpdate = await tx.invoice.updateMany({
@@ -116,6 +119,12 @@ async function handlePOST(
           id: invoice.id,
           paymentStatus: 'PENDING',
           paymentMethod: { in: [...CARD_PAYMENT_METHODS] },
+          grandTotal: invoice.grandTotal,
+          subtotal: invoice.subtotal,
+          taxAmount: invoice.taxAmount,
+          cardSurchargeAmount: invoice.cardSurchargeAmount,
+          totalAmountCollected: invoice.totalAmountCollected,
+          stripeSessionId: invoice.stripeSessionId,
         },
         data: {
           paymentProvider: 'STRIPE',
@@ -131,15 +140,8 @@ async function handlePOST(
           ...(result.amountTax !== null ? { taxAmount: result.amountTax } : {}),
         },
       });
-      return invoiceUpdate.count === 1;
+      if (invoiceUpdate.count !== 1) throw new PaymentLinkStateChangedError();
     });
-
-    if (!persisted) {
-      return NextResponse.json(
-        { success: false, error: 'Invoice changed while creating the payment link. Reload and try again.' },
-        { status: 409 },
-      );
-    }
 
     return NextResponse.json({
       success: true,
@@ -148,6 +150,12 @@ async function handlePOST(
       sessionId: result.sessionId,
     });
   } catch (error) {
+    if (error instanceof PaymentLinkStateChangedError) {
+      return NextResponse.json(
+        { success: false, error: 'Invoice changed while creating the payment link. Reload and try again.' },
+        { status: 409 },
+      );
+    }
     if (error instanceof StripeConfigurationError) {
       return NextResponse.json({ success: false, error: 'Stripe payments are not configured' }, { status: 503 });
     }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   createStripePaymentLink,
@@ -23,12 +23,13 @@ test('converts server invoice amounts to integer CAD cents', () => {
 
 test('creates hosted Checkout without prefilled customer email and with idempotency', async () => {
   process.env.STRIPE_SECRET_KEY = 'sk_test_backend_unit';
-  const calls: Array<{ url: string; headers: Headers; body: URLSearchParams }> = [];
+  const calls: Array<{ url: string; headers: Headers; encodedBody: string; body: URLSearchParams }> = [];
   globalThis.fetch = async (input, init) => {
     const body = String(init?.body || '');
     calls.push({
       url: String(input),
       headers: new Headers(init?.headers),
+      encodedBody: body,
       body: new URLSearchParams(body),
     });
     return new Response(JSON.stringify({
@@ -56,14 +57,14 @@ test('creates hosted Checkout without prefilled customer email and with idempote
     taxAmount: 13,
     cardSurchargeAmount: 0,
     returnUrl: 'https://portal.example.test/dispatch/jobs/job-local-1',
-    idempotencyKey: 'locksmith-checkout-invoice-local-1-initial',
   });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.stripe.com/v1/checkout/sessions');
-  assert.equal(calls[0].headers.get('Idempotency-Key'), 'locksmith-checkout-invoice-local-1-initial');
+  const bodyHash = createHash('sha256').update(`/checkout/sessions\n${calls[0].encodedBody}`).digest('hex');
+  assert.equal(calls[0].headers.get('Idempotency-Key'), `locksmith-checkout-invoice-local-1-v2-${bodyHash}`);
   assert.equal(calls[0].body.get('mode'), 'payment');
-  assert.equal(calls[0].body.get('ui_mode'), 'hosted_page');
+  assert.equal(calls[0].body.get('ui_mode'), null);
   assert.equal(calls[0].body.get('customer'), 'cus_existing_123');
   assert.equal(calls[0].body.get('customer_creation'), null);
   assert.equal(calls[0].body.get('customer_email'), null);
@@ -74,6 +75,48 @@ test('creates hosted Checkout without prefilled customer email and with idempote
   assert.equal(result.sessionId, 'cs_test_123');
   assert.equal(result.stripeInvoiceId, 'in_test_123');
   assert.equal(result.stripePaymentIntentId, 'pi_test_123');
+});
+
+test('retries identical Checkout bodies and uses a fresh key after an amount edit', async () => {
+  process.env.STRIPE_SECRET_KEY = 'sk_test_backend_unit';
+  const calls: Array<{ key: string | null; body: URLSearchParams }> = [];
+  globalThis.fetch = async (_input, init) => {
+    calls.push({
+      key: new Headers(init?.headers).get('Idempotency-Key'),
+      body: new URLSearchParams(String(init?.body || '')),
+    });
+    return new Response(JSON.stringify({ id: 'cs_test_retry', url: 'https://checkout.stripe.com/retry' }), { status: 200 });
+  };
+
+  const params = {
+    invoiceId: 'invoice-local-edited',
+    customerId: 'customer-local-edited',
+    jobId: 'job-local-edited',
+    jobNumber: '1004',
+    customerName: 'Customer Four',
+    customerPhone: '+14165550104',
+    customerAddress: '4 Main Street, Toronto, ON',
+    stripeCustomerId: 'cus_existing_456',
+    grandTotal: 104,
+    subtotal: 100,
+    taxAmount: 0,
+    cardSurchargeAmount: 4,
+    automaticTax: true,
+    returnUrl: 'https://portal.example.test/dispatch/jobs/job-local-edited',
+    requestRevision: '2026-09-23T14:00:00.000Z',
+  };
+  await createStripePaymentLink(params);
+  await createStripePaymentLink(params);
+  await createStripePaymentLink({ ...params, grandTotal: 124.8, subtotal: 120, cardSurchargeAmount: 4.8 });
+  await createStripePaymentLink({ ...params, requestRevision: '2026-09-23T14:01:00.000Z' });
+
+  assert.equal(calls.length, 4);
+  assert.equal(calls[0].key, calls[1].key);
+  assert.notEqual(calls[0].key, calls[2].key);
+  assert.notEqual(calls[0].key, calls[3].key);
+  assert.equal(calls[0].body.get('line_items[0][price_data][unit_amount]'), '10000');
+  assert.equal(calls[2].body.get('line_items[0][price_data][unit_amount]'), '12000');
+  assert.equal(calls[3].body.get('line_items[0][price_data][unit_amount]'), '10000');
 });
 
 test('falls back to Checkout customer creation when pre-creating a customer fails', async () => {

@@ -27,7 +27,8 @@ export interface CreatePaymentLinkParams {
   /** Enables Stripe Tax for the pending manual-card pricing path. */
   automaticTax?: boolean;
   returnUrl: string;
-  idempotencyKey?: string;
+  /** Changes when the saved job is edited, even if an amount is later restored. */
+  requestRevision?: string;
 }
 
 export interface PaymentLinkResult {
@@ -41,32 +42,6 @@ export interface PaymentLinkResult {
   stripePaymentIntentId: string | null;
   amountTotal: number | null;
   amountTax: number | null;
-}
-
-/**
- * Keep Checkout retries idempotent for an unchanged invoice while allowing a
- * new session when any customer or pricing detail changes. A fixed key per
- * invoice would make Stripe replay the original session after an edit.
- */
-export function createPaymentLinkIdempotencyKey(params: CreatePaymentLinkParams): string {
-  const fingerprint = createHash('sha256').update(JSON.stringify({
-    invoiceId: params.invoiceId,
-    customerId: params.customerId,
-    jobId: params.jobId,
-    jobNumber: params.jobNumber,
-    customerName: params.customerName,
-    customerPhone: params.customerPhone,
-    customerAddress: params.customerAddress,
-    customerPostalCode: params.customerPostalCode || null,
-    stripeCustomerId: params.stripeCustomerId || null,
-    grandTotal: params.grandTotal,
-    subtotal: params.subtotal,
-    taxAmount: params.taxAmount,
-    cardSurchargeAmount: params.cardSurchargeAmount,
-    automaticTax: params.automaticTax === true,
-    returnUrl: params.returnUrl,
-  })).digest('hex');
-  return `locksmith-checkout-${params.invoiceId}-${fingerprint}`;
 }
 
 interface StripeResponse {
@@ -163,9 +138,15 @@ function addLineItem(
 async function stripePost(
   path: string,
   body: URLSearchParams,
-  idempotencyKey: string,
+  scope: string,
 ): Promise<StripeResponse> {
   const secretKey = getStripeSecretKey();
+  const encodedBody = body.toString();
+  // Stripe rejects a reused key when any request parameter differs. Hash the
+  // exact body being sent so code changes and customer fallbacks get new keys.
+  // v2 also avoids keys cached by the previous invoice-field fingerprint.
+  const fingerprint = createHash('sha256').update(`${path}\n${encodedBody}`).digest('hex');
+  const idempotencyKey = `locksmith-${scope}-v2-${fingerprint}`;
   const response = await fetch(`${STRIPE_API_BASE_URL}${path}`, {
     method: 'POST',
     headers: {
@@ -173,7 +154,7 @@ async function stripePost(
       'Content-Type': 'application/x-www-form-urlencoded',
       'Idempotency-Key': idempotencyKey,
     },
-    body: body.toString(),
+    body: encodedBody,
   });
 
   let payload: StripeResponse = {};
@@ -208,7 +189,7 @@ async function createStripeCustomer(params: CreatePaymentLinkParams): Promise<st
   const response = await stripePost(
     '/customers',
     body,
-    `locksmith-customer-${params.customerId}`,
+    `customer-${params.customerId}`,
   );
   const customerId = getString(response.id);
   if (!customerId) throw new StripeApiError('Stripe did not return a customer ID', 502);
@@ -256,7 +237,6 @@ export async function createStripePaymentLink(
   const cancelUrl = appendQuery(params.returnUrl, { payment: 'cancelled' });
   const body = new URLSearchParams({
     mode: 'payment',
-    ui_mode: 'hosted_page',
     'payment_method_types[0]': 'card',
     success_url: successUrl,
     cancel_url: cancelUrl,
@@ -272,6 +252,7 @@ export async function createStripePaymentLink(
     'metadata[jobNumber]': params.jobNumber,
     'metadata[customerId]': params.customerId,
   });
+  if (params.requestRevision) body.set('metadata[jobRevision]', params.requestRevision);
 
   if (automaticTax) {
     body.set('automatic_tax[enabled]', 'true');
@@ -299,10 +280,7 @@ export async function createStripePaymentLink(
   const response = await stripePost(
     '/checkout/sessions',
     body,
-    // Use the resolved customer ID. If customer creation falls back on one
-    // attempt but succeeds on another, Checkout's parameters differ and must
-    // use a different key. Unchanged effective requests remain retry-safe.
-    params.idempotencyKey || createPaymentLinkIdempotencyKey({ ...params, stripeCustomerId }),
+    `checkout-${params.invoiceId}`,
   );
   const paymentUrl = getString(response.url);
   const sessionId = getString(response.id);

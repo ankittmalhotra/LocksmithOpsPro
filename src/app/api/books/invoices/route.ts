@@ -8,6 +8,9 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { ONTARIO_HST_RATE_BPS, buildPartnerInvoiceDescription } from '@/lib/accounting';
 import { centsToDecimal, decimalToCents, isBooksEntityCode, parseCents, parseDateOnly, serializeDecimal, toJsonSafe } from '@/lib/books-api';
 import { formatTorontoDateInput } from '@/lib/timezone';
+import { sendEmail } from '@/lib/resend';
+import { buildBooksInvoiceEmail, invoiceRecipientEmail } from '@/lib/accounting-invoice-email';
+import { buildAccountingInvoicePdf } from '@/lib/accounting-invoice-pdf';
 
 function mapInvoice(invoice: any, redactIssuer = false) {
   const { issuerEntity, issuerSnapshot, ...safeInvoice } = invoice;
@@ -123,7 +126,25 @@ async function handlePOST(request: Request) {
       await tx.accountingAuditEvent.create({ data: { entityId: issuer.entity.id, invoiceId: invoice.id, actorId: user.id, action: 'ISSUED', resourceType: 'PartnerInvoice', resourceId: invoice.id, metadata: { invoiceNumber: invoice.invoiceNumber, totalAmount: totalCents / 100 } } });
       return invoice;
     });
-    return NextResponse.json({ success: true, invoice: mapInvoice(result) }, { status: 201 });
+    let responseInvoice = result;
+    let emailNotification: { sent: boolean; to?: string; error?: string } | undefined;
+    const recipientEmail = invoiceRecipientEmail(result);
+    if (recipientEmail) {
+      const email = buildBooksInvoiceEmail(result, recipientEmail);
+      const pdf = await buildAccountingInvoicePdf(result);
+      const emailResult = await sendEmail({ to: recipientEmail, subject: email.subject, html: email.html, text: email.text, replyTo: issuer.entity.email || undefined, attachments: [{ filename: `${result.invoiceNumber}.pdf`, content: pdf }] });
+      if (emailResult.success) {
+        responseInvoice = await prisma.$transaction(async (tx) => {
+          const saved = await tx.partnerInvoice.update({ where: { id: result.id }, data: { emailSentAt: new Date(), emailSentTo: recipientEmail, emailMessageId: emailResult.id || null }, include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: true } });
+          await tx.accountingAuditEvent.create({ data: { entityId: issuer.entity.id, invoiceId: result.id, actorId: user.id, action: 'EMAIL_SENT', resourceType: 'PartnerInvoice', resourceId: result.id, metadata: { invoiceNumber: result.invoiceNumber, recipientEmail, paymentStatus: result.paymentStatus, messageId: emailResult.id || null } } });
+          return saved;
+        });
+        emailNotification = { sent: true, to: recipientEmail };
+      } else {
+        emailNotification = { sent: false, to: recipientEmail, error: emailResult.error || 'Unable to send invoice email' };
+      }
+    }
+    return NextResponse.json({ success: true, invoice: mapInvoice(responseInvoice), emailNotification }, { status: 201 });
   } catch (error: any) {
     logCaughtRequestError(request, '/api/books/invoices', error);
     return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to issue invoice') }, { status: error?.code === 'P2002' ? 409 : 400 });

@@ -5,6 +5,7 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { sendEmail } from '@/lib/resend';
 import { buildBooksInvoiceEmail, invoiceRecipientEmail, normalizeInvoiceEmail } from '@/lib/accounting-invoice-email';
+import { buildAccountingInvoicePdf } from '@/lib/accounting-invoice-pdf';
 import { serializeDecimal } from '@/lib/books-api';
 
 function mapInvoice(invoice: any) {
@@ -38,7 +39,8 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
     if (!recipientEmail) return NextResponse.json({ success: false, error: 'Enter a valid customer email address before sending' }, { status: 400 });
 
     const email = buildBooksInvoiceEmail(invoice, recipientEmail);
-    const result = await sendEmail({ to: recipientEmail, subject: email.subject, html: email.html, text: email.text, replyTo: invoice.issuerEntity.email || undefined });
+    const pdf = await buildAccountingInvoicePdf(invoice);
+    const result = await sendEmail({ to: recipientEmail, subject: email.subject, html: email.html, text: email.text, replyTo: invoice.issuerEntity.email || undefined, attachments: [{ filename: `${invoice.invoiceNumber}.pdf`, content: pdf }] });
     if (!result.success) return NextResponse.json({ success: false, error: result.error || 'Unable to send invoice email' }, { status: 502 });
 
     const updated = await prisma.$transaction(async (tx) => {

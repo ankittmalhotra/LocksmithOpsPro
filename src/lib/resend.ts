@@ -17,6 +17,7 @@ export interface SendEmailOptions {
   from?: string;
   replyTo?: string;
   text?: string;
+  attachments?: Array<{ filename: string; content: Uint8Array | string }>;
 }
 
 export interface EmailResult {
@@ -34,6 +35,7 @@ export async function sendEmail({
   from,
   replyTo,
   text,
+  attachments,
 }: SendEmailOptions): Promise<EmailResult> {
   const apiKey = process.env.RESEND_API_KEY;
   // Resend requires a verified domain in production, or 'onboarding@resend.dev' during testing
@@ -53,6 +55,12 @@ export async function sendEmail({
 
       if (replyTo) payload.reply_to = replyTo;
       if (text) payload.text = text;
+      if (attachments?.length) {
+        payload.attachments = attachments.map((attachment) => ({
+          filename: attachment.filename,
+          content: typeof attachment.content === 'string' ? attachment.content : Buffer.from(attachment.content).toString('base64'),
+        }));
+      }
 
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',

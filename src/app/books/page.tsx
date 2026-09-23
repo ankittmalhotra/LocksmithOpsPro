@@ -409,7 +409,8 @@ export default function BooksPage() {
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to issue invoice');
       await loadBooks(entityCode, false);
       setSelectedInvoice(data.invoice);
-      showSuccess(`Invoice ${data.invoice.invoiceNumber} issued to Locksmith.`);
+      showSuccess(data.emailNotification?.sent ? `Invoice ${data.invoice.invoiceNumber} issued and emailed to Locksmith.` : `Invoice ${data.invoice.invoiceNumber} issued to Locksmith.`);
+      if (data.emailNotification?.error) setError(`Invoice was issued, but the email could not be sent: ${data.emailNotification.error}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to issue invoice');
     } finally {
@@ -439,7 +440,8 @@ export default function BooksPage() {
       setServiceInvoiceForm({ customerName: '', customerNumber: '', customerEmail: '', addressLine1: '', city: '', province: 'Ontario', postalCode: '', country: 'Canada', lineDescription: '', quantity: '1', unitPrice: '', dueDate: '', paymentTerms: 'Due on receipt', notes: '' });
       await loadBooks(entityCode, false);
       setSelectedInvoice(data.invoice);
-      showSuccess(`Invoice ${data.invoice.invoiceNumber} issued.`);
+      showSuccess(data.emailNotification?.sent ? `Invoice ${data.invoice.invoiceNumber} issued and emailed.` : `Invoice ${data.invoice.invoiceNumber} issued.`);
+      if (data.emailNotification?.error) setError(`Invoice was issued, but the email could not be sent: ${data.emailNotification.error}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to issue service invoice');
     } finally {

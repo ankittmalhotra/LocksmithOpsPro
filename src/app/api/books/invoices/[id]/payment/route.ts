@@ -6,6 +6,7 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { decimalToCents, serializeDecimal } from '@/lib/books-api';
 import { sendEmail } from '@/lib/resend';
 import { buildBooksInvoiceEmail, invoiceRecipientEmail } from '@/lib/accounting-invoice-email';
+import { buildAccountingInvoicePdf } from '@/lib/accounting-invoice-pdf';
 
 function mapPaymentInvoice(invoice: any) {
   return {
@@ -47,7 +48,8 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
       const recipientEmail = invoiceRecipientEmail(updated);
       if (recipientEmail) {
         const email = buildBooksInvoiceEmail(updated, recipientEmail);
-        const result = await sendEmail({ to: recipientEmail, subject: email.subject, html: email.html, text: email.text, replyTo: updated.issuerEntity.email || undefined });
+        const pdf = await buildAccountingInvoicePdf(updated);
+        const result = await sendEmail({ to: recipientEmail, subject: email.subject, html: email.html, text: email.text, replyTo: updated.issuerEntity.email || undefined, attachments: [{ filename: `${updated.invoiceNumber}.pdf`, content: pdf }] });
         if (result.success) {
           responseInvoice = await prisma.$transaction(async (tx) => {
             const saved = await tx.partnerInvoice.update({ where: { id }, data: { emailSentAt: new Date(), emailSentTo: recipientEmail, emailMessageId: result.id || null }, include: { billingPeriod: true, issuerEntity: true, recipientEntity: true, paymentEvents: { orderBy: { createdAt: 'asc' } } } });

@@ -39,6 +39,7 @@ async function main() {
       code: 'IT_MARKETING',
       legalName: '1001744934 ONTARIO INC.',
       corporationNumber: '1001744934',
+      hstRegistrationNumber: '752857771RT0001',
       province: 'Ontario',
       country: 'Canada',
     },

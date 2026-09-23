@@ -94,6 +94,7 @@ async function findOrBootstrapEntity(entityCode: AccountingEntityCode, currentUs
           country: defaults.country,
           authorizedPersonName: defaults.authorizedPersonName,
           authorizedPersonTitle: defaults.authorizedPersonTitle,
+          hstRegistrationNumber: defaults.hstRegistrationNumber,
           partnerBillingAnchor: new Date(`${defaults.partnerBillingAnchor}T00:00:00.000Z`),
         },
         select: ENTITY_SELECT,

@@ -132,10 +132,10 @@ CREATE INDEX IF NOT EXISTS "AccountingAuditEvent_invoiceId_createdAt_idx" ON "Ac
 -- Bootstrap the fixed entities and grant existing staff the access described
 -- by the application. This makes the migration complete on an existing
 -- production database; rerunning it is safe because all writes are upserts.
-INSERT INTO "AccountingEntity" ("code", "legalName", "corporationNumber", "email", "addressLine1", "city", "province", "postalCode", "country", "authorizedPersonName", "authorizedPersonTitle", "partnerBillingAnchor")
+INSERT INTO "AccountingEntity" ("code", "legalName", "corporationNumber", "email", "addressLine1", "city", "province", "postalCode", "country", "authorizedPersonName", "authorizedPersonTitle", "hstRegistrationNumber", "partnerBillingAnchor")
 VALUES
-  ('IT_MARKETING', '1001744934 ONTARIO INC.', '1001744934', NULL, NULL, NULL, 'Ontario', NULL, 'Canada', NULL, NULL, DATE '2026-09-07'),
-  ('LOCKSMITH', '1001348245 ONTARIO INC.', '1001348245', 'bcltoronto1@gmail.com', '27 Knollside Drive', 'Richmond Hill', 'Ontario', 'L4C4W7', 'Canada', 'UMAR QURESHI', 'Director', DATE '2026-09-07')
+  ('IT_MARKETING', '1001744934 ONTARIO INC.', '1001744934', NULL, NULL, NULL, 'Ontario', NULL, 'Canada', NULL, NULL, '752857771RT0001', DATE '2026-09-07'),
+  ('LOCKSMITH', '1001348245 ONTARIO INC.', '1001348245', 'bcltoronto1@gmail.com', '27 Knollside Drive', 'Richmond Hill', 'Ontario', 'L4C4W7', 'Canada', 'UMAR QURESHI', 'Director', NULL, DATE '2026-09-07')
 ON CONFLICT ("code") DO UPDATE SET
   "legalName" = EXCLUDED."legalName",
   "corporationNumber" = EXCLUDED."corporationNumber",
@@ -145,7 +145,8 @@ ON CONFLICT ("code") DO UPDATE SET
   "province" = COALESCE("AccountingEntity"."province", EXCLUDED."province"),
   "postalCode" = COALESCE("AccountingEntity"."postalCode", EXCLUDED."postalCode"),
   "authorizedPersonName" = COALESCE("AccountingEntity"."authorizedPersonName", EXCLUDED."authorizedPersonName"),
-  "authorizedPersonTitle" = COALESCE("AccountingEntity"."authorizedPersonTitle", EXCLUDED."authorizedPersonTitle");
+  "authorizedPersonTitle" = COALESCE("AccountingEntity"."authorizedPersonTitle", EXCLUDED."authorizedPersonTitle"),
+  "hstRegistrationNumber" = CASE WHEN EXCLUDED."code" = 'IT_MARKETING' THEN EXCLUDED."hstRegistrationNumber" ELSE "AccountingEntity"."hstRegistrationNumber" END;
 
 INSERT INTO "AccountingEntityMembership" ("userId", "entityId", "canView", "canManageExpenses", "canIssueInvoices", "canMarkPayments")
 SELECT u."id", e."id", true, true, true, true

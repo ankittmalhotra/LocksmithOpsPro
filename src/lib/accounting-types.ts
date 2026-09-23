@@ -48,7 +48,7 @@ export const ACCOUNTING_ENTITY_DEFAULTS: Record<
     country: 'Canada',
     authorizedPersonName: null,
     authorizedPersonTitle: null,
-    hstRegistrationNumber: null,
+    hstRegistrationNumber: '752857771RT0001',
     partnerBillingAnchor: '2026-09-07',
   },
   LOCKSMITH: {

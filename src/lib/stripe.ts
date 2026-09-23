@@ -299,7 +299,10 @@ export async function createStripePaymentLink(
   const response = await stripePost(
     '/checkout/sessions',
     body,
-    params.idempotencyKey || createPaymentLinkIdempotencyKey(params),
+    // Use the resolved customer ID. If customer creation falls back on one
+    // attempt but succeeds on another, Checkout's parameters differ and must
+    // use a different key. Unchanged effective requests remain retry-safe.
+    params.idempotencyKey || createPaymentLinkIdempotencyKey({ ...params, stripeCustomerId }),
   );
   const paymentUrl = getString(response.url);
   const sessionId = getString(response.id);

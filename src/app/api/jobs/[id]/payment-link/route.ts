@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import {
-  createPaymentLinkIdempotencyKey,
   createStripePaymentLink,
   StripeApiError,
   StripeConfigurationError,
@@ -98,12 +97,7 @@ async function handlePOST(
       automaticTax: true,
       returnUrl: getReturnUrl(request, job.id),
     };
-    const result = await createStripePaymentLink({
-      ...paymentParams,
-      // Retries of identical details return the same result; edits produce a
-      // different key so Stripe creates a session with the updated amount.
-      idempotencyKey: createPaymentLinkIdempotencyKey(paymentParams),
-    });
+    const result = await createStripePaymentLink(paymentParams);
 
     const persisted = await prisma.$transaction(async (tx) => {
       if (result.customerId) {

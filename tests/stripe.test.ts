@@ -63,7 +63,7 @@ test('creates hosted Checkout without prefilled customer email and with idempote
   assert.equal(calls[0].url, 'https://api.stripe.com/v1/checkout/sessions');
   assert.equal(calls[0].headers.get('Idempotency-Key'), 'locksmith-checkout-invoice-local-1-initial');
   assert.equal(calls[0].body.get('mode'), 'payment');
-  assert.equal(calls[0].body.get('ui_mode'), 'hosted');
+  assert.equal(calls[0].body.get('ui_mode'), 'hosted_page');
   assert.equal(calls[0].body.get('customer'), 'cus_existing_123');
   assert.equal(calls[0].body.get('customer_creation'), null);
   assert.equal(calls[0].body.get('customer_email'), null);

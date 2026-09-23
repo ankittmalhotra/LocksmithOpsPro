@@ -256,7 +256,7 @@ export async function createStripePaymentLink(
   const cancelUrl = appendQuery(params.returnUrl, { payment: 'cancelled' });
   const body = new URLSearchParams({
     mode: 'payment',
-    ui_mode: 'hosted',
+    ui_mode: 'hosted_page',
     'payment_method_types[0]': 'card',
     success_url: successUrl,
     cancel_url: cancelUrl,

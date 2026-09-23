@@ -6,6 +6,7 @@ import { normalizeManualJobInvoice } from '@/lib/manual-job';
 import { findJobsWithDetails, findTechniciansWithSettlements } from '@/lib/job-helper';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { isInRevenuePeriod, isRevenuePeriod, type RevenuePeriod } from '@/lib/revenue-period';
 import {
   calculateGoogleAdsRoi,
   dateKeyToUtcDate,
@@ -31,6 +32,10 @@ async function handleGET(request: Request) {
     // 1. Fetch all completed/invoiced jobs with invoices and items
     const rawJobs = await findJobsWithDetails({ orderBy: { createdAt: 'desc' } });
     const jobs = rawJobs.map(normalizeManualJobInvoice);
+    const requestedRevenuePeriod = new URL(request.url).searchParams.get('revenuePeriod');
+    const revenuePeriod: RevenuePeriod = isRevenuePeriod(requestedRevenuePeriod)
+      ? requestedRevenuePeriod
+      : 'all-time';
 
     // 2. Fetch all technicians
     const technicians = await findTechniciansWithSettlements();
@@ -56,6 +61,7 @@ async function handleGET(request: Request) {
       const isOnBooks = job.invoice?.taxCollected !== false;
       if (job.invoice && job.invoice.paymentStatus === 'PAID') {
         completedJobsCount++;
+        if (!isInRevenuePeriod(job, revenuePeriod)) continue;
         totalGrossRevenue += job.invoice.grandTotal;
         // HST is recorded only for on-books jobs. Manual job totals are
         // tax-inclusive, so their stored taxAmount is the extracted HST.
@@ -248,6 +254,7 @@ async function handleGET(request: Request) {
     return NextResponse.json({
       success: true,
       summary: {
+        revenuePeriod,
         totalGrossRevenue: roundToTwo(totalGrossRevenue),
         totalCashRevenue: roundToTwo(totalCashRevenue),
         totalInteracRevenue: roundToTwo(totalInteracRevenue),

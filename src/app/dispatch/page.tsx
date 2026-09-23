@@ -9,6 +9,12 @@ import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { buildSmsDraft } from '@/lib/sms-draft';
 import { formatTorontoDateInput, parseTorontoDateOnly, torontoDateTimeToIso } from '@/lib/timezone';
+import {
+  isInRevenuePeriod,
+  REVENUE_PERIOD_LABELS,
+  REVENUE_PERIOD_OPTIONS,
+  type RevenuePeriod,
+} from '@/lib/revenue-period';
 
 const PHONE_INPUT_PATTERN = '(?=.*[0-9])[0-9()+\\-\\s]{7,}';
 
@@ -167,6 +173,7 @@ export default function DispatchPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
+  const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Intake Form State
@@ -635,6 +642,7 @@ export default function DispatchPage() {
     for (const job of jobs) {
       const invoice = job.invoice;
       if (!invoice || invoice.paymentStatus !== 'PAID') continue;
+      if (!isInRevenuePeriod(job, revenuePeriod)) continue;
 
       const grossTotal = Number(invoice.grandTotal || 0);
       const isOnBooks = invoice.taxCollected !== false;
@@ -670,7 +678,7 @@ export default function DispatchPage() {
         summary.totalGrossRevenue - summary.totalTaxHST - summary.totalCommissionsEarned - summary.totalPartsCost
       ),
     };
-  }, [jobs]);
+  }, [jobs, revenuePeriod]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -705,6 +713,22 @@ export default function DispatchPage() {
           </div>
         )}
       </div>
+
+      {canManageManualJobs && (
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <label htmlFor="dispatch-revenue-period" className="text-sm font-bold text-slate-700">Financial period</label>
+          <select
+            id="dispatch-revenue-period"
+            value={revenuePeriod}
+            onChange={(event) => setRevenuePeriod(event.target.value as RevenuePeriod)}
+            className="w-full sm:w-auto rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            {REVENUE_PERIOD_OPTIONS.map((period) => (
+              <option key={period} value={period}>{REVENUE_PERIOD_LABELS[period]}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {canManageManualJobs && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 mb-6">

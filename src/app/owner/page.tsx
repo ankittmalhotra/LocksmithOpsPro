@@ -1,9 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import { formatTorontoDateInput } from '@/lib/timezone';
+import {
+  REVENUE_PERIOD_LABELS,
+  REVENUE_PERIOD_OPTIONS,
+  type RevenuePeriod,
+} from '@/lib/revenue-period';
 
 interface TechLedgerItem {
   id: string;
@@ -71,6 +76,7 @@ function AnimatedMetric({
 
 export default function AdminDashboardPage() {
   const [analytics, setAnalytics] = useState<any>(null);
+  const analyticsRequestId = useRef(0);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [analyticsRefreshVersion, setAnalyticsRefreshVersion] = useState(0);
@@ -78,6 +84,7 @@ export default function AdminDashboardPage() {
   const [successMsg, setSuccessMsg] = useState('');
   const [googleAdsSyncing, setGoogleAdsSyncing] = useState(false);
   const [googleAdsRange, setGoogleAdsRange] = useState<GoogleAdsRoiRange>('today');
+  const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
   const [googleAdsView, setGoogleAdsView] = useState<GoogleAdsRoiView>('partner');
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
@@ -154,17 +161,26 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const fetchAuthAndAnalytics = async (selectedGoogleAdsRange: GoogleAdsRoiRange = googleAdsRange) => {
+  const fetchAuthAndAnalytics = async (
+    selectedGoogleAdsRange: GoogleAdsRoiRange = googleAdsRange,
+    selectedRevenuePeriod: RevenuePeriod = revenuePeriod,
+  ) => {
+    const requestId = ++analyticsRequestId.current;
     try {
       setLoading(true);
       const authRes = await fetch('/api/auth/me', { cache: 'no-store' });
       const authData = await authRes.json();
-      if (authData.success && authData.user) {
+      if (requestId === analyticsRequestId.current && authData.success && authData.user) {
         setCurrentUser(authData.user);
       }
 
-      const res = await fetch(`/api/owner/analytics?googleAdsRange=${selectedGoogleAdsRange}`, { cache: 'no-store' });
+      const params = new URLSearchParams({
+        googleAdsRange: selectedGoogleAdsRange,
+        revenuePeriod: selectedRevenuePeriod,
+      });
+      const res = await fetch(`/api/owner/analytics?${params.toString()}`, { cache: 'no-store' });
       const data = await res.json();
+      if (requestId !== analyticsRequestId.current) return;
       if (data.success) {
         setErrorMsg('');
         setAnalytics(data);
@@ -173,9 +189,9 @@ export default function AdminDashboardPage() {
         setErrorMsg(data.error || 'Failed to fetch analytics');
       }
     } catch (err: any) {
-      setErrorMsg(err.message);
+      if (requestId === analyticsRequestId.current) setErrorMsg(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === analyticsRequestId.current) setLoading(false);
     }
   };
 
@@ -442,6 +458,23 @@ export default function AdminDashboardPage() {
       )}
 
       {/* Primary KPI Cards */}
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <label htmlFor="admin-revenue-period" className="text-sm font-bold text-slate-700">Financial period</label>
+        <select
+          id="admin-revenue-period"
+          value={revenuePeriod}
+          onChange={(event) => {
+            const nextPeriod = event.target.value as RevenuePeriod;
+            setRevenuePeriod(nextPeriod);
+            fetchAuthAndAnalytics(googleAdsRange, nextPeriod);
+          }}
+          className="w-full sm:w-auto rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+        >
+          {REVENUE_PERIOD_OPTIONS.map((period) => (
+            <option key={period} value={period}>{REVENUE_PERIOD_LABELS[period]}</option>
+          ))}
+        </select>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 mb-6">
         {/* Gross Revenue */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">

@@ -6,7 +6,7 @@
  * second SDK. No helper in this module falls back to a simulated payment URL.
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 const STRIPE_API_BASE_URL = 'https://api.stripe.com/v1';
 
@@ -41,6 +41,32 @@ export interface PaymentLinkResult {
   stripePaymentIntentId: string | null;
   amountTotal: number | null;
   amountTax: number | null;
+}
+
+/**
+ * Keep Checkout retries idempotent for an unchanged invoice while allowing a
+ * new session when any customer or pricing detail changes. A fixed key per
+ * invoice would make Stripe replay the original session after an edit.
+ */
+export function createPaymentLinkIdempotencyKey(params: CreatePaymentLinkParams): string {
+  const fingerprint = createHash('sha256').update(JSON.stringify({
+    invoiceId: params.invoiceId,
+    customerId: params.customerId,
+    jobId: params.jobId,
+    jobNumber: params.jobNumber,
+    customerName: params.customerName,
+    customerPhone: params.customerPhone,
+    customerAddress: params.customerAddress,
+    customerPostalCode: params.customerPostalCode || null,
+    stripeCustomerId: params.stripeCustomerId || null,
+    grandTotal: params.grandTotal,
+    subtotal: params.subtotal,
+    taxAmount: params.taxAmount,
+    cardSurchargeAmount: params.cardSurchargeAmount,
+    automaticTax: params.automaticTax === true,
+    returnUrl: params.returnUrl,
+  })).digest('hex');
+  return `locksmith-checkout-${params.invoiceId}-${fingerprint}`;
 }
 
 interface StripeResponse {
@@ -230,7 +256,7 @@ export async function createStripePaymentLink(
   const cancelUrl = appendQuery(params.returnUrl, { payment: 'cancelled' });
   const body = new URLSearchParams({
     mode: 'payment',
-    ui_mode: 'hosted_page',
+    ui_mode: 'hosted',
     'payment_method_types[0]': 'card',
     success_url: successUrl,
     cancel_url: cancelUrl,
@@ -273,7 +299,7 @@ export async function createStripePaymentLink(
   const response = await stripePost(
     '/checkout/sessions',
     body,
-    params.idempotencyKey || `locksmith-checkout-${params.invoiceId}`,
+    params.idempotencyKey || createPaymentLinkIdempotencyKey(params),
   );
   const paymentUrl = getString(response.url);
   const sessionId = getString(response.id);

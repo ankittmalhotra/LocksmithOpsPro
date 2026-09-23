@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import {
+  createPaymentLinkIdempotencyKey,
   createStripePaymentLink,
   StripeApiError,
   StripeConfigurationError,
@@ -80,7 +81,7 @@ async function handlePOST(
       });
     }
 
-    const result = await createStripePaymentLink({
+    const paymentParams = {
       invoiceId: invoice.id,
       customerId: job.customer.id,
       jobId: job.id,
@@ -96,9 +97,12 @@ async function handlePOST(
       cardSurchargeAmount: invoice.cardSurchargeAmount,
       automaticTax: true,
       returnUrl: getReturnUrl(request, job.id),
-      // A stable key makes a retry safe if the response was lost before the
-      // URL could be persisted locally.
-      idempotencyKey: `locksmith-checkout-${invoice.id}-${invoice.stripeSessionId || 'initial'}`,
+    };
+    const result = await createStripePaymentLink({
+      ...paymentParams,
+      // Retries of identical details return the same result; edits produce a
+      // different key so Stripe creates a session with the updated amount.
+      idempotencyKey: createPaymentLinkIdempotencyKey(paymentParams),
     });
 
     const persisted = await prisma.$transaction(async (tx) => {
@@ -154,6 +158,7 @@ async function handlePOST(
       return NextResponse.json({ success: false, error: 'Stripe payments are not configured' }, { status: 503 });
     }
     if (error instanceof StripeApiError) {
+      logCaughtRequestError(request, '/api/jobs/[id]/payment-link', error);
       return NextResponse.json({ success: false, error: 'Stripe could not create the payment link' }, { status: 502 });
     }
     logCaughtRequestError(request, '/api/jobs/[id]/payment-link', error);

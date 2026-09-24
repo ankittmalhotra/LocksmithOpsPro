@@ -303,6 +303,13 @@ model GoogleAdsDailyMetric {
   @@index([date])
 }
 
+// OAuth refresh token encrypted with GOOGLE_ADS_TOKEN_ENCRYPTION_KEY.
+model GoogleAdsOAuthCredential {
+  id                    String   @id @default("primary")
+  encryptedRefreshToken String
+  updatedAt             DateTime @updatedAt
+}
+
 model Settlement {
   id            String   @id @default(uuid())
   technicianId  String

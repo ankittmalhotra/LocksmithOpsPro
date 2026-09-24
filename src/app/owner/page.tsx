@@ -83,6 +83,7 @@ export default function AdminDashboardPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [googleAdsSyncing, setGoogleAdsSyncing] = useState(false);
+  const [googleAdsReconnectRequired, setGoogleAdsReconnectRequired] = useState(false);
   const [googleAdsRange, setGoogleAdsRange] = useState<GoogleAdsRoiRange>('today');
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
   const [googleAdsView, setGoogleAdsView] = useState<GoogleAdsRoiView>('partner');
@@ -108,6 +109,18 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     fetchAuthAndAnalytics();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const googleAdsAuth = params.get('googleAdsAuth');
+    if (googleAdsAuth === 'connected') {
+      setSuccessMsg('Google Ads reconnected. You can sync spend now.');
+      setGoogleAdsReconnectRequired(false);
+    } else if (googleAdsAuth === 'failed') {
+      setErrorMsg('Google Ads could not be reconnected. Try again and approve the requested access.');
+    }
+    if (googleAdsAuth) window.history.replaceState({}, '', window.location.pathname);
   }, []);
 
   const handleAddMember = async (e: React.FormEvent) => {
@@ -244,10 +257,12 @@ export default function AdminDashboardPage() {
       const res = await fetch(`/api/owner/google-ads/sync?range=${googleAdsRange}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        if (data.code === 'GOOGLE_ADS_REAUTH_REQUIRED') setGoogleAdsReconnectRequired(true);
         throw new Error(data.error || 'Failed to sync Google Ads');
       }
 
       setSuccessMsg(`Google Ads synced for ${data.data.rangeLabel.toLowerCase()} (${data.data.dateFrom} to ${data.data.dateTo}). Spend: $${Number(data.data.spend || 0).toFixed(2)}.`);
+      setGoogleAdsReconnectRequired(false);
       await fetchAuthAndAnalytics(googleAdsRange);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to sync Google Ads');
@@ -706,6 +721,12 @@ export default function AdminDashboardPage() {
             >
               {googleAdsSyncing ? 'Syncing…' : `Sync ${googleAdsRangeLabel.toLowerCase()}`}
             </button>
+            <Link
+              href="/api/owner/google-ads/connect"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              {googleAdsReconnectRequired ? 'Reconnect Google Ads' : 'Connect / reconnect Google Ads'}
+            </Link>
           </div>
         </div>
 

@@ -96,7 +96,7 @@ STRIPE_PUBLISHABLE_KEY="pk_live_..."
 
 The Admin dashboard pulls Google Ads spend when an Admin clicks **Sync today**, **Sync yesterday**, **Sync last week**, or **Sync all time**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. The ROI widget supports these Toronto calendar periods: Today, Yesterday, the trailing seven days, and All time beginning September 7, 2026, when the company started. It compares spend with net profit, not revenue. Net profit uses the existing accounting definition: paid gross invoices minus HST, technician commissions, and parts cost. The default **ROI for partner** view splits that profit equally between the two partners before calculating ROI; **ROI for company** uses the full company profit.
 
-Google Ads does not use a single API key for this integration. Google requires an OAuth 2.0 client, a refresh token, and a Google Ads developer token. The account customer ID is also required. See Google’s official [authorization and HTTP headers guide](https://developers.google.com/google-ads/api/rest/auth).
+Google Ads does not use a single API key for this integration. Google requires an OAuth 2.0 client and a Google Ads developer token. The account customer ID is also required. See Google’s official [authorization and HTTP headers guide](https://developers.google.com/google-ads/api/rest/auth).
 
 Add these server-only variables to Vercel and local development as needed:
 
@@ -104,8 +104,14 @@ Add these server-only variables to Vercel and local development as needed:
 GOOGLE_ADS_DEVELOPER_TOKEN="..."
 GOOGLE_ADS_CLIENT_ID="...apps.googleusercontent.com"
 GOOGLE_ADS_CLIENT_SECRET="..."
+# Optional legacy/bootstrap token. Admins can connect or reconnect from the dashboard.
 GOOGLE_ADS_REFRESH_TOKEN="..."
 GOOGLE_ADS_CUSTOMER_ID="1234567890"
+
+# Required to encrypt OAuth refresh tokens stored in the database.
+# Generate once with: openssl rand -base64 32
+# Keep the same value across deploys; changing it makes stored tokens unreadable.
+GOOGLE_ADS_TOKEN_ENCRYPTION_KEY="..."
 
 # Required only when the OAuth user reaches the account through a manager account.
 GOOGLE_ADS_LOGIN_CUSTOMER_ID="0987654321"
@@ -118,10 +124,13 @@ GOOGLE_ADS_API_VERSION="v25"
 To obtain the values:
 
 1. In Google Ads, create or use a Manager account and open **Admin → API Center**. Copy the developer token. Google documents that a developer token is required on every API request and that its access level controls production access.
-2. In [Google Cloud Console](https://console.cloud.google.com/), create/select a project, enable the Google Ads API, configure the OAuth consent screen, and create an OAuth client ID for a server-side web/desktop application. Keep the client secret private.
-3. Authorize the Google account that can access the target Ads account with the scope `https://www.googleapis.com/auth/adwords` and request offline access. Exchange the authorization result for a refresh token. Google’s [single-user authentication guide](https://developers.google.com/google-ads/api/docs/oauth/single-user-authentication) describes this flow.
+2. In [Google Cloud Console](https://console.cloud.google.com/), create/select a project, enable the Google Ads API, configure the OAuth consent screen, and create a **Web application** OAuth client ID. Keep the client secret private.
+3. Make sure the OAuth consent screen is in production. After deploying, an Admin will use **Connect / reconnect Google Ads** in the dashboard to authorize the Ads account with the `https://www.googleapis.com/auth/adwords` scope and offline access. Google’s [single-user authentication guide](https://developers.google.com/google-ads/api/docs/oauth/single-user-authentication) describes the flow.
 4. Copy the 10-digit client account ID from Google Ads into `GOOGLE_ADS_CUSTOMER_ID`, removing hyphens. If the authorized Google user enters the account through a Manager account, put that Manager ID, also without hyphens, in `GOOGLE_ADS_LOGIN_CUSTOMER_ID`; otherwise leave it unset.
-5. Apply `prisma/google-ads-daily-metric-migration.sql` once to an existing production database, or run `npx prisma db push` for a new database, before deploying the code.
+5. Apply `prisma/google-ads-daily-metric-migration.sql` and `prisma/google-ads-oauth-credential-migration.sql` once to an existing production database, or run `npx prisma db push` for a new database, before deploying the code.
+6. Add `https://YOUR_APP_DOMAIN/api/owner/google-ads/callback` as an authorized redirect URI on the OAuth web client. The Admin dashboard’s **Connect Google Ads** button uses this callback to save the refresh token securely. Keep the OAuth consent screen in production; testing-mode refresh tokens expire after seven days for the Ads scope.
+
+If Google Ads access expires or is revoked (`invalid_grant`), click **Reconnect Google Ads** in the Admin dashboard and sign in again. The callback stores the new refresh token encrypted in the database, so no environment-variable edit or redeploy is needed. A revoked token still requires a Google sign-in and consent; it cannot be renewed silently.
 
 The current implementation reports blended portal profit against account-level Google Ads spend. For exact ad-attributed ROI, jobs will also need a source/conversion attribution field and a matching Google Ads conversion workflow.
 

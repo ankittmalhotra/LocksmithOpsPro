@@ -7,6 +7,7 @@ import {
   getGoogleAdsDateKeys,
   GOOGLE_ADS_RANGE_LABELS,
   GOOGLE_ADS_RANGE_OPTIONS,
+  GoogleAdsReauthRequiredError,
   type GoogleAdsRoiRange,
   googleAdsErrorMessage,
 } from '@/lib/google-ads';
@@ -83,13 +84,16 @@ async function handlePOST(request: Request) {
     const message = storageMigrationRequired
       ? 'Google Ads storage is not ready. Apply prisma/google-ads-daily-metric-migration.sql, then try again.'
       : googleAdsErrorMessage(error);
-    const status = error instanceof Error && error.name === 'GoogleAdsConfigurationError'
-      ? 503
-      : storageMigrationRequired ? 503 : 500;
-    return NextResponse.json(
-      { success: false, error: storageMigrationRequired ? message : getApiErrorMessage(error, message) },
-      { status },
-    );
+    const status = error instanceof GoogleAdsReauthRequiredError
+      ? 401
+      : error instanceof Error && error.name === 'GoogleAdsConfigurationError'
+        ? 503
+        : storageMigrationRequired ? 503 : 500;
+    return NextResponse.json({
+      success: false,
+      error: storageMigrationRequired ? message : getApiErrorMessage(error, message),
+      code: error instanceof GoogleAdsReauthRequiredError ? 'GOOGLE_ADS_REAUTH_REQUIRED' : undefined,
+    }, { status });
   }
 }
 

@@ -113,7 +113,7 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    - Run `prisma/ringcentral-connection-migration.sql` and `prisma/ringcentral-call-cache-migration.sql` once against production so OAuth and cached call records are shared between Admin and Dispatcher dashboards. This is not needed when using `RC_USER_JWT` for the OAuth connection, but the call-cache migration is still required for analytics caching.
    - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` for the online-payment flow
    - `STRIPE_PUBLISHABLE_KEY` is reserved for future client-side Stripe.js flows and is not required by the current hosted Checkout redirect
-   - *(Optional Google Ads ROI)* `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`, and optionally `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CURRENCY_CODE`, `GOOGLE_ADS_API_VERSION`. See [DEPLOYMENT.md](./DEPLOYMENT.md#google-ads-roi-setup) for setup.
+   - *(Optional Google Ads ROI)* `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_TOKEN_ENCRYPTION_KEY`, and optionally `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CURRENCY_CODE`, `GOOGLE_ADS_API_VERSION`. `GOOGLE_ADS_REFRESH_TOKEN` is optional legacy/bootstrap configuration; admins can connect from the dashboard. See [DEPLOYMENT.md](./DEPLOYMENT.md#google-ads-roi-setup) for setup.
 
 5. Before deploying a version that includes dispatcher edits, manual-job intake,
    or Stripe payment tracking, apply the current Prisma schema to the existing

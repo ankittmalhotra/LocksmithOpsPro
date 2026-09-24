@@ -1,3 +1,5 @@
+import { getStoredGoogleAdsRefreshToken } from '@/lib/google-ads-credential-store';
+
 const GOOGLE_ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 const GOOGLE_ADS_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_ADS_API_URL = 'https://googleads.googleapis.com';
@@ -24,7 +26,7 @@ export type GoogleAdsConfig = {
   customerId: string;
   developerToken: string;
   loginCustomerId?: string;
-  refreshToken: string;
+  refreshToken?: string;
 };
 
 export type GoogleAdsDailyMetrics = {
@@ -66,6 +68,16 @@ export class GoogleAdsApiError extends Error {
   }
 }
 
+export class GoogleAdsReauthRequiredError extends GoogleAdsApiError {
+  constructor() {
+    super(
+      'Google Ads access has expired or was revoked. Reconnect the Google Ads account from the Admin dashboard to restore access.',
+      400,
+    );
+    this.name = 'GoogleAdsReauthRequiredError';
+  }
+}
+
 function getEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value || undefined;
@@ -84,7 +96,6 @@ export function getGoogleAdsConfig(): GoogleAdsConfig {
     'GOOGLE_ADS_DEVELOPER_TOKEN',
     'GOOGLE_ADS_CLIENT_ID',
     'GOOGLE_ADS_CLIENT_SECRET',
-    'GOOGLE_ADS_REFRESH_TOKEN',
     'GOOGLE_ADS_CUSTOMER_ID',
   ];
   const missingVariables = requiredVariables.filter((name) => !getEnv(name));
@@ -105,7 +116,7 @@ export function getGoogleAdsConfig(): GoogleAdsConfig {
     loginCustomerId: loginCustomerId
       ? normalizeCustomerId(loginCustomerId, 'GOOGLE_ADS_LOGIN_CUSTOMER_ID')
       : undefined,
-    refreshToken: getEnv('GOOGLE_ADS_REFRESH_TOKEN')!,
+    refreshToken: getEnv('GOOGLE_ADS_REFRESH_TOKEN'),
   };
 }
 
@@ -114,7 +125,6 @@ export function getMissingGoogleAdsConfigVariables(): string[] {
     'GOOGLE_ADS_DEVELOPER_TOKEN',
     'GOOGLE_ADS_CLIENT_ID',
     'GOOGLE_ADS_CLIENT_SECRET',
-    'GOOGLE_ADS_REFRESH_TOKEN',
     'GOOGLE_ADS_CUSTOMER_ID',
   ].filter((name) => !getEnv(name));
 }
@@ -181,12 +191,16 @@ export function calculateGoogleAdsRoi(profit: number, adSpend: number | null): G
 }
 
 async function getAccessToken(config: GoogleAdsConfig): Promise<string> {
+  const refreshToken = await getStoredGoogleAdsRefreshToken() || config.refreshToken;
+  if (!refreshToken) {
+    throw new GoogleAdsConfigurationError(['Connect Google Ads from the Admin dashboard']);
+  }
   const response = await fetch(GOOGLE_ADS_TOKEN_URL, {
     body: new URLSearchParams({
       client_id: config.clientId,
       client_secret: config.clientSecret,
       grant_type: 'refresh_token',
-      refresh_token: config.refreshToken,
+      refresh_token: refreshToken,
       scope: GOOGLE_ADS_SCOPE,
     }),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -195,6 +209,15 @@ async function getAccessToken(config: GoogleAdsConfig): Promise<string> {
 
   if (!response.ok) {
     const body = await response.text();
+    let oauthError: string | undefined;
+    try {
+      oauthError = (JSON.parse(body) as { error?: string }).error;
+    } catch {
+      // Keep the provider response below for errors that are not recognized.
+    }
+    if (response.status === 400 && oauthError === 'invalid_grant') {
+      throw new GoogleAdsReauthRequiredError();
+    }
     throw new GoogleAdsApiError(
       `Google OAuth token refresh failed (${response.status}): ${body.slice(0, 300)}`,
       response.status,

@@ -162,7 +162,7 @@ function EntityDetails({ entity }: { entity: Entity }) {
           <h2 className="mt-1 text-xl font-black text-slate-950">{entity.legalName}</h2>
           <p className="mt-1 text-sm text-slate-500">OCN: {entity.corporationNumber || 'Not configured'}</p>
         </div>
-        <StatusBadge status={entity.hstEnabled && entity.hstRegistrationNumber ? 'HST configured' : 'HST pending'} tone={entity.hstEnabled && entity.hstRegistrationNumber ? 'green' : 'amber'} />
+        <StatusBadge status={entity.hstEnabled && entity.hstRegistrationNumber ? 'HST active' : 'HST pending'} tone={entity.hstEnabled && entity.hstRegistrationNumber ? 'green' : 'amber'} />
       </div>
       <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
         <p><span className="font-bold text-slate-800">Email:</span> {entity.email || 'Not configured'}</p>
@@ -196,10 +196,6 @@ export default function BooksPage() {
   const [invoiceIssuing, setInvoiceIssuing] = useState<string | null>(null);
   const [paymentUpdating, setPaymentUpdating] = useState<string | null>(null);
   const [emailSending, setEmailSending] = useState<string | null>(null);
-  const [hstFormOpen, setHstFormOpen] = useState(false);
-  const [hstSaving, setHstSaving] = useState(false);
-  const [hstNumber, setHstNumber] = useState('');
-  const [hstEffectiveDate, setHstEffectiveDate] = useState('');
   const [receiptFilter, setReceiptFilter] = useState<'ALL' | 'REVIEW'>('ALL');
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptDraftId, setReceiptDraftId] = useState<string | null>(null);
@@ -242,8 +238,6 @@ export default function BooksPage() {
       const firstError = [expenseData, periodsData, invoicesData].find((data) => !data.success);
       if (firstError) throw new Error(firstError.error || 'Unable to load Books');
       setState({ entity: expenseData.entity || null, expenses: expenseData.expenses || [], periods: periodsData.periods || [], currentPeriod: periodsData.currentPeriod || null, invoices: invoicesData.invoices || [] });
-      setHstNumber(expenseData.entity?.hstRegistrationNumber || '');
-      setHstEffectiveDate(dateOnly(expenseData.entity?.hstEffectiveDate));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load Books');
       setState(EMPTY_STATE);
@@ -499,29 +493,6 @@ export default function BooksPage() {
     }
   };
 
-  const saveHstSettings = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setHstSaving(true);
-    setError('');
-    try {
-      if (!hstNumber.trim() || !hstEffectiveDate) throw new Error('Enter the HST registration number and effective date.');
-      const response = await fetch(`/api/books/entities/${entityCode}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hstRegistrationNumber: hstNumber.trim(), hstEffectiveDate, hstEnabled: true }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save HST settings');
-      setHstFormOpen(false);
-      await loadBooks(entityCode, false);
-      showSuccess('HST settings saved. Eligible invoices can now be issued once the effective date begins.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save HST settings');
-    } finally {
-      setHstSaving(false);
-    }
-  };
-
   const totals = useMemo(() => ({
     expenses: state.expenses.reduce((sum, expense) => sum + expense.totalAmount, 0),
     unpaidExpenses: state.expenses.filter((expense) => expense.paymentStatus === 'UNPAID').reduce((sum, expense) => sum + expense.totalAmount, 0),
@@ -572,7 +543,7 @@ export default function BooksPage() {
         {error && <div className="mt-5 flex items-start justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
         {success && <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">{success}</div>}
 
-        {state.entity && <div className="mt-7"><EntityDetails entity={state.entity} />{isAdmin && <div className={"mt-3 rounded-2xl border p-4 " + (hstReadyForIssue ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50")}><div className="flex flex-wrap items-center justify-between gap-3"><div><p className={"text-sm font-black " + (hstReadyForIssue ? "text-emerald-950" : "text-amber-950")}>{hstReadyForIssue ? "HST configured" : "HST configuration"}</p><p className={"mt-1 text-xs leading-5 " + (hstReadyForIssue ? "text-emerald-800" : "text-amber-800")}>{hstReadyForIssue ? `HST ${state.entity.hstRegistrationNumber} is ready for invoicing.` : state.entity.hstRegistrationNumber ? "Add the official HST effective date to enable charging." : "Enter the HST registration number and effective date before issuing invoices."}</p></div><button onClick={() => { setHstNumber(state.entity?.hstRegistrationNumber || ""); setHstEffectiveDate(dateOnly(state.entity?.hstEffectiveDate)); setHstFormOpen(!hstFormOpen); }} className="rounded-xl border border-amber-300 bg-white px-3.5 py-2 text-xs font-black text-amber-900 hover:bg-amber-100">{hstFormOpen ? "Close settings" : state.entity.hstRegistrationNumber ? "Edit HST settings" : "Enter HST number"}</button></div>{hstFormOpen && <form onSubmit={saveHstSettings} className="mt-4 grid gap-3 border-t border-amber-200 pt-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="block"><span className="field-label">HST registration number</span><input required value={hstNumber} onChange={(event) => setHstNumber(event.target.value)} className="field-input" placeholder="Awaited" /></label><label className="block"><span className="field-label">Effective date</span><input required type="date" value={hstEffectiveDate} onChange={(event) => setHstEffectiveDate(event.target.value)} className="field-input" /></label><button disabled={hstSaving} className="rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50">{hstSaving ? "Saving…" : "Save and enable HST"}</button></form>}</div>}</div>}
+        {state.entity && <div className="mt-7"><EntityDetails entity={state.entity} /></div>}
 
         <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[

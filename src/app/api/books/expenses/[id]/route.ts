@@ -41,8 +41,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
     const hstCents = body.hstAmount === undefined ? Math.round(Number(existing.hstAmount) * 100) : parseCents(body.hstAmount, 'hstAmount');
     const totalCents = body.totalAmount === undefined ? subtotalCents + hstCents : parseCents(body.totalAmount, 'totalAmount');
     if (totalCents !== subtotalCents + hstCents) return NextResponse.json({ success: false, error: 'Total must equal subtotal plus HST' }, { status: 400 });
-    const paymentStatus = body.paymentStatus === undefined ? existing.paymentStatus : body.paymentStatus === 'PAID' ? 'PAID' : body.paymentStatus === 'UNPAID' ? 'UNPAID' : null;
-    if (!paymentStatus) return NextResponse.json({ success: false, error: 'Invalid paymentStatus' }, { status: 400 });
+    const paymentStatus = 'PAID';
     let categoryId: string | null | undefined;
     if (body.categoryId !== undefined) {
       categoryId = typeof body.categoryId === 'string' && body.categoryId.trim() ? body.categoryId.trim() : null;
@@ -74,7 +73,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
         subtotalAmount: centsToDecimal(subtotalCents), hstAmount: centsToDecimal(hstCents), totalAmount: centsToDecimal(totalCents),
         hstRate: body.hstRate === undefined ? undefined : normalizeTaxRate(body.hstRate),
         paymentStatus, paymentMethod: body.paymentMethod === undefined ? undefined : body.paymentMethod || null,
-        paidAt: paymentStatus === 'PAID' ? (existing.paidAt || new Date()) : null,
+        paidAt: existing.paidAt || new Date(),
         receiptUrl: body.receiptUrl === undefined ? undefined : String(body.receiptUrl).trim() || null,
         receiptStatus: status,
         ...(storedReceipt ? {

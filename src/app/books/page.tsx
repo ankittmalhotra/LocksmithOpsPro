@@ -200,7 +200,7 @@ export default function BooksPage() {
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptDraftId, setReceiptDraftId] = useState<string | null>(null);
   const [receiptAiParsing, setReceiptAiParsing] = useState(false);
-  const [expenseForm, setExpenseForm] = useState({ vendorName: '', businessPurpose: '', expenseDate: formatTorontoDateInput(), description: '', subtotalAmount: '', hstAmount: '0.00', paymentStatus: 'UNPAID', paymentMethod: '', receiptStatus: 'MISSING', notes: '' });
+  const [expenseForm, setExpenseForm] = useState({ vendorName: '', businessPurpose: '', expenseDate: formatTorontoDateInput(), description: '', subtotalAmount: '', hstAmount: '0.00', paymentStatus: 'PAID', paymentMethod: '', receiptStatus: 'MISSING', notes: '' });
 
   useEffect(() => {
     if (expenseForm.receiptStatus !== 'ATTACHED' && receiptFile) setReceiptFile(null);
@@ -297,7 +297,7 @@ export default function BooksPage() {
     setEditingExpense(null);
     setReceiptFile(null);
     setReceiptDraftId(null);
-    setExpenseForm({ vendorName: '', businessPurpose: '', expenseDate: formatTorontoDateInput(), description: '', subtotalAmount: '', hstAmount: '0.00', paymentStatus: 'UNPAID', paymentMethod: '', receiptStatus: 'MISSING', notes: '' });
+    setExpenseForm({ vendorName: '', businessPurpose: '', expenseDate: formatTorontoDateInput(), description: '', subtotalAmount: '', hstAmount: '0.00', paymentStatus: 'PAID', paymentMethod: '', receiptStatus: 'MISSING', notes: '' });
   };
 
   const openEditExpense = (expense: Expense) => {
@@ -305,7 +305,7 @@ export default function BooksPage() {
     setEditingExpense(expense);
     setReceiptFile(null);
     setReceiptDraftId(null);
-    setExpenseForm({ vendorName: expense.vendorName, businessPurpose: expense.businessPurpose || '', expenseDate: dateOnly(expense.expenseDate), description: expense.description || '', subtotalAmount: expense.subtotalAmount.toFixed(2), hstAmount: expense.hstAmount.toFixed(2), paymentStatus: expense.paymentStatus, paymentMethod: expense.paymentMethod || '', receiptStatus: expense.receiptStatus || 'MISSING', notes: expense.notes || '' });
+    setExpenseForm({ vendorName: expense.vendorName, businessPurpose: expense.businessPurpose || '', expenseDate: dateOnly(expense.expenseDate), description: expense.description || '', subtotalAmount: expense.subtotalAmount.toFixed(2), hstAmount: expense.hstAmount.toFixed(2), paymentStatus: 'PAID', paymentMethod: expense.paymentMethod || '', receiptStatus: expense.receiptStatus || 'MISSING', notes: expense.notes || '' });
     setExpenseFormOpen(true);
   };
 
@@ -495,8 +495,9 @@ export default function BooksPage() {
 
   const totals = useMemo(() => ({
     expenses: state.expenses.reduce((sum, expense) => sum + expense.totalAmount, 0),
-    unpaidExpenses: state.expenses.filter((expense) => expense.paymentStatus === 'UNPAID').reduce((sum, expense) => sum + expense.totalAmount, 0),
     invoiced: state.invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0),
+    invoiceRevenue: state.invoices.reduce((sum, invoice) => sum + invoice.serviceAmount, 0),
+    invoiceHst: state.invoices.reduce((sum, invoice) => sum + invoice.hstAmount, 0),
     settledPartnerAmount: state.invoices.filter((invoice) => invoice.invoiceKind !== 'CUSTOMER_SERVICE' && invoice.status === 'ISSUED' && invoice.paymentStatus === 'RECEIVED').reduce((sum, invoice) => sum + invoice.totalAmount, 0),
     issuedPendingPartnerAmount: state.invoices.filter((invoice) => invoice.invoiceKind !== 'CUSTOMER_SERVICE' && invoice.status === 'ISSUED' && invoice.paymentStatus === 'PENDING').reduce((sum, invoice) => sum + invoice.totalAmount, 0),
     completedUnbilledPartnerAmount: state.periods.filter((period) => !period.invoice && period.partnerFeeAmount > 0).reduce((sum, period) => sum + period.partnerFeeAmount * (1 + (state.currentPeriod?.hstRate || 0)), 0),
@@ -545,12 +546,9 @@ export default function BooksPage() {
 
         {state.entity && <div className="mt-7"><EntityDetails entity={state.entity} /></div>}
 
-        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            ['Expenses recorded', formatMoney(totals.expenses), 'All active expense records'],
-            ['Unpaid expenses', formatMoney(totals.unpaidExpenses), 'Needs payment tracking'],
-            [entityCode === 'IT_MARKETING' ? 'Invoices issued' : 'Invoices received', formatMoney(totals.invoiced), `${state.invoices.length} invoice${state.invoices.length === 1 ? '' : 's'}`],
-          ].map(([label, value, hint]) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-slate-950">{value}</p><p className="mt-1 text-xs text-slate-500">{hint}</p></div>)}
+        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Expenses recorded</p><p className="mt-2 text-2xl font-black text-slate-950">{formatMoney(totals.expenses)}</p><p className="mt-1 text-xs text-slate-500">All active expense records</p></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{entityCode === 'IT_MARKETING' ? 'Invoices issued' : 'Invoices received'}</p><p className="mt-2 text-2xl font-black text-slate-950">{formatMoney(totals.invoiced)}</p><div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3"><div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Real revenue</p><p className="mt-1 text-sm font-black text-slate-900">{formatMoney(totals.invoiceRevenue)}</p><p className="mt-1 text-[11px] text-slate-500">Before HST</p></div><div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">HST</p><p className="mt-1 text-sm font-black text-slate-900">{formatMoney(totals.invoiceHst)}</p><p className="mt-1 text-[11px] text-slate-500">Collected</p></div></div><p className="mt-3 text-xs text-slate-500">{state.invoices.length} invoice{state.invoices.length === 1 ? '' : 's'} · Total including HST</p></div>
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Partner settlement</p><div className="mt-3 grid grid-cols-2 gap-3"><div><p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Settled</p><p className="mt-1 text-lg font-black text-slate-950">{formatMoney(totals.settledPartnerAmount)}</p><p className="mt-1 text-[11px] text-slate-500">Received</p></div><div><p className="text-[11px] font-bold uppercase tracking-wide text-amber-700">Unsettled</p><p className="mt-1 text-lg font-black text-slate-950">{formatMoney(totals.issuedPendingPartnerAmount + totals.completedUnbilledPartnerAmount + totals.currentUnbilledPartnerAmount)}</p><p className="mt-1 text-[11px] text-slate-500">Unbilled + awaiting payment</p></div></div><p className="mt-3 text-xs text-slate-500">Current period share: {state.currentPeriod ? `${formatMoney(state.currentPeriod.partnerFeeAmount)} before HST · ${periodLabel(state.currentPeriod.periodStart, state.currentPeriod.periodEnd)}` : 'Not available yet'}</p></div>
         </section>
 

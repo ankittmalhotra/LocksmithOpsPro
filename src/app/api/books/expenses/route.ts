@@ -186,9 +186,10 @@ async function handlePOST(request: Request) {
         hstAmount: centsToDecimal(hstCents),
         totalAmount: centsToDecimal(totalCents),
         hstRate: normalizeTaxRate(body.hstRate === undefined || body.hstRate === null ? extracted.hstRate : body.hstRate),
-        paymentStatus: body.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
+        // Books records are entered only after the company has paid the expense.
+        paymentStatus: 'PAID',
         paymentMethod: body.paymentMethod || null,
-        paidAt: body.paymentStatus === 'PAID' ? new Date() : null,
+        paidAt: new Date(),
         receiptUrl: typeof body.receiptUrl === 'string' ? body.receiptUrl.trim() || null : null,
         receiptStatus: status,
         receiptStorageKey: storedReceipt?.key || null,

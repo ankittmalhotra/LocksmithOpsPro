@@ -25,6 +25,8 @@ export interface AccountingEntityAccess {
   };
   canView: boolean;
   canManageExpenses: boolean;
+  canManageReimbursements: boolean;
+  canMapAccounting: boolean;
   canIssueInvoices: boolean;
   canMarkPayments: boolean;
 }
@@ -128,7 +130,7 @@ export async function getAccountingEntityAccess(
   if (!entity) return null;
 
   if (currentUser.role === 'ADMIN') {
-    return { user: currentUser, entity, canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true };
+    return { user: currentUser, entity, canView: true, canManageExpenses: true, canManageReimbursements: true, canMapAccounting: true, canIssueInvoices: true, canMarkPayments: true };
   }
 
   // The existing Dispatcher role is explicitly limited to the locksmith
@@ -138,7 +140,7 @@ export async function getAccountingEntityAccess(
 
   let membership = await prisma.accountingEntityMembership.findUnique({
     where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
-    select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
+    select: { canView: true, canManageExpenses: true, canManageReimbursements: true, canMapAccounting: true, canIssueInvoices: true, canMarkPayments: true },
   });
 
   // Existing Dispatchers are also provisioned lazily for the Locksmith book;
@@ -148,8 +150,8 @@ export async function getAccountingEntityAccess(
       membership = await prisma.accountingEntityMembership.upsert({
         where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
         update: {},
-        create: { userId: currentUser.id, entityId: entity.id, canView: true, canManageExpenses: true, canIssueInvoices: false, canMarkPayments: false },
-        select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
+        create: { userId: currentUser.id, entityId: entity.id, canView: true, canManageExpenses: true, canManageReimbursements: true, canIssueInvoices: false, canMarkPayments: false },
+        select: { canView: true, canManageExpenses: true, canManageReimbursements: true, canMapAccounting: true, canIssueInvoices: true, canMarkPayments: true },
       });
     } catch (error) {
       // Several Books API requests load in parallel on first visit. If another
@@ -158,7 +160,7 @@ export async function getAccountingEntityAccess(
       if (!isUniqueConstraintError(error)) throw error;
       membership = await prisma.accountingEntityMembership.findUnique({
         where: { userId_entityId: { userId: currentUser.id, entityId: entity.id } },
-        select: { canView: true, canManageExpenses: true, canIssueInvoices: true, canMarkPayments: true },
+        select: { canView: true, canManageExpenses: true, canManageReimbursements: true, canMapAccounting: true, canIssueInvoices: true, canMarkPayments: true },
       });
       if (!membership) throw error;
     }
@@ -189,8 +191,10 @@ export async function requireAccountingEntityAccess(
   const allowed = access && (
     permission === 'view' ? access.canView
       : permission === 'manage_expenses' ? access.canManageExpenses
-        : permission === 'issue_invoices' ? access.canIssueInvoices
-          : access.canMarkPayments
+        : permission === 'manage_reimbursements' ? access.canManageReimbursements
+          : permission === 'map_accounting' ? access.canMapAccounting && (currentUser?.role === 'ADMIN' || currentUser?.role === 'ACCOUNTANT')
+            : permission === 'issue_invoices' ? access.canIssueInvoices
+              : access.canMarkPayments
   );
   if (!access || !allowed) {
     throw new Error('Forbidden: Books access required');

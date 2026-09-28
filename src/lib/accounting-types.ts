@@ -5,6 +5,8 @@ export type AccountingEntityCode = (typeof ACCOUNTING_ENTITY_CODES)[number];
 export const ACCOUNTING_PERMISSIONS = [
   'view',
   'manage_expenses',
+  'manage_reimbursements',
+  'map_accounting',
   'issue_invoices',
   'mark_payments',
 ] as const;

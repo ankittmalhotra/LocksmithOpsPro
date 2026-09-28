@@ -31,10 +31,22 @@ enum AccountingExpensePaymentStatus {
 enum AccountingExpensePaymentMethod {
   CASH
   BANK_TRANSFER
+  CHEQUE
   INTERAC
   CREDIT_CARD
   DEBIT_CARD
   OTHER
+}
+
+enum AccountingExpenseFundingSource {
+  BUSINESS
+  PERSONAL
+}
+
+enum AccountingMappingStatus {
+  NOT_REVIEWED
+  NEEDS_CLARIFICATION
+  MAPPED
 }
 
 enum AccountingExpenseReceiptStatus {
@@ -139,6 +151,10 @@ model User {
   partnerInvoicesVoided        PartnerInvoice[]             @relation("PartnerInvoiceVoidedBy")
   partnerBillingPeriodsCreated PartnerBillingPeriod[]       @relation("PartnerBillingPeriodCreatedBy")
   accountingPaymentEvents      PartnerInvoicePaymentEvent[]
+  accountingExpensesMapped    AccountingExpense[]          @relation("AccountingExpenseMappedBy")
+  accountingReimbursementsCreated AccountingReimbursementPayment[] @relation("AccountingReimbursementCreatedBy")
+  accountingReimbursementsVoided AccountingReimbursementPayment[] @relation("AccountingReimbursementVoidedBy")
+  accountingReimbursementsMapped AccountingReimbursementPayment[] @relation("AccountingReimbursementMappedBy")
   accountingAuditEvents        AccountingAuditEvent[]
 }
 
@@ -483,6 +499,7 @@ model AccountingEntity {
   receivedPartnerInvoices PartnerInvoice[]             @relation("PartnerInvoiceRecipient")
   auditEvents             AccountingAuditEvent[]
   receiptDrafts           AccountingReceiptDraft[]
+  reimbursementPayments   AccountingReimbursementPayment[]
 
   @@index([legalName])
 }
@@ -498,8 +515,10 @@ model AccountingEntityMembership {
   // read/export access without adding another application-wide role.
   canView           Boolean  @default(true)
   canManageExpenses Boolean  @default(false)
+  canManageReimbursements Boolean @default(false)
   canIssueInvoices  Boolean  @default(false)
   canMarkPayments   Boolean  @default(false)
+  canMapAccounting  Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -538,7 +557,21 @@ model AccountingExpense {
   hstRate           Decimal?                        @db.Decimal(5, 4)
   paymentStatus     AccountingExpensePaymentStatus  @default(UNPAID)
   paymentMethod     AccountingExpensePaymentMethod?
+  businessPaymentReference String?
   paidAt            DateTime?
+  fundingSource     AccountingExpenseFundingSource @default(BUSINESS)
+  personalPayeeName String?
+  personalPaymentMethod AccountingExpensePaymentMethod?
+  personalCardLast4 String?
+  paidBeforeIncorporation Boolean @default(false)
+  legacyFundingBackfillApplied Boolean @default(true)
+  mappingStatus     AccountingMappingStatus @default(NOT_REVIEWED)
+  mappingAccountName String?
+  mappingAccountCode String?
+  mappingNotes      String?
+  mappedById        String?
+  mappedBy          User? @relation("AccountingExpenseMappedBy", fields: [mappedById], references: [id])
+  mappedAt          DateTime?
   receiptUrl        String?
   receiptStatus     AccountingExpenseReceiptStatus  @default(MISSING)
   receiptStorageKey String?
@@ -554,11 +587,67 @@ model AccountingExpense {
   voidedAt          DateTime?
   createdAt         DateTime                        @default(now())
   updatedAt         DateTime                        @updatedAt
+  reimbursementAllocations AccountingReimbursementAllocation[]
 
   @@index([entityId, expenseDate])
   @@index([entityId, paymentStatus])
   @@index([entityId, receiptStatus])
   @@index([categoryId])
+  @@unique([id, entityId])
+  @@index([entityId, fundingSource, personalPayeeName])
+  @@index([entityId, mappingStatus])
+}
+
+model AccountingReimbursementPayment {
+  id                 String @id @default(uuid())
+  entityId           String
+  entity             AccountingEntity @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  payeeName          String
+  paymentDate        DateTime @db.Date
+  amount             Decimal @db.Decimal(12, 2)
+  paymentMethod      AccountingExpensePaymentMethod
+  sourceAccountLabel String?
+  bankReference      String?
+  note               String?
+  proofStorageKey    String?
+  proofFileName      String?
+  proofMimeType      String?
+  proofSize          Int?
+  createdById        String
+  createdBy          User @relation("AccountingReimbursementCreatedBy", fields: [createdById], references: [id])
+  voidedAt           DateTime?
+  voidedById         String?
+  voidedBy           User? @relation("AccountingReimbursementVoidedBy", fields: [voidedById], references: [id])
+  voidReason         String?
+  mappingStatus      AccountingMappingStatus @default(NOT_REVIEWED)
+  mappingAccountName String?
+  mappingAccountCode String?
+  mappingNotes       String?
+  mappedById         String?
+  mappedBy           User? @relation("AccountingReimbursementMappedBy", fields: [mappedById], references: [id])
+  mappedAt           DateTime?
+  allocations        AccountingReimbursementAllocation[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([id, entityId])
+  @@index([entityId, paymentDate])
+  @@index([entityId, payeeName, voidedAt])
+  @@index([entityId, mappingStatus])
+}
+
+model AccountingReimbursementAllocation {
+  id         String @id @default(uuid())
+  entityId   String
+  paymentId  String
+  expenseId  String
+  amount     Decimal @db.Decimal(12, 2)
+  payment    AccountingReimbursementPayment @relation(fields: [paymentId, entityId], references: [id, entityId], onDelete: Restrict)
+  expense    AccountingExpense @relation(fields: [expenseId, entityId], references: [id, entityId], onDelete: Restrict)
+  createdAt  DateTime @default(now())
+
+  @@index([entityId, expenseId])
+  @@index([entityId, paymentId])
 }
 
 // A draft is a private, short-lived AI extraction result. It is never an

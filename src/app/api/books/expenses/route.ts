@@ -19,6 +19,7 @@ function mapExpense(expense: any) {
   const { receiptStorageKey: _receiptStorageKey, ...safeExpense } = expense;
   return {
     ...safeExpense,
+    reimbursementNeedsConfirmation: safeExpense.fundingSource === 'PERSONAL' && (!safeExpense.personalPayeeName || !safeExpense.paidAt),
     subtotalAmount: serializeDecimal(safeExpense.subtotalAmount),
     hstAmount: serializeDecimal(safeExpense.hstAmount),
     totalAmount: serializeDecimal(safeExpense.totalAmount),
@@ -149,6 +150,17 @@ async function handlePOST(request: Request) {
     if (!vendorName) return NextResponse.json({ success: false, error: 'Vendor name is required' }, { status: 400 });
     if (!businessPurpose) return NextResponse.json({ success: false, error: 'Business purpose is required' }, { status: 400 });
     const expenseDate = parseDateOnly(body.expenseDate || extracted.expenseDate, 'expenseDate');
+    const fundingSource = body.fundingSource === undefined ? 'BUSINESS' : body.fundingSource;
+    if (fundingSource !== 'BUSINESS' && fundingSource !== 'PERSONAL') return NextResponse.json({ success: false, error: 'Invalid fundingSource' }, { status: 400 });
+    const personalPayeeName = typeof body.personalPayeeName === 'string' ? body.personalPayeeName.trim() : '';
+    const personalPaymentMethod = body.personalPaymentMethod || null;
+    const personalCardLast4 = typeof body.personalCardLast4 === 'string' ? body.personalCardLast4.trim() : '';
+    const paidAtDate = fundingSource === 'PERSONAL' || body.paidAt ? parseDateOnly(body.paidAt, 'paidAt') : null;
+    if (!paidAtDate) return NextResponse.json({ success: false, error: 'Date the vendor was paid is required' }, { status: 400 });
+    const allowedPaymentMethods = ['CASH', 'BANK_TRANSFER', 'CHEQUE', 'INTERAC', 'CREDIT_CARD', 'DEBIT_CARD', 'OTHER'];
+    if (fundingSource === 'PERSONAL' && !personalPayeeName) return NextResponse.json({ success: false, error: 'Person who paid is required for a personal expense' }, { status: 400 });
+    if (fundingSource === 'PERSONAL' && !allowedPaymentMethods.includes(personalPaymentMethod)) return NextResponse.json({ success: false, error: 'Select how the personal expense was paid' }, { status: 400 });
+    if (personalCardLast4 && !/^\d{4}$/.test(personalCardLast4)) return NextResponse.json({ success: false, error: 'Card last four must be exactly four digits' }, { status: 400 });
     const subtotalCents = parseCents(body.subtotalAmount ?? extracted.subtotalAmount, 'subtotalAmount');
     const hstCents = parseCents(body.hstAmount ?? extracted.hstAmount ?? 0, 'hstAmount');
     const totalCents = body.totalAmount === undefined
@@ -189,7 +201,14 @@ async function handlePOST(request: Request) {
         // Books records are entered only after the company has paid the expense.
         paymentStatus: 'PAID',
         paymentMethod: body.paymentMethod || null,
-        paidAt: new Date(),
+        businessPaymentReference: fundingSource === 'BUSINESS' && typeof body.businessPaymentReference === 'string' ? body.businessPaymentReference.trim().slice(0, 160) || null : null,
+        paidAt: new Date(`${paidAtDate}T00:00:00.000Z`),
+        fundingSource,
+        personalPayeeName: fundingSource === 'PERSONAL' ? personalPayeeName : null,
+        personalPaymentMethod: fundingSource === 'PERSONAL' ? personalPaymentMethod : null,
+        personalCardLast4: fundingSource === 'PERSONAL' ? personalCardLast4 || null : null,
+        paidBeforeIncorporation: body.paidBeforeIncorporation === true || body.paidBeforeIncorporation === 'true',
+        legacyFundingBackfillApplied: true,
         receiptUrl: typeof body.receiptUrl === 'string' ? body.receiptUrl.trim() || null : null,
         receiptStatus: status,
         receiptStorageKey: storedReceipt?.key || null,

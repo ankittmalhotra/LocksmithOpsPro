@@ -601,8 +601,6 @@ export default function AdminDashboardPage() {
           </p>
         </div>
       </div>
-      <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
-
       {/* Seven-day operating pulse */}
       <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="seven-day-title">
         <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
@@ -798,6 +796,8 @@ export default function AdminDashboardPage() {
           </>
         )}
       </section>
+
+      <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
 
       {/* Worker Cash-in-Hand Ledger & Settlements */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm mb-6">

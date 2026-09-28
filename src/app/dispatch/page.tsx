@@ -745,10 +745,6 @@ export default function DispatchPage() {
       </div>
 
       {canManageManualJobs && (
-        <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
-      )}
-
-      {canManageManualJobs && (
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <label htmlFor="dispatch-revenue-period" className="text-sm font-bold text-slate-700">Financial period</label>
           <select
@@ -809,6 +805,10 @@ export default function DispatchPage() {
       )}
 
       {canManageManualJobs && <RingCentralCallAnalytics canManageConnection={currentUser?.role === 'ADMIN'} />}
+
+      {canManageManualJobs && (
+        <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
+      )}
 
       {currentUser && currentUser.role === 'TECHNICIAN' && (
         <div className="mb-6 p-4 rounded-2xl bg-blue-50 border-2 border-blue-200 text-blue-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">

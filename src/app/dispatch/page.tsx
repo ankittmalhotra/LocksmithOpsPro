@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { DEFAULT_MANUAL_CARD_SURCHARGE_RATE, roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
+import PeriodComparisonWidget, { type PeriodComparisonMode, type PeriodComparisons } from '@/components/PeriodComparisonWidget';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { buildSmsDraft } from '@/lib/sms-draft';
 import { formatTorontoDateInput, parseTorontoDateOnly, torontoDateTimeToIso } from '@/lib/timezone';
@@ -17,7 +18,6 @@ import {
 } from '@/lib/revenue-period';
 
 const PHONE_INPUT_PATTERN = '(?=.*[0-9])[0-9()+\\-\\s]{7,}';
-
 function sanitizePhoneInput(value: string) {
   return value.replace(/[^0-9()+\-\s]/g, '');
 }
@@ -174,6 +174,11 @@ export default function DispatchPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
+  const [comparisonMode, setComparisonMode] = useState<PeriodComparisonMode>('week');
+  const [comparisons, setComparisons] = useState<PeriodComparisons | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(true);
+  const [comparisonError, setComparisonError] = useState('');
+  const comparisonRequestId = useRef(0);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Intake Form State
@@ -247,13 +252,38 @@ export default function DispatchPage() {
     technicianCommission: '0.00',
   });
 
+  const fetchPeriodComparison = async () => {
+    const requestId = ++comparisonRequestId.current;
+    setComparisonLoading(true);
+    setComparisonError('');
+    try {
+      const res = await fetch('/api/analytics/period-comparison', { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to load period comparison');
+      if (requestId === comparisonRequestId.current) setComparisons(data.comparisons as PeriodComparisons);
+    } catch (err: any) {
+      if (requestId === comparisonRequestId.current) setComparisonError(err.message || 'Unable to load period comparison');
+    } finally {
+      if (requestId === comparisonRequestId.current) setComparisonLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchAuthAndJobs();
   }, []);
 
+  useEffect(() => {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'DISPATCHER') return;
+    void fetchPeriodComparison();
+    return () => { comparisonRequestId.current += 1; };
+  }, [currentUser?.role]);
+
   const fetchAuthAndJobs = async () => {
     try {
       setLoading(true);
+      if (currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER') {
+        void fetchPeriodComparison();
+      }
       const authRes = await fetch('/api/auth/me');
       const authData = await authRes.json();
       if (authData.success && authData.user) {
@@ -713,6 +743,10 @@ export default function DispatchPage() {
           </div>
         )}
       </div>
+
+      {canManageManualJobs && (
+        <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
+      )}
 
       {canManageManualJobs && (
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

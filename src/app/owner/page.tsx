@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
+import PeriodComparisonWidget, { type PeriodComparisonMode, type PeriodComparisons } from '@/components/PeriodComparisonWidget';
 import { formatTorontoDateInput } from '@/lib/timezone';
 import {
   REVENUE_PERIOD_LABELS,
@@ -36,7 +37,6 @@ interface DailyAnalyticsItem {
 
 type GoogleAdsRoiRange = 'today' | 'yesterday' | 'last-week' | 'all-time';
 type GoogleAdsRoiView = 'partner' | 'company';
-
 const formatCompactCurrency = (value: number) =>
   value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${Math.round(value)}`;
 
@@ -77,6 +77,7 @@ function AnimatedMetric({
 export default function AdminDashboardPage() {
   const [analytics, setAnalytics] = useState<any>(null);
   const analyticsRequestId = useRef(0);
+  const comparisonRequestId = useRef(0);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [analyticsRefreshVersion, setAnalyticsRefreshVersion] = useState(0);
@@ -86,6 +87,10 @@ export default function AdminDashboardPage() {
   const [googleAdsReconnectRequired, setGoogleAdsReconnectRequired] = useState(false);
   const [googleAdsRange, setGoogleAdsRange] = useState<GoogleAdsRoiRange>('today');
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
+  const [comparisonMode, setComparisonMode] = useState<PeriodComparisonMode>('week');
+  const [comparisons, setComparisons] = useState<PeriodComparisons | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(true);
+  const [comparisonError, setComparisonError] = useState('');
   const [googleAdsView, setGoogleAdsView] = useState<GoogleAdsRoiView>('partner');
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
@@ -174,10 +179,27 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const fetchPeriodComparison = async () => {
+    const requestId = ++comparisonRequestId.current;
+    setComparisonLoading(true);
+    setComparisonError('');
+    try {
+      const res = await fetch('/api/analytics/period-comparison', { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to load period comparison');
+      if (requestId === comparisonRequestId.current) setComparisons(data.comparisons as PeriodComparisons);
+    } catch (err: any) {
+      if (requestId === comparisonRequestId.current) setComparisonError(err.message || 'Unable to load period comparison');
+    } finally {
+      if (requestId === comparisonRequestId.current) setComparisonLoading(false);
+    }
+  };
+
   const fetchAuthAndAnalytics = async (
     selectedGoogleAdsRange: GoogleAdsRoiRange = googleAdsRange,
     selectedRevenuePeriod: RevenuePeriod = revenuePeriod,
   ) => {
+    void fetchPeriodComparison();
     const requestId = ++analyticsRequestId.current;
     try {
       setLoading(true);
@@ -579,6 +601,7 @@ export default function AdminDashboardPage() {
           </p>
         </div>
       </div>
+      <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
 
       {/* Seven-day operating pulse */}
       <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="seven-day-title">

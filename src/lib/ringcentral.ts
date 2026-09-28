@@ -20,6 +20,7 @@ export type RingCentralTokenData = {
 
 export type RingCentralCallRecord = {
   id?: string;
+  sourceKey?: string;
   sessionId?: string;
   telephonySessionId?: string;
   direction?: string;
@@ -32,6 +33,13 @@ export type RingCentralCallRecord = {
   lastModifiedTime?: string;
   duration?: number | string;
   durationMs?: number | string;
+  isVoicemail?: boolean;
+  voicemailMessageId?: string;
+  voicemailTranscriptionStatus?: string;
+  voicemailTranscript?: string;
+  voicemailReadStatus?: string;
+  voicemailMessageStatus?: string;
+  voicemailDurationSeconds?: number | string;
   from?: { phoneNumber?: string; extensionNumber?: string; name?: string };
   to?: { phoneNumber?: string; extensionNumber?: string; name?: string };
   [key: string]: unknown;
@@ -246,7 +254,7 @@ export async function getRingCentralConnectionStatus() {
   };
 }
 
-export async function listRingCentralInboundCalls(dateFrom: string, dateTo: string) {
+async function listRingCentralCalls(dateFrom: string, dateTo: string, direction?: 'Inbound' | 'Outbound') {
   const config = getRingCentralConfig();
   if (!config) throw new Error('RingCentral API credentials are not configured.');
 
@@ -260,12 +268,12 @@ export async function listRingCentralInboundCalls(dateFrom: string, dateTo: stri
     const params = new URLSearchParams({
       dateFrom,
       dateTo,
-      direction: 'Inbound',
       type: 'Voice',
       view: 'Detailed',
       perPage: '1000',
       page: String(page),
     });
+    if (direction) params.set('direction', direction);
     // Filter the receiving number locally. The API's phoneNumber query filter
     // can be format-sensitive, while call-log records may use E.164 or a
     // formatted national number for the same destination.
@@ -291,6 +299,165 @@ export async function listRingCentralInboundCalls(dateFrom: string, dateTo: stri
   }
 
   return { records, token, refreshed };
+}
+
+export async function listRingCentralInboundCalls(dateFrom: string, dateTo: string) {
+  return listRingCentralCalls(dateFrom, dateTo, 'Inbound');
+}
+
+export async function listRingCentralOutboundCalls(dateFrom: string, dateTo: string) {
+  return listRingCentralCalls(dateFrom, dateTo, 'Outbound');
+}
+
+type RingCentralMessageRecipient = {
+  phoneNumber?: string;
+  extensionNumber?: string;
+  name?: string;
+};
+
+type RingCentralVoicemailMessage = {
+  id?: number | string;
+  to?: RingCentralMessageRecipient[];
+  from?: RingCentralMessageRecipient;
+  type?: string;
+  creationTime?: string;
+  lastModifiedTime?: string;
+  readStatus?: string;
+  direction?: string;
+  availability?: string;
+  subject?: string;
+  messageStatus?: string;
+  vmTranscriptionStatus?: string;
+  attachments?: Array<{
+    id?: number | string;
+    uri?: string;
+    type?: string;
+    contentType?: string;
+    vmDuration?: number;
+  }>;
+};
+
+async function fetchVoicemailTranscript(
+  message: RingCentralVoicemailMessage,
+  token: RingCentralTokenData,
+) {
+  const status = (message.vmTranscriptionStatus || '').toLowerCase();
+  if (!status.includes('complete')) return null;
+
+  const transcriptionAttachment = message.attachments?.find((attachment) =>
+    attachment.type?.toLowerCase() === 'audiotranscription',
+  );
+  if (transcriptionAttachment?.uri) {
+    const response = await fetch(transcriptionAttachment.uri, {
+      headers: { Accept: 'text/plain, application/json', Authorization: `Bearer ${token.accessToken}` },
+      cache: 'no-store',
+    });
+    if (response.ok) {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('json')) {
+        const data = await response.json() as { transcript?: string; text?: string; content?: string };
+        return data.transcript || data.text || data.content || null;
+      }
+      const text = (await response.text()).trim();
+      return text || null;
+    }
+  }
+
+  // RingCentral also mirrors completed voicemail transcription in `subject`
+  // for some accounts, while others expose it only as AudioTranscription.
+  const subject = message.subject?.trim();
+  return subject && !/^message$/i.test(subject) ? subject : null;
+}
+
+function voicemailMatchesTarget(message: RingCentralVoicemailMessage, targetPhoneNumbers?: string[]) {
+  const targets = (targetPhoneNumbers || []).map((value) => normalizePhone(value)).filter((value) => value.length >= 7);
+  if (targets.length === 0) return true;
+  const recipients = (message.to || []).map((recipient) => normalizePhone(recipient.phoneNumber)).filter(Boolean);
+  // A mailbox response may omit the public number and return only the
+  // extension. In that case the authenticated mailbox is still in scope.
+  return recipients.length === 0 || recipients.some((recipient) => targets.includes(recipient));
+}
+
+function normalizePhone(value?: string) {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+export async function listRingCentralVoicemails(dateFrom: string, dateTo: string, targetPhoneNumbers?: string[]) {
+  const config = getRingCentralConfig();
+  if (!config) throw new Error('RingCentral API credentials are not configured.');
+
+  const { token, refreshed } = await getValidToken();
+  const messages: RingCentralVoicemailMessage[] = [];
+  let page = 1;
+  let totalPages: number | null = 1;
+  let nextPageUri: string | null = null;
+
+  while ((nextPageUri || totalPages === null || page <= totalPages) && page <= 100) {
+    const params = new URLSearchParams({
+      dateFrom,
+      dateTo,
+      messageType: 'VoiceMail',
+      direction: 'Inbound',
+      availability: 'Alive',
+      perPage: '1000',
+      page: String(page),
+    });
+    const response: Response = await fetch(nextPageUri || `${config.serverUrl}/restapi/v1.0/account/~/extension/~/message-store?${params.toString()}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token.accessToken}` },
+      cache: 'no-store',
+    });
+    if (response.status === 401) throw new RingCentralAuthRequiredError();
+    if (response.status === 403) return { records: [], token, refreshed, permissionDenied: true as const };
+    if (!response.ok) throw new Error(`RingCentral voicemail request failed (${response.status}).`);
+
+    const data: {
+      records?: RingCentralVoicemailMessage[];
+      paging?: { totalPages?: number };
+      navigation?: { nextPage?: { uri?: string } };
+    } = await response.json();
+    messages.push(...(Array.isArray(data.records) ? data.records : []));
+    totalPages = data.paging?.totalPages === undefined ? null : Number(data.paging.totalPages);
+    nextPageUri = typeof data.navigation?.nextPage?.uri === 'string' ? data.navigation.nextPage.uri : null;
+    page += 1;
+    if (!nextPageUri && totalPages === null) break;
+  }
+
+  const records: RingCentralCallRecord[] = [];
+  for (const message of messages.filter((candidate) => voicemailMatchesTarget(candidate, targetPhoneNumbers))) {
+    const messageId = message.id === undefined ? '' : String(message.id);
+    if (!messageId) continue;
+    const recipient = (message.to || []).find((candidate) => normalizePhone(candidate.phoneNumber)) || message.to?.[0] || {};
+    const audioAttachment = message.attachments?.find((attachment) => attachment.type?.toLowerCase() === 'audiorecording');
+    let transcript: string | null = null;
+    try {
+      transcript = await fetchVoicemailTranscript(message, token);
+    } catch {
+      // A transcript can be temporarily unavailable while RingCentral is
+      // still processing it. Keep the voicemail metadata and retry next sync.
+    }
+    records.push({
+      id: `voicemail:${messageId}`,
+      sourceKey: `voicemail:${messageId}`,
+      direction: message.direction || 'Inbound',
+      type: message.type || 'VoiceMail',
+      result: 'Voicemail',
+      startTime: message.creationTime,
+      lastModifiedTime: message.lastModifiedTime,
+      duration: audioAttachment?.vmDuration,
+      isVoicemail: true,
+      voicemailMessageId: messageId,
+      voicemailTranscriptionStatus: message.vmTranscriptionStatus,
+      voicemailTranscript: transcript || undefined,
+      voicemailReadStatus: message.readStatus,
+      voicemailMessageStatus: message.messageStatus,
+      voicemailDurationSeconds: audioAttachment?.vmDuration,
+      from: message.from,
+      to: recipient,
+    });
+  }
+
+  return { records, token, refreshed, permissionDenied: false as const };
 }
 
 export function ringCentralDateKey(value: string | Date) {
@@ -385,16 +552,27 @@ export function isCallForTarget(record: RingCentralCallRecord, targetPhoneNumber
     return digits.length > 10 ? digits.slice(-10) : digits;
   };
   const targets = (Array.isArray(targetPhoneNumber) ? targetPhoneNumber : [targetPhoneNumber]).map(normalize);
-  const destination = normalize(record.to?.phoneNumber);
-  return Boolean(destination.length >= 7 && targets.some((target) => target.length >= 7 && target === destination));
+  const direction = record.direction?.toLowerCase();
+  const endpoint = direction === 'outbound' ? normalize(record.from?.phoneNumber) : normalize(record.to?.phoneNumber);
+  return Boolean(endpoint.length >= 7 && targets.some((target) => target.length >= 7 && target === endpoint));
 }
 
-function getCallDurationSeconds(record: RingCentralCallRecord) {
+export function getCallDurationSeconds(record: RingCentralCallRecord) {
   const duration = record.duration === undefined ? Number.NaN : Number(record.duration);
   if (Number.isFinite(duration)) return duration;
   const durationMs = record.durationMs === undefined ? Number.NaN : Number(record.durationMs);
   if (Number.isFinite(durationMs)) return durationMs / 1000;
   return null;
+}
+
+export function isRingCentralVoicemail(record: RingCentralCallRecord) {
+  return Boolean(record.isVoicemail || record.voicemailMessageId || /voicemail/i.test(record.type || '') || /voicemail/i.test(record.result || ''));
+}
+
+export function isRingCentralMissedInboundCall(record: RingCentralCallRecord) {
+  if (record.direction?.toLowerCase() !== 'inbound' || isRingCentralVoicemail(record)) return false;
+  const result = `${record.result || ''} ${record.reason || ''}`.toLowerCase();
+  return /missed|no[ -]?answer|busy|failed|cancelled/.test(result) || (getCallDurationSeconds(record) !== null && (getCallDurationSeconds(record) || 0) < MIN_REAL_CALL_DURATION_SECONDS);
 }
 
 function normalizeCallerPhone(value?: string) {
@@ -405,6 +583,7 @@ function normalizeCallerPhone(value?: string) {
 export function uniqueInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string | string[]) {
   const filtered = records
     .filter((record) => record.direction?.toLowerCase() === 'inbound' && isCallForTarget(record, targetPhoneNumber))
+    .filter((record) => !isRingCentralVoicemail(record))
     .filter((record) => {
       const duration = getCallDurationSeconds(record);
       // Keep records with no duration for backwards compatibility with older

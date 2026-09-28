@@ -3,6 +3,9 @@ import { prisma } from '@/lib/prisma';
 import {
   getRingCentralConfig,
   listRingCentralInboundCalls,
+  listRingCentralOutboundCalls,
+  listRingCentralVoicemails,
+  persistRingCentralToken,
   ringCentralTorontoRange,
   ringCentralTorontoWeekToDateRange,
   RingCentralCallRecord,
@@ -13,6 +16,7 @@ import { normalizeRingCentralPhone, sourceKeyForRecord } from '@/lib/ringcentral
 const SYNC_SOURCE_KEY = 'account-call-log';
 const LEASE_MINUTES = 5;
 const INITIAL_SYNC_MARKER = 'monday-to-today-v1';
+const VOICEMAIL_TRANSCRIPTION_RECHECK_DAYS = 7;
 
 export type CachedTargetNumber = {
   id?: string;
@@ -92,7 +96,7 @@ function matchingTargetId(destination: string | undefined, targets: CachedTarget
 }
 
 function callLogData(record: RingCentralCallRecord, targets: CachedTargetNumber[]) {
-  const sourceKey = sourceKeyForRecord(record);
+  const sourceKey = record.sourceKey || sourceKeyForRecord(record);
   if (!sourceKey) return null;
   const duration = numberOrNull(record.duration);
   const durationMs = numberOrNull(record.durationMs);
@@ -120,7 +124,14 @@ function callLogData(record: RingCentralCallRecord, targets: CachedTargetNumber[
     destinationPhoneNumberNormalized: normalizeRingCentralPhone(record.to?.phoneNumber) || null,
     destinationExtensionNumber: record.to?.extensionNumber || null,
     destinationName: record.to?.name || null,
-    trackedDestinationId: matchingTargetId(record.to?.phoneNumber, targets),
+    trackedDestinationId: matchingTargetId(record.to?.phoneNumber, targets) || matchingTargetId(record.from?.phoneNumber, targets),
+    isVoicemail: Boolean(record.isVoicemail),
+    voicemailMessageId: record.voicemailMessageId || null,
+    voicemailTranscriptionStatus: record.voicemailTranscriptionStatus || null,
+    voicemailTranscript: record.voicemailTranscript || null,
+    voicemailReadStatus: record.voicemailReadStatus || null,
+    voicemailMessageStatus: record.voicemailMessageStatus || null,
+    voicemailDurationSeconds: numberOrNull(record.voicemailDurationSeconds),
     rawPayload: jsonValue(record),
     syncedAt: new Date(),
   };
@@ -207,6 +218,13 @@ export function cachedRowToCallRecord(row: Awaited<ReturnType<typeof readCachedR
       extensionNumber: row.destinationExtensionNumber || raw.to?.extensionNumber,
       name: row.destinationName || raw.to?.name,
     },
+    isVoicemail: row.isVoicemail || raw.isVoicemail,
+    voicemailMessageId: row.voicemailMessageId || raw.voicemailMessageId,
+    voicemailTranscriptionStatus: row.voicemailTranscriptionStatus || raw.voicemailTranscriptionStatus,
+    voicemailTranscript: row.voicemailTranscript || raw.voicemailTranscript,
+    voicemailReadStatus: row.voicemailReadStatus || raw.voicemailReadStatus,
+    voicemailMessageStatus: row.voicemailMessageStatus || raw.voicemailMessageStatus,
+    voicemailDurationSeconds: row.voicemailDurationSeconds ?? raw.voicemailDurationSeconds,
   };
 }
 
@@ -231,8 +249,28 @@ export async function refreshRingCentralCallCache() {
           }
         : initialRange;
     const syncMode = initialSyncRequired ? 'monday-to-today' : 'after-last-call';
-    const result = await listRingCentralInboundCalls(range.dateFrom, range.dateTo);
-    const writes = result.records.map((record) => callLogData(record, targets)).filter(Boolean);
+    const voicemailDateFrom = initialSyncRequired || !latestCachedCallStartTime
+      ? range.dateFrom
+      : new Date(Math.min(
+          new Date(range.dateFrom).getTime(),
+          Date.now() - VOICEMAIL_TRANSCRIPTION_RECHECK_DAYS * 86400000,
+        )).toISOString();
+    // Keep the three API reads sequential so an expired OAuth access token is
+    // refreshed and persisted before the next request starts.
+    const inboundResult = await listRingCentralInboundCalls(range.dateFrom, range.dateTo);
+    if (inboundResult.refreshed) await persistRingCentralToken(inboundResult.token);
+    const outboundResult = await listRingCentralOutboundCalls(range.dateFrom, range.dateTo);
+    if (outboundResult.refreshed) await persistRingCentralToken(outboundResult.token);
+    // Re-read a short voicemail window so a transcript that finishes after
+    // the message arrives is captured on the next refresh.
+    const voicemailResult = await listRingCentralVoicemails(
+      voicemailDateFrom,
+      range.dateTo,
+      targets.map((target) => target.phoneNumber),
+    );
+    if (voicemailResult.refreshed) await persistRingCentralToken(voicemailResult.token);
+    const records = [...inboundResult.records, ...outboundResult.records, ...voicemailResult.records];
+    const writes = records.map((record) => callLogData(record, targets)).filter(Boolean);
     let upserted = 0;
     for (let index = 0; index < writes.length; index += 200) {
       const batch = writes.slice(index, index + 200);
@@ -254,19 +292,29 @@ export async function refreshRingCentralCallCache() {
         lastSuccessAt: new Date(),
         lastFailureAt: null,
         lastError: null,
-        recordsFetched: result.records.length,
+        recordsFetched: records.length,
         leaseUntil: null,
         rawPayload: jsonValue({
           targetNumbers: targets.map((target) => target.phoneNumberNormalized),
           upserted,
           syncMode,
+          voicemailPermissionDenied: voicemailResult.permissionDenied,
+          voicemailFetched: voicemailResult.records.length,
           initialSyncMarker: INITIAL_SYNC_MARKER,
           latestCachedCallStartTime: latestCachedCallStartTime?.toISOString() || null,
         }),
       },
     });
 
-    return { busy: false as const, refreshedToken: result.refreshed ? result.token : undefined, fetched: result.records.length, upserted, syncMode };
+    const refreshedToken = [inboundResult, outboundResult, voicemailResult].find((result) => result.refreshed)?.token;
+    return {
+      busy: false as const,
+      refreshedToken,
+      fetched: records.length,
+      upserted,
+      syncMode,
+      voicemailPermissionDenied: voicemailResult.permissionDenied,
+    };
   } catch (error: any) {
     await prisma.ringCentralCallSyncState.update({
       where: { sourceKey: SYNC_SOURCE_KEY },

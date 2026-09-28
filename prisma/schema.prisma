@@ -363,6 +363,14 @@ model RingCentralCallLog {
   trackedDestinationId String?
   trackedDestination   RingCentralPhoneNumber? @relation(fields: [trackedDestinationId], references: [id], onDelete: SetNull)
 
+  isVoicemail                 Boolean @default(false)
+  voicemailMessageId          String?
+  voicemailTranscriptionStatus String?
+  voicemailTranscript         String?
+  voicemailReadStatus         String?
+  voicemailMessageStatus      String?
+  voicemailDurationSeconds    Int?
+
   rawPayload Json
   syncedAt   DateTime @default(now())
   createdAt  DateTime @default(now())

@@ -12,7 +12,7 @@ type CallAnalytics = {
   targetPhoneNumbers?: string[];
   range?: 'today' | 'yesterday' | 'last-week';
   rangeLabel?: string;
-  summary?: { received: number; converted: number; conversionRate: number };
+  summary?: { received: number; converted: number; conversionRate: number; missedOpportunities: number };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{ date: string; label: string; dateLabel: string; received: number; converted: number; conversionRate: number }>;
   callDetails?: Array<{
@@ -32,11 +32,19 @@ type CallAnalytics = {
     transport: string | null;
     sessionId: string | null;
     telephonySessionId: string | null;
+    activityKind: 'answered' | 'missed' | 'voicemail';
+    missedOpportunity: boolean;
+    callbackTime: string | null;
+    voicemailTranscript: string | null;
+    voicemailTranscriptionStatus: string | null;
+    voicemailReadStatus: string | null;
+    voicemailMessageId: string | null;
   }>;
   totalCalls?: number;
   totalConvertedCalls?: number;
   conversionRate?: number;
   lastSyncedAt?: string;
+  voicemailPermissionDenied?: boolean;
   syncError?: string;
   error?: string;
 };
@@ -137,7 +145,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
   const activeRange = analytics?.range || selectedRange;
   const activeRangeLabel = analytics?.rangeLabel || rangeOptions.find((option) => option.value === activeRange)?.label || 'Today';
   const periodLabel = activeRange === 'last-week' ? 'last 7 days' : activeRange === 'yesterday' ? 'yesterday' : 'today';
-  const summary = analytics?.summary || { received: 0, converted: 0, conversionRate: 0 };
+  const summary = analytics?.summary || { received: 0, converted: 0, conversionRate: 0, missedOpportunities: 0 };
   const maxDailyCalls = useMemo(() => Math.max(1, ...daily.map((day) => Math.max(day.received, day.converted))), [daily]);
 
   return (
@@ -201,7 +209,11 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
         <>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
             <span>{analytics.cacheAvailable ? `Showing cached data${analytics.lastSyncedAt ? ` · last synced ${new Date(analytics.lastSyncedAt).toLocaleString()}` : ''}` : 'No successful sync yet.'}</span>
-            {analytics.syncError && <span className="font-bold text-rose-600">Last refresh failed: {analytics.syncError}</span>}
+            {analytics.voicemailPermissionDenied ? (
+              <span className="font-bold text-amber-700">Voicemail sync needs the Read Messages permission.</span>
+            ) : analytics.syncError ? (
+              <span className="font-bold text-rose-600">Last refresh failed: {analytics.syncError}</span>
+            ) : null}
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
@@ -288,7 +300,7 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
               <div>
                 <h2 id="call-details-title" className="text-base font-black text-slate-900">Call details · {activeRangeLabel}</h2>
-                <p className="mt-1 text-xs text-slate-500">{analytics.callDetails?.length || 0} qualifying inbound lead{analytics.callDetails?.length === 1 ? '' : 's'} · Toronto time</p>
+                <p className="mt-1 text-xs text-slate-500">{analytics.callDetails?.length || 0} inbound lead activit{analytics.callDetails?.length === 1 ? 'y' : 'ies'} · Toronto time</p>
               </div>
               <button type="button" onClick={() => setShowDetails(false)} className="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close call details">×</button>
             </div>
@@ -298,21 +310,23 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">No qualifying calls found for this period.</div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="min-w-[980px] w-full border-collapse text-left text-xs">
+                  <table className="min-w-[1240px] w-full border-collapse text-left text-xs">
                     <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500">
                       <tr>
                         <th className="whitespace-nowrap px-4 py-3">Date &amp; time</th>
                         <th className="whitespace-nowrap px-4 py-3">Caller</th>
                         <th className="whitespace-nowrap px-4 py-3">Received by</th>
                         <th className="whitespace-nowrap px-4 py-3">Duration</th>
+                        <th className="whitespace-nowrap px-4 py-3">Lead status</th>
                         <th className="whitespace-nowrap px-4 py-3">Result</th>
+                        <th className="whitespace-nowrap px-4 py-3">Voicemail transcript</th>
                         <th className="whitespace-nowrap px-4 py-3">Direction / type</th>
                         <th className="whitespace-nowrap px-4 py-3">Session</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                       {analytics.callDetails.map((call, index) => (
-                        <tr key={call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`} className="align-top transition hover:bg-blue-50/40">
+                        <tr key={call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`} className={`align-top transition ${call.missedOpportunity ? 'bg-rose-50/80 hover:bg-rose-100/80' : 'hover:bg-blue-50/40'}`}>
                           <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{formatCallTime(call.time, true)}</td>
                           <td className="px-4 py-3">
                             <div className="font-bold text-slate-900">{formatPhoneNumber(call.callerNumber)}</div>
@@ -324,9 +338,33 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{formatDuration(call.durationSeconds)}</td>
                           <td className="px-4 py-3">
+                            {call.missedOpportunity ? (
+                              <span className="inline-flex rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700">Missed opportunity</span>
+                            ) : call.callbackTime ? (
+                              <span className="inline-flex rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Called back</span>
+                            ) : call.activityKind === 'answered' ? (
+                              <span className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700">Answered</span>
+                            ) : (
+                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">{call.activityKind}</span>
+                            )}
+                            {call.callbackTime && <div className="mt-1 text-[11px] text-slate-500">Callback: {formatCallTime(call.callbackTime)}</div>}
+                          </td>
+                          <td className="px-4 py-3">
                             <div className="font-semibold text-slate-800">{displayValue(call.result)}</div>
                             {call.action && <div className="mt-0.5 text-[11px] text-slate-500">Action: {call.action}</div>}
                             {call.reason && <div className="mt-0.5 text-[11px] text-slate-500">Reason: {call.reason}</div>}
+                          </td>
+                          <td className="max-w-sm px-4 py-3">
+                            {call.voicemailTranscript ? (
+                              <div>
+                                <div className="whitespace-pre-wrap leading-5 text-slate-800">{call.voicemailTranscript}</div>
+                                <div className="mt-1 text-[10px] font-semibold text-slate-400">RingCentral transcription</div>
+                              </div>
+                            ) : call.activityKind === 'voicemail' ? (
+                              <span className="text-slate-400">Transcription {call.voicemailTranscriptionStatus?.toLowerCase() || 'not available'}</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-slate-600">{displayValue(call.direction)} · {displayValue(call.type)}</td>
                           <td className="px-4 py-3 text-[11px] text-slate-500">

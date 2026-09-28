@@ -1,6 +1,10 @@
 import { findJobsWithDetails } from '@/lib/job-helper';
 import {
   getRingCentralConnectionStatus,
+  getCallDurationSeconds,
+  isCallForTarget,
+  isRingCentralMissedInboundCall,
+  isRingCentralVoicemail,
   ringCentralDateKey,
   ringCentralTorontoRange,
   RingCentralAuthRequiredError,
@@ -27,7 +31,7 @@ export type RingCentralCallAnalytics = {
   timezone?: string;
   range?: RingCentralAnalyticsRange;
   rangeLabel?: string;
-  summary?: { received: number; converted: number; conversionRate: number };
+  summary?: { received: number; converted: number; conversionRate: number; missedOpportunities: number };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{
     date: string;
@@ -54,11 +58,19 @@ export type RingCentralCallAnalytics = {
     transport: string | null;
     sessionId: string | null;
     telephonySessionId: string | null;
+    activityKind: 'answered' | 'missed' | 'voicemail';
+    missedOpportunity: boolean;
+    callbackTime: string | null;
+    voicemailTranscript: string | null;
+    voicemailTranscriptionStatus: string | null;
+    voicemailReadStatus: string | null;
+    voicemailMessageId: string | null;
   }>;
   totalCalls?: number;
   totalConvertedCalls?: number;
   conversionRate?: number;
   lastSyncedAt?: string;
+  voicemailPermissionDenied?: boolean;
   syncError?: string;
   error?: string;
 };
@@ -71,19 +83,98 @@ const rangeLabels: Record<RingCentralAnalyticsRange, string> = {
   'last-week': 'Last week',
 };
 
+function normalizePhone(value?: string | null) {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function isSuccessfulCallback(record: ReturnType<typeof cachedRowToCallRecord>) {
+  if (record.direction?.toLowerCase() !== 'outbound') return false;
+  const result = `${record.result || ''} ${record.reason || ''}`.toLowerCase();
+  if (/missed|no[ -]?answer|busy|failed|cancelled|voicemail/.test(result)) return false;
+  const duration = getCallDurationSeconds(record);
+  return result.includes('accept') || result.includes('connect') || result.includes('answer') || (duration !== null && duration > 0);
+}
+
+function buildCallDetails(records: ReturnType<typeof cachedRowToCallRecord>[], callbackRecords: ReturnType<typeof cachedRowToCallRecord>[], targetPhoneNumbers: string[]) {
+  const grouped = new Map<string, ReturnType<typeof cachedRowToCallRecord>[]>();
+  for (const record of records) {
+    if (record.direction?.toLowerCase() !== 'inbound' || !isCallForTarget(record, targetPhoneNumbers)) continue;
+    const caller = normalizePhone(record.from?.phoneNumber);
+    if (!record.startTime || !caller) continue;
+    const key = `${ringCentralDateKey(record.startTime)}:${caller}`;
+    const group = grouped.get(key) || [];
+    group.push(record);
+    grouped.set(key, group);
+  }
+
+  return Array.from(grouped.values()).map((group) => {
+    const ordered = [...group].sort((left, right) => new Date(left.startTime || 0).getTime() - new Date(right.startTime || 0).getTime());
+    const realCalls = ordered.filter((record) => !isRingCentralVoicemail(record) && !isRingCentralMissedInboundCall(record) && (getCallDurationSeconds(record) === null || (getCallDurationSeconds(record) || 0) >= 30));
+    const voicemailRecords = ordered.filter(isRingCentralVoicemail);
+    const missedRecords = ordered.filter(isRingCentralMissedInboundCall);
+    const primary = realCalls[0] || voicemailRecords[0] || missedRecords[0] || ordered[0];
+    const missedActivity = [...missedRecords, ...voicemailRecords].sort((left, right) => new Date(right.startTime || 0).getTime() - new Date(left.startTime || 0).getTime())[0];
+    const callerNumber = normalizePhone(primary.from?.phoneNumber);
+    const missedAt = missedActivity?.startTime ? new Date(missedActivity.startTime).getTime() : 0;
+    const callback = callerNumber && missedAt
+      ? callbackRecords
+        .filter((record) => isSuccessfulCallback(record))
+        .filter((record) => isCallForTarget(record, targetPhoneNumbers))
+        .filter((record) => normalizePhone(record.to?.phoneNumber) === callerNumber)
+        .filter((record) => new Date(record.startTime || 0).getTime() > missedAt)
+        .sort((left, right) => new Date(left.startTime || 0).getTime() - new Date(right.startTime || 0).getTime())[0]
+      : undefined;
+    const voicemail = voicemailRecords.find((record) => record.voicemailTranscript || record.voicemailTranscriptionStatus) || voicemailRecords[0];
+    const activityKind: 'answered' | 'missed' | 'voicemail' = realCalls.length > 0 ? 'answered' : voicemailRecords.length > 0 ? 'voicemail' : 'missed';
+
+    return {
+      id: primary.id || null,
+      date: primary.startTime ? ringCentralDateKey(primary.startTime) : '',
+      time: primary.startTime || '',
+      callerNumber: primary.from?.phoneNumber || 'Unknown number',
+      callerName: primary.from?.name || null,
+      destinationNumber: primary.to?.phoneNumber || 'Unknown destination',
+      destinationName: primary.to?.name || null,
+      durationSeconds: getCallDurationSeconds(primary),
+      direction: primary.direction || null,
+      type: primary.type || null,
+      result: primary.result || null,
+      action: primary.action || null,
+      reason: primary.reason || null,
+      transport: primary.transport || null,
+      sessionId: primary.sessionId || null,
+      telephonySessionId: primary.telephonySessionId || null,
+      activityKind,
+      missedOpportunity: realCalls.length === 0 && Boolean(missedActivity) && !callback,
+      callbackTime: callback?.startTime || null,
+      voicemailTranscript: voicemail?.voicemailTranscript || null,
+      voicemailTranscriptionStatus: voicemail?.voicemailTranscriptionStatus || null,
+      voicemailReadStatus: voicemail?.voicemailReadStatus || null,
+      voicemailMessageId: voicemail?.voicemailMessageId || null,
+    };
+  }).sort((left, right) => new Date(right.time || 0).getTime() - new Date(left.time || 0).getTime());
+}
+
 export async function buildRingCentralCachedAnalytics(selectedRange: RingCentralAnalyticsRange = 'today'): Promise<{
   data: RingCentralCallAnalytics;
   refreshedToken?: Parameters<typeof setRingCentralTokenCookie>[1];
 }> {
   const status = await getRingCentralConnectionStatus();
   const range = ringCentralTorontoRange(selectedRange);
-  const [targetNumbers, cachedRows, syncState] = await Promise.all([
+  const [targetNumbers, cachedRows, callbackRows, syncState] = await Promise.all([
     getCachedTargetNumbers(),
     readCachedRingCentralCalls(new Date(range.dateFrom), new Date(range.dateTo)),
+    readCachedRingCentralCalls(new Date(range.dateFrom), new Date()),
     readRingCentralSyncState(),
   ]);
   const targetPhoneNumbers = targetNumbers.map((target) => target.phoneNumber);
-  const calls = uniqueInboundCalls(cachedRows.map(cachedRowToCallRecord), targetPhoneNumbers);
+  const syncMetadata = syncState?.rawPayload && typeof syncState.rawPayload === 'object' && !Array.isArray(syncState.rawPayload)
+    ? syncState.rawPayload as { voicemailPermissionDenied?: boolean }
+    : {};
+  const cachedRecords = cachedRows.map(cachedRowToCallRecord);
+  const callbackRecords = callbackRows.map(cachedRowToCallRecord);
+  const calls = uniqueInboundCalls(cachedRecords, targetPhoneNumbers);
   const jobs = await findJobsWithDetails({
     where: {
       createdAt: {
@@ -99,26 +190,8 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     date: call.startTime ? ringCentralDateKey(call.startTime) : '',
   }));
 
-  const callDetails = callRows.map(({ call, date }) => ({
-    id: call.id || null,
-    date,
-    time: call.startTime || '',
-    callerNumber: call.from?.phoneNumber || 'Unknown number',
-    callerName: call.from?.name || null,
-    destinationNumber: call.to?.phoneNumber || 'Unknown destination',
-    destinationName: call.to?.name || null,
-    durationSeconds: call.duration === undefined || call.duration === null
-      ? (call.durationMs === undefined || call.durationMs === null ? null : Math.round(Number(call.durationMs) / 1000))
-      : Math.round(Number(call.duration)),
-    direction: call.direction || null,
-    type: call.type || null,
-    result: call.result || null,
-    action: call.action || null,
-    reason: call.reason || null,
-    transport: call.transport || null,
-    sessionId: call.sessionId || null,
-    telephonySessionId: call.telephonySessionId || null,
-  }));
+  const callDetails = buildCallDetails(cachedRecords, callbackRecords, targetPhoneNumbers);
+  const missedOpportunities = callDetails.filter((call) => call.missedOpportunity).length;
 
   const dailyByDate = new Map<string, { received: number; converted: number }>();
   const dayCount = Math.round((range.endUtc.getTime() - range.startUtc.getTime()) / 86400000) + 1;
@@ -169,13 +242,14 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
       timezone: 'America/Toronto',
       range: selectedRange,
       rangeLabel: rangeLabels[selectedRange],
-      summary: { ...summary, conversionRate: percent(summary.converted, summary.received) },
+      summary: { ...summary, conversionRate: percent(summary.converted, summary.received), missedOpportunities },
       daily,
       callDetails,
       totalCalls: callRows.length,
       totalConvertedCalls,
       conversionRate: percent(totalConvertedCalls, callRows.length),
       lastSyncedAt: syncState?.lastSuccessAt?.toISOString(),
+      voicemailPermissionDenied: Boolean(syncMetadata.voicemailPermissionDenied),
       syncError: syncState?.lastError || undefined,
     },
   };

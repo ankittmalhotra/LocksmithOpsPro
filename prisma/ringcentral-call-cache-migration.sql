@@ -141,7 +141,17 @@ ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "action" TEXT;
 ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "reason" TEXT;
 ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "transport" TEXT;
 ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "lastModifiedTime" TIMESTAMP(3);
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "isVoicemail" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "voicemailMessageId" TEXT;
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "voicemailTranscriptionStatus" TEXT;
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "voicemailTranscript" TEXT;
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "voicemailReadStatus" TEXT;
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "voicemailMessageStatus" TEXT;
+ALTER TABLE "RingCentralCallLog" ADD COLUMN IF NOT EXISTS "voicemailDurationSeconds" INTEGER;
 ALTER TABLE "RingCentralCallSyncState" ADD COLUMN IF NOT EXISTS "leaseUntil" TIMESTAMP(3);
+
+CREATE INDEX IF NOT EXISTS "rc_call_voicemail_idx"
+  ON "RingCentralCallLog"("isVoicemail", "startTime");
 
 DO $$
 BEGIN

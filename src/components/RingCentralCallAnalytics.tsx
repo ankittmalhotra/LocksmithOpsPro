@@ -90,7 +90,13 @@ const rangeOptions = [
 
 type AnalyticsRange = (typeof rangeOptions)[number]['value'];
 
-export default function RingCentralCallAnalytics({ canManageConnection = false }: { canManageConnection?: boolean }) {
+export default function RingCentralCallAnalytics({
+  canManageConnection = false,
+  refreshOnLoad = false,
+}: {
+  canManageConnection?: boolean;
+  refreshOnLoad?: boolean;
+}) {
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
   const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
   const [loading, setLoading] = useState(false);
@@ -129,8 +135,12 @@ export default function RingCentralCallAnalytics({ canManageConnection = false }
   };
 
   useEffect(() => {
-    fetchAnalytics();
-  }, []);
+    if (refreshOnLoad) {
+      void refreshAnalytics();
+    } else {
+      void fetchAnalytics();
+    }
+  }, [refreshOnLoad]);
 
   useEffect(() => {
     if (!showDetails) return;

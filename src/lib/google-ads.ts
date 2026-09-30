@@ -1,4 +1,5 @@
 import { getStoredGoogleAdsRefreshToken } from '@/lib/google-ads-credential-store';
+import { getRevenuePeriodBounds } from '@/lib/revenue-period';
 
 const GOOGLE_ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 const GOOGLE_ADS_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -9,13 +10,22 @@ export const GOOGLE_ADS_TIME_ZONE = 'America/Toronto';
 export const GOOGLE_ADS_PARTNER_COUNT = 2;
 export const GOOGLE_ADS_BUSINESS_START_DATE = '2026-09-07';
 
-export const GOOGLE_ADS_RANGE_OPTIONS = ['today', 'yesterday', 'last-week', 'all-time'] as const;
+export const GOOGLE_ADS_RANGE_OPTIONS = [
+  'today',
+  'yesterday',
+  'last-week',
+  'current-biweekly',
+  'previous-biweekly',
+  'all-time',
+] as const;
 export type GoogleAdsRoiRange = (typeof GOOGLE_ADS_RANGE_OPTIONS)[number];
 
 export const GOOGLE_ADS_RANGE_LABELS: Record<GoogleAdsRoiRange, string> = {
   today: 'Today',
   yesterday: 'Yesterday',
   'last-week': 'Last week',
+  'current-biweekly': 'This Biweekly Period',
+  'previous-biweekly': 'Previous Biweekly Period',
   'all-time': 'All time',
 };
 
@@ -160,12 +170,18 @@ export function getGoogleAdsDateKeys(range: GoogleAdsRoiRange = 'today', now = n
   const endUtc = range === 'yesterday'
     ? new Date(todayUtc.getTime() - 86400000)
     : todayUtc;
-  const startUtc = range === 'all-time'
-    ? dateKeyToUtcDate(GOOGLE_ADS_BUSINESS_START_DATE)
-    : range === 'last-week'
-      ? new Date(endUtc.getTime() - (6 * 86400000))
-      : endUtc;
-  const dayCount = Math.max(1, Math.floor((endUtc.getTime() - startUtc.getTime()) / 86400000) + 1);
+  const biweeklyBounds = range === 'current-biweekly' || range === 'previous-biweekly'
+    ? getRevenuePeriodBounds(range, now)
+    : null;
+  const startUtc = biweeklyBounds
+    ? dateKeyToUtcDate(biweeklyBounds.start)
+    : range === 'all-time'
+      ? dateKeyToUtcDate(GOOGLE_ADS_BUSINESS_START_DATE)
+      : range === 'last-week'
+        ? new Date(endUtc.getTime() - (6 * 86400000))
+        : endUtc;
+  const rangeEndUtc = biweeklyBounds ? dateKeyToUtcDate(biweeklyBounds.end) : endUtc;
+  const dayCount = Math.max(1, Math.floor((rangeEndUtc.getTime() - startUtc.getTime()) / 86400000) + 1);
 
   return Array.from({ length: dayCount }, (_, index) => {
     const date = new Date(startUtc);

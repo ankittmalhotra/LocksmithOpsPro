@@ -35,8 +35,16 @@ interface DailyAnalyticsItem {
   profit: number;
 }
 
-type GoogleAdsRoiRange = 'today' | 'yesterday' | 'last-week' | 'all-time';
+type GoogleAdsRoiRange = 'today' | 'yesterday' | 'last-week' | 'current-biweekly' | 'previous-biweekly' | 'all-time';
 type GoogleAdsRoiView = 'partner' | 'company';
+const GOOGLE_ADS_RANGE_LABELS: Record<GoogleAdsRoiRange, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  'last-week': 'Last week',
+  'current-biweekly': 'This Biweekly Period',
+  'previous-biweekly': 'Previous Biweekly Period',
+  'all-time': 'All time',
+};
 const formatCompactCurrency = (value: number) =>
   value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${Math.round(value)}`;
 
@@ -408,7 +416,7 @@ export default function AdminDashboardPage() {
   const last7Days: DailyAnalyticsItem[] = analytics?.last7Days || [];
   const last7DaysSummary = analytics?.last7DaysSummary || {};
   const googleAds = analytics?.googleAds || {};
-  const googleAdsRangeLabel = googleAds.rangeLabel || (googleAdsRange === 'last-week' ? 'Last week' : googleAdsRange === 'today' ? 'Today' : googleAdsRange === 'all-time' ? 'All time' : 'Yesterday');
+  const googleAdsRangeLabel = googleAds.rangeLabel || GOOGLE_ADS_RANGE_LABELS[googleAdsRange];
   const displayedGoogleAds = googleAdsView === 'partner'
     ? {
         label: 'Partner',
@@ -694,7 +702,7 @@ export default function AdminDashboardPage() {
         </div>
       </section>
 
-      <RingCentralCallAnalytics canManageConnection />
+      <RingCentralCallAnalytics canManageConnection refreshOnLoad />
 
       {/* Standalone Google Ads ROI panel; kept admin-only and separate from existing widgets. */}
       <section className="mb-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-5 shadow-sm" aria-labelledby="google-ads-roi-title">
@@ -723,6 +731,8 @@ export default function AdminDashboardPage() {
               <option value="today">Today</option>
               <option value="yesterday">Yesterday</option>
               <option value="last-week">Last week</option>
+              <option value="current-biweekly">This Biweekly Period</option>
+              <option value="previous-biweekly">Previous Biweekly Period</option>
               <option value="all-time">All time</option>
             </select>
             <label className="sr-only" htmlFor="google-ads-roi-view">ROI ownership view</label>

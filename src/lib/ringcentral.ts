@@ -6,9 +6,15 @@ const RINGCENTRAL_TOKEN_COOKIE = 'lockops_ringcentral_tokens';
 const RINGCENTRAL_STATE_COOKIE = 'lockops_ringcentral_oauth_state';
 const TORONTO_TIME_ZONE = 'America/Toronto';
 const MIN_REAL_CALL_DURATION_SECONDS = 30;
-// The receiving number shown in the connected RingCentral account. Override it
-// with RC_TARGET_PHONE_NUMBER if the business number changes.
+// Receiving numbers tracked by default. The legacy single-number setting can
+// still override the primary number; RC_TARGET_PHONE_NUMBERS can add more.
 const DEFAULT_TARGET_PHONE_NUMBER = '+14162400593';
+export const DEFAULT_TARGET_PHONE_NUMBERS = [
+  DEFAULT_TARGET_PHONE_NUMBER,
+  '+14372954001',
+  '+16477779493',
+  '+12894061500',
+];
 
 export type RingCentralTokenData = {
   accessToken: string;

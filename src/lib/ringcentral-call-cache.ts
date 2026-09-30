@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
+  DEFAULT_TARGET_PHONE_NUMBERS,
   getRingCentralConfig,
   listRingCentralInboundCalls,
   listRingCentralOutboundCalls,
@@ -30,16 +31,22 @@ function jsonValue(value: unknown) {
 }
 
 function environmentTargetNumbers() {
-  const configured = (process.env.RC_TARGET_PHONE_NUMBERS || '')
+  const configured = [
+    getRingCentralConfig()?.targetPhoneNumber || DEFAULT_TARGET_PHONE_NUMBERS[0],
+    ...DEFAULT_TARGET_PHONE_NUMBERS.slice(1),
+    ...(process.env.RC_TARGET_PHONE_NUMBERS || '')
     .split(',')
     .map((value) => value.trim())
-    .filter(Boolean);
-  const fallback = getRingCentralConfig()?.targetPhoneNumber;
-  if (fallback && !configured.includes(fallback)) configured.push(fallback);
-  return Array.from(new Set(configured.map((phoneNumber) => ({
-    phoneNumber,
-    phoneNumberNormalized: normalizeRingCentralPhone(phoneNumber),
-  })).filter((item) => item.phoneNumberNormalized.length >= 7)));
+    .filter(Boolean),
+  ];
+  const byNormalizedNumber = new Map<string, { phoneNumber: string; phoneNumberNormalized: string }>();
+  for (const phoneNumber of configured) {
+    const phoneNumberNormalized = normalizeRingCentralPhone(phoneNumber);
+    if (phoneNumberNormalized.length >= 7 && !byNormalizedNumber.has(phoneNumberNormalized)) {
+      byNormalizedNumber.set(phoneNumberNormalized, { phoneNumber, phoneNumberNormalized });
+    }
+  }
+  return Array.from(byNormalizedNumber.values());
 }
 
 export async function getCachedTargetNumbers(): Promise<CachedTargetNumber[]> {
@@ -47,8 +54,12 @@ export async function getCachedTargetNumbers(): Promise<CachedTargetNumber[]> {
     where: { active: true },
     orderBy: { createdAt: 'asc' },
   });
-  if (rows.length > 0) return rows;
-  return environmentTargetNumbers();
+  const byNumber = new Map<string, CachedTargetNumber>();
+  for (const row of rows) byNumber.set(row.phoneNumberNormalized, row);
+  for (const target of environmentTargetNumbers()) {
+    if (!byNumber.has(target.phoneNumberNormalized)) byNumber.set(target.phoneNumberNormalized, target);
+  }
+  return Array.from(byNumber.values());
 }
 
 async function ensureTargetNumbers() {

@@ -12,6 +12,7 @@ export type DispatchPasteField =
   | 'serviceAddress'
   | 'serviceType'
   | 'problemDescription'
+  | 'jobDate'
   | 'isScheduled'
   | 'scheduledFor';
 
@@ -23,6 +24,7 @@ export type DispatchPasteResult = {
   serviceAddress: string;
   serviceType: string;
   problemDescription: string;
+  jobDate: string;
   isScheduled: boolean;
   /** `datetime-local` value in YYYY-MM-DDTHH:mm form, or empty when unclear. */
   scheduledFor: string;
@@ -43,6 +45,7 @@ const EMPTY_FIELDS: Omit<DispatchPasteResult, 'sourceText' | 'confidence' | 'fie
   serviceAddress: '',
   serviceType: '',
   problemDescription: '',
+  jobDate: '',
   isScheduled: false,
   scheduledFor: '',
 };
@@ -54,7 +57,7 @@ const FIELD_LABELS: Array<{ field: DispatchPasteField | 'schedule'; pattern: Reg
   { field: 'serviceAddress', pattern: /^(?:service\s+)?(?:address|location|site)\s*[:\-]\s*(.+)$/i },
   { field: 'serviceType', pattern: /^(?:service\s*)?(?:type|service|job\s*type)\s*[:\-]\s*(.+)$/i },
   { field: 'problemDescription', pattern: /^(?:notes?|problem|issue|description|details?)\s*[:\-]\s*(.+)$/i },
-  { field: 'schedule', pattern: /^(?:appointment|scheduled|schedule|date(?:\s+and\s+time)?|time)\s*[:\-]\s*(.+)$/i },
+  { field: 'schedule', pattern: /^(?:appointment|scheduled|schedule|(?:job\s+)?date(?:\s+and\s+time)?|time)\s*[:\-]\s*(.+)$/i },
 ];
 
 const SERVICE_RULES: Array<{ pattern: RegExp; service: string }> = [
@@ -169,7 +172,7 @@ export function parseDispatchPaste(rawText: string): DispatchPasteResult {
   const unparsedLines: string[] = [];
   const fieldConfidence: Record<DispatchPasteField, number> = {
     customerName: 0, customerPhone: 0, customerExtension: 0, serviceAddress: 0,
-    serviceType: 0, problemDescription: 0, isScheduled: 0, scheduledFor: 0,
+    serviceType: 0, problemDescription: 0, jobDate: 0, isScheduled: 0, scheduledFor: 0,
   };
   const schedule: ScheduleParts = { explicitScheduled: false };
   const lines = sourceText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -280,11 +283,17 @@ export function parseDispatchPaste(rawText: string): DispatchPasteResult {
   // A service label may contain an unfamiliar phrase; retain it as a suggestion,
   // but mark it below the confidence of a recognized service category.
   if (schedule.date && schedule.time) {
+    result.jobDate = schedule.date;
+    fieldConfidence.jobDate = 0.95;
     result.scheduledFor = `${schedule.date}T${schedule.time}`;
     result.isScheduled = true;
     fieldConfidence.scheduledFor = schedule.explicitScheduled ? 0.95 : 0.84;
     fieldConfidence.isScheduled = schedule.explicitScheduled ? 0.95 : 0.84;
   } else if (schedule.date || schedule.time) {
+    if (schedule.date) {
+      result.jobDate = schedule.date;
+      fieldConfidence.jobDate = 0.84;
+    }
     result.isScheduled = schedule.explicitScheduled;
     fieldConfidence.isScheduled = schedule.explicitScheduled ? 0.75 : 0;
     warnings.push('A date and time are both required before a scheduled time can be filled.');

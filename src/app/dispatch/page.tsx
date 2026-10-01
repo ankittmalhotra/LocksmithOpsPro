@@ -235,7 +235,7 @@ export default function DispatchPage() {
 
   const [technicians, setTechnicians] = useState<any[]>([]);
   const [showAddJob, setShowAddJob] = useState(false);
-  const [jobEntryMode, setJobEntryMode] = useState<JobEntryMode>('NEW');
+  const [jobEntryMode, setJobEntryMode] = useState<JobEntryMode>('COMPLETED');
   const [editingManualId, setEditingManualId] = useState<string | null>(null);
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [paymentLinkPrompt, setPaymentLinkPrompt] = useState<PaymentLinkPrompt | null>(null);
@@ -289,7 +289,7 @@ export default function DispatchPage() {
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('addJob') === '1') {
       setShowAddJob(true);
-      setJobEntryMode('NEW');
+      setJobEntryMode('COMPLETED');
     }
   }, []);
 
@@ -328,6 +328,7 @@ export default function DispatchPage() {
         const selectedTech = usersData.users.find((tech: any) => tech.id === technicianId) || usersData.users[0];
         setTechnicianId(selectedTech.id);
         setWorkerCommissionRate(Number(selectedTech.commissionRate || 0).toFixed(2));
+        setManualForm((current) => current.technicianId ? current : { ...current, technicianId: selectedTech.id });
       } else {
         setTechnicians([]);
         setTechnicianId('');
@@ -434,6 +435,23 @@ export default function DispatchPage() {
       setProblemDescription(parsed.problemDescription?.trim() || '');
       setIsScheduled(Boolean(parsed.isScheduled));
       setScheduledFor(parsed.scheduledFor || '');
+      setManualForm((current) => {
+        const suggestedServiceType = parsed.serviceType.trim();
+        const isKnownServiceType = MANUAL_SERVICE_TYPES.includes(suggestedServiceType as (typeof MANUAL_SERVICE_TYPES)[number]);
+        return {
+          ...current,
+          ...(parsed.customerName ? { customerName: parsed.customerName } : {}),
+          ...(parsed.customerPhone ? { customerPhone: parsed.customerPhone } : {}),
+          ...(parsed.customerExtension ? { customerExtension: parsed.customerExtension } : {}),
+          ...(parsed.serviceAddress ? { serviceAddress: parsed.serviceAddress } : {}),
+          ...(suggestedServiceType ? {
+            serviceType: isKnownServiceType ? suggestedServiceType : 'Other',
+            otherServiceType: isKnownServiceType ? '' : suggestedServiceType,
+          } : {}),
+          ...(parsed.problemDescription ? { description: parsed.problemDescription.trim() } : {}),
+          ...(parsed.jobDate || parsed.scheduledFor ? { jobDate: parsed.jobDate || parsed.scheduledFor.slice(0, 10) } : {}),
+        };
+      });
       setPasteReview({
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         unparsedText,
@@ -557,7 +575,12 @@ export default function DispatchPage() {
     setEditingManualId(null);
     setErrorMsg('');
     setSuccessMsg('');
-    setJobEntryMode('NEW');
+    resetManualJob();
+    setDispatchPasteText('');
+    setPasteReview(null);
+    setPasteNeedsReview(false);
+    setPasteError('');
+    setJobEntryMode('COMPLETED');
     setShowAddJob(true);
   };
 
@@ -596,6 +619,10 @@ export default function DispatchPage() {
 
   const handleManualJob = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (pasteNeedsReview) {
+      setPasteError('The pasted message changed after review. Extract the updated details or clear the paste before saving this job.');
+      return;
+    }
     const validationError = validateManualForm(manualForm);
     if (validationError) {
       setErrorMsg(validationError);
@@ -788,6 +815,69 @@ export default function DispatchPage() {
       ),
     };
   }, [jobs, revenuePeriod]);
+
+  const pastePrefillPanel = (
+          <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Prefill job details">
+            <label htmlFor="dispatch-paste-message" className="block text-xs font-extrabold text-slate-800">Paste to prefill job details</label>
+            <p className="mt-1 text-[11px] text-slate-600">Paste a customer, WhatsApp, or partner message to prefill the form. Review every suggested field before saving.</p>
+            <textarea
+              id="dispatch-paste-message"
+              value={dispatchPasteText}
+              maxLength={10_000}
+              onChange={(event) => {
+                setDispatchPasteText(event.target.value);
+                if (pasteReview) setPasteNeedsReview(true);
+                setPasteError('');
+              }}
+              rows={3}
+              placeholder="Paste a WhatsApp, SMS, email, or call note…"
+              className="mt-2 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={handleParseDispatchPaste} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">Extract details</button>
+                {(dispatchPasteText || pasteNeedsReview) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDispatchPasteText('');
+                      setPasteReview(null);
+                      setPasteNeedsReview(false);
+                      setPasteError('');
+                    }}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                  >Clear paste</button>
+                )}
+              </div>
+              {pasteReview && !pasteNeedsReview && <span className="text-[11px] font-bold text-emerald-700">Reviewed · check every field below</span>}
+            </div>
+            {pasteNeedsReview && (
+              <p role="alert" className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-[11px] font-semibold text-rose-800">
+                The source changed after parsing. Review the updated message before creating the job, or clear the paste to continue with the current form values.
+              </p>
+            )}
+            {dispatchPasteText && <p className="mt-1 text-right text-[10px] text-slate-500">{dispatchPasteText.length.toLocaleString()} / 10,000 characters</p>}
+            {pasteError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{pasteError}</p>}
+            {pasteReview && (
+              <div className={`mt-3 rounded-lg border p-3 ${pasteNeedsReview ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`} aria-live="polite">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-extrabold text-amber-900">{pasteNeedsReview ? 'Previous parse · stale' : 'Review the suggested details'}</div>
+                  <span className="text-[10px] font-semibold text-amber-800">Extracted-field confidence: {Math.round(pasteReview.confidence * 100)}%</span>
+                </div>
+                {pasteReview.warnings.length > 0 ? (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-amber-900">
+                    {pasteReview.warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-[11px] text-amber-900">Check names, contact details, address, service, and timing before submitting.</p>
+                )}
+                {pasteReview.unparsedText && (
+                  <p className="mt-2 text-[11px] text-slate-700">Some message text could not be placed automatically. Review it and add relevant details to the job description.</p>
+                )}
+              </div>
+            )}
+          </section>
+  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -1096,79 +1186,14 @@ export default function DispatchPage() {
             </div>
             <button type="button" onClick={() => setShowAddJob(false)} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800" aria-label="Close Add Job">×</button>
           </div>
-          <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Prefill job details">
-            <label htmlFor="dispatch-paste-message" className="block text-xs font-extrabold text-slate-800">Paste to prefill job details</label>
-            <p className="mt-1 text-[11px] text-slate-600">Paste a customer, WhatsApp, or partner message to prefill the form. Review every suggested field before creating the job.</p>
-            <textarea
-              id="dispatch-paste-message"
-              value={dispatchPasteText}
-              maxLength={10_000}
-              onChange={(event) => {
-                setDispatchPasteText(event.target.value);
-                if (pasteReview) setPasteNeedsReview(true);
-                setPasteError('');
-              }}
-              rows={3}
-              placeholder="Paste a WhatsApp, SMS, email, or call note…"
-              className="mt-2 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={handleParseDispatchPaste} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">Extract details</button>
-                {(dispatchPasteText || pasteNeedsReview) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDispatchPasteText('');
-                      setPasteReview(null);
-                      setPasteNeedsReview(false);
-                      setPasteError('');
-                    }}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
-                  >Clear paste</button>
-                )}
-              </div>
-              {pasteReview && !pasteNeedsReview && <span className="text-[11px] font-bold text-emerald-700">Reviewed · check every field below</span>}
-            </div>
-            {pasteNeedsReview && (
-              <p role="alert" className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-[11px] font-semibold text-rose-800">
-                The source changed after parsing. Review the updated message before creating the job, or clear the paste to continue with the current form values.
-              </p>
-            )}
-            {dispatchPasteText && <p className="mt-1 text-right text-[10px] text-slate-500">{dispatchPasteText.length.toLocaleString()} / 10,000 characters</p>}
-            {pasteError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{pasteError}</p>}
-            {pasteReview && (
-              <div className={`mt-3 rounded-lg border p-3 ${pasteNeedsReview ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`} aria-live="polite">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs font-extrabold text-amber-900">{pasteNeedsReview ? 'Previous parse · stale' : 'Review before dispatch'}</div>
-                  <span className="text-[10px] font-semibold text-amber-800">Extracted-field confidence: {Math.round(pasteReview.confidence * 100)}%</span>
-                </div>
-                {pasteReview.warnings.length > 0 ? (
-                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-amber-900">
-                    {pasteReview.warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
-                  </ul>
-                ) : (
-                  <p className="mt-1 text-[11px] text-amber-900">Check names, contact details, address, service, and timing before submitting.</p>
-                )}
-                {pasteReview.unparsedText && (
-                  <p className="mt-2 text-[11px] text-slate-700">Unmatched text is saved with the dispatcher-only source message. Add any technician instructions to the job description below.</p>
-                )}
-              </div>
-            )}
-          </section>
+          {pastePrefillPanel}
           <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
             {([
               { value: 'NEW', title: 'New call', detail: 'Add to the queue' },
               { value: 'ASSIGNED', title: 'Assigned', detail: 'Choose a technician' },
               { value: 'COMPLETED', title: 'Completed', detail: 'Record closeout' },
             ] as const).map((option) => (
-              <button key={option.value} type="button" onClick={() => {
-                if (option.value === 'COMPLETED') {
-                  resetManualJob();
-                  setEditingManualId(null);
-                }
-                setJobEntryMode(option.value);
-              }} className={`rounded-xl border p-2.5 text-left transition ${jobEntryMode === option.value ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+              <button key={option.value} type="button" onClick={() => setJobEntryMode(option.value)} className={`rounded-xl border p-2.5 text-left transition ${jobEntryMode === option.value ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
                 <span className="block text-xs font-extrabold text-slate-900">{option.title}</span>
                 <span className="block text-[10px] text-slate-500 mt-0.5">{option.detail}</span>
               </button>
@@ -1679,6 +1704,7 @@ export default function DispatchPage() {
               </div>
               <button type="button" onClick={() => setShowAddJob(false)} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
             </div>
+            {pastePrefillPanel}
             {!editingManualId && <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
               {([
                 { value: 'NEW', title: 'New call', detail: 'Add to the queue' },

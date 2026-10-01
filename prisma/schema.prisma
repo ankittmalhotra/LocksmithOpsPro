@@ -192,6 +192,7 @@ model Job {
   isManual            Boolean   @default(false)
   serviceType         String // e.g., "Commercial Lock Change", "Lockout"
   problemDescription  String
+  intakeMessage       String?
   serviceAddress      String
   // Optional two-hour intake window for manually recorded completed jobs.
   jobReceivedTimeSlot String?

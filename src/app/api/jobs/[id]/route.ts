@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { findJobByIdOrNumber } from '@/lib/job-helper';
+import { findJobByIdOrNumber, toTechnicianJobPayload } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
 import {
   buildTechnicianUpdateDraft,
@@ -99,6 +99,10 @@ async function handleGET(
         { success: false, error: 'Forbidden: Invalid role' },
         { status: 403 }
       );
+    }
+
+    if (currentUser.role === 'TECHNICIAN') {
+      return NextResponse.json({ success: true, job: toTechnicianJobPayload(job) });
     }
 
     return NextResponse.json({ success: true, job });

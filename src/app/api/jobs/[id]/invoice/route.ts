@@ -8,7 +8,7 @@ import {
   SUPPORTED_CLOSEOUT_PAYMENT_METHODS,
   SupportedPaymentMethod,
 } from '@/lib/calculations';
-import { findJobByIdOrNumber } from '@/lib/job-helper';
+import { findJobByIdOrNumber, toTechnicianJobPayload } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
 import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
 import {
@@ -328,6 +328,9 @@ async function handlePOST(
     }
 
     const { invoice, updatedJob } = closeout;
+    const responseJob = currentUser.role === 'TECHNICIAN' && updatedJob
+      ? toTechnicianJobPayload(updatedJob)
+      : updatedJob;
 
     const revenueEmail = updatedJob?.invoice
       ? await sendRevenueChangeEmail(updatedJob, 'COMPLETED')
@@ -349,7 +352,7 @@ async function handlePOST(
 
     return NextResponse.json({
       success: true,
-      job: updatedJob,
+      job: responseJob,
       invoice,
       breakdown: calcBreakdown,
       settlement,

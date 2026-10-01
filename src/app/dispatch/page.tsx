@@ -9,6 +9,7 @@ import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import PeriodComparisonWidget, { type PeriodComparisonMode, type PeriodComparisons } from '@/components/PeriodComparisonWidget';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { buildSmsDraft } from '@/lib/sms-draft';
+import { parseDispatchPaste } from '@/lib/dispatch-paste-parser';
 import { formatTorontoDateInput, parseTorontoDateOnly, torontoDateTimeToIso } from '@/lib/timezone';
 import {
   isInRevenuePeriod,
@@ -173,6 +174,7 @@ export default function DispatchPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
+  const [jobSearch, setJobSearch] = useState('');
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
   const [comparisonMode, setComparisonMode] = useState<PeriodComparisonMode>('week');
   const [comparisons, setComparisons] = useState<PeriodComparisons | null>(null);
@@ -188,6 +190,14 @@ export default function DispatchPage() {
   const [serviceAddress, setServiceAddress] = useState('');
   const [serviceType, setServiceType] = useState('Commercial Lock Change');
   const [problemDescription, setProblemDescription] = useState('');
+  const [dispatchPasteText, setDispatchPasteText] = useState('');
+  const [pasteNeedsReview, setPasteNeedsReview] = useState(false);
+  const [pasteReview, setPasteReview] = useState<{
+    warnings: string[];
+    unparsedText: string;
+    confidence: number;
+  } | null>(null);
+  const [pasteError, setPasteError] = useState('');
   const [workerCommissionRate, setWorkerCommissionRate] = useState('0.00');
   const [technicianId, setTechnicianId] = useState('');
   
@@ -321,6 +331,10 @@ export default function DispatchPage() {
 
   const handleQuickIntake = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (pasteNeedsReview) {
+      setPasteError('The pasted message changed after review. Review the updated message or clear it before creating this job.');
+      return;
+    }
     if (phoneDigitCount(customerPhone) < 7) {
       setErrorMsg('Enter a valid customer phone number with at least 7 digits.');
       setSuccessMsg('');
@@ -350,6 +364,7 @@ export default function DispatchPage() {
           vehicleVin: vehicleVin || null,
           keyType: keyType || null,
           fccId: fccId || null,
+          ...(pasteReview ? { intakeMessage: dispatchPasteText } : {}),
         }),
       });
 
@@ -368,6 +383,10 @@ export default function DispatchPage() {
       setCustomerExtension('');
       setServiceAddress('');
       setProblemDescription('');
+      setDispatchPasteText('');
+      setPasteReview(null);
+      setPasteNeedsReview(false);
+      setPasteError('');
       setIsScheduled(false);
       setScheduledFor('');
       setVehicleYear('');
@@ -380,6 +399,36 @@ export default function DispatchPage() {
       setErrorMsg(err.message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleParseDispatchPaste = () => {
+    setPasteError('');
+    if (!dispatchPasteText.trim()) {
+      setPasteError('Paste a customer or dispatch message first.');
+      return;
+    }
+
+    try {
+      const parsed = parseDispatchPaste(dispatchPasteText);
+      setCustomerName(parsed.customerName || '');
+      setCustomerPhone(parsed.customerPhone || '');
+      setCustomerExtension(parsed.customerExtension || '');
+      setServiceAddress(parsed.serviceAddress || '');
+      setServiceType(parsed.serviceType || MANUAL_SERVICE_TYPES[0]);
+      const unparsedText = (parsed.unparsedLines || []).join('\n').trim();
+      setProblemDescription(parsed.problemDescription?.trim() || '');
+      setIsScheduled(Boolean(parsed.isScheduled));
+      setScheduledFor(parsed.scheduledFor || '');
+      setPasteReview({
+        warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+        unparsedText,
+        confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 0,
+      });
+      setPasteNeedsReview(false);
+    } catch (error) {
+      setPasteError(error instanceof Error ? error.message : 'Unable to parse this message.');
+      setPasteReview(null);
     }
   };
 
@@ -648,13 +697,29 @@ export default function DispatchPage() {
   };
 
   const filteredJobs = jobs.filter((j) => {
-    if (filter === 'ALL') return true;
-    if (filter === 'ACTIVE') return ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status) && !j.isScheduled;
-    if (filter === 'SCHEDULED') return !!j.isScheduled;
-    if (filter === 'COMPLETED') return j.status === 'COMPLETED';
-    if (filter === 'ABANDONED') return j.status === 'ABANDONED_TRAVEL_FEE';
-    return j.status === filter;
+    const matchesFilter = filter === 'ALL'
+      || (filter === 'ACTIVE' && ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(j.status) && !j.isScheduled)
+      || (filter === 'SCHEDULED' && !!j.isScheduled)
+      || (filter === 'COMPLETED' && j.status === 'COMPLETED')
+      || (filter === 'ABANDONED' && j.status === 'ABANDONED_TRAVEL_FEE')
+      || j.status === filter;
+    if (!matchesFilter) return false;
+    const query = jobSearch.trim().toLocaleLowerCase().replace(/^#\s*/, '');
+    if (!query) return true;
+    const phoneQuery = query.replace(/\D/g, '');
+    return [j.jobNumber, j.customer.name, j.customer.phone, j.serviceAddress]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(query))
+      || (phoneQuery.length >= 4 && j.customer.phone.replace(/\D/g, '').includes(phoneQuery));
   });
+  const activeJobs = jobs.filter((job) => ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(job.status) && !job.isScheduled);
+  const scheduledJobs = jobs.filter((job) =>
+    job.isScheduled
+    && ['NEW', 'DISPATCHED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS'].includes(job.status)
+    && job.scheduledFor
+    && new Date(job.scheduledFor).getTime() > Date.now()
+  );
+  const unassignedJobs = activeJobs.filter((job) => !job.technician?.id && !job.technicianName);
+  const paymentAttentionJobs = jobs.filter((job) => job.invoice?.paymentStatus === 'PENDING');
   const manualJobs = jobs.filter((j) => j.isManual);
   const canManageManualJobs = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
   const canManageTechnicians = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
@@ -743,6 +808,29 @@ export default function DispatchPage() {
           </div>
         )}
       </div>
+
+      {canManageManualJobs && (
+        <section aria-label="Dispatch status" className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
+          {[
+            { label: 'Active jobs', value: activeJobs.length, detail: 'Open jobs not marked scheduled', tone: 'blue' },
+            { label: 'Scheduled', value: scheduledJobs.length, detail: 'Upcoming appointments', tone: 'violet' },
+            { label: 'Unassigned', value: unassignedJobs.length, detail: 'Active jobs without a tech', tone: 'amber' },
+            { label: 'Payment follow-up', value: paymentAttentionJobs.length, detail: 'Invoices still pending', tone: 'rose' },
+          ].map((card) => (
+            <div key={card.label} className={`rounded-2xl border bg-white px-4 py-3 shadow-sm ${
+              card.tone === 'blue' ? 'border-blue-200' : card.tone === 'violet' ? 'border-violet-200' : card.tone === 'amber' ? 'border-amber-200' : 'border-rose-200'
+            }`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.label}</span>
+                <span className={`text-2xl font-black ${
+                  card.tone === 'blue' ? 'text-blue-700' : card.tone === 'violet' ? 'text-violet-700' : card.tone === 'amber' ? 'text-amber-700' : 'text-rose-700'
+                }`}>{card.value}</span>
+              </div>
+              <p className="mt-0.5 text-[11px] text-slate-500">{card.detail}</p>
+            </div>
+          ))}
+        </section>
+      )}
 
       {canManageManualJobs && (
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1060,6 +1148,67 @@ export default function DispatchPage() {
             </span>
           </h2>
 
+          <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Paste message intake">
+            <label htmlFor="dispatch-paste-message" className="block text-xs font-extrabold text-slate-800">Paste a customer or partner message</label>
+            <p className="mt-1 text-[11px] text-slate-600">We’ll suggest job details for you to review. Nothing is created until you submit the completed form.</p>
+            <textarea
+              id="dispatch-paste-message"
+              value={dispatchPasteText}
+              maxLength={10_000}
+              onChange={(event) => {
+                setDispatchPasteText(event.target.value);
+                if (pasteReview) setPasteNeedsReview(true);
+                setPasteError('');
+              }}
+              rows={3}
+              placeholder="Paste a WhatsApp, SMS, email, or call note…"
+              className="mt-2 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={handleParseDispatchPaste} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">Review details</button>
+                {(dispatchPasteText || pasteNeedsReview) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDispatchPasteText('');
+                      setPasteReview(null);
+                      setPasteNeedsReview(false);
+                      setPasteError('');
+                    }}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                  >Clear paste</button>
+                )}
+              </div>
+              {pasteReview && !pasteNeedsReview && <span className="text-[11px] font-bold text-emerald-700">Reviewed · check every field below</span>}
+            </div>
+            {pasteNeedsReview && (
+              <p role="alert" className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-[11px] font-semibold text-rose-800">
+                The source changed after parsing. Review the updated message before creating the job, or clear the paste to continue with the current form values.
+              </p>
+            )}
+            {dispatchPasteText && <p className="mt-1 text-right text-[10px] text-slate-500">{dispatchPasteText.length.toLocaleString()} / 10,000 characters</p>}
+            {pasteError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{pasteError}</p>}
+            {pasteReview && (
+              <div className={`mt-3 rounded-lg border p-3 ${pasteNeedsReview ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`} aria-live="polite">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-extrabold text-amber-900">{pasteNeedsReview ? 'Previous parse · stale' : 'Review before dispatch'}</div>
+                  <span className="text-[10px] font-semibold text-amber-800">Extracted-field confidence: {Math.round(pasteReview.confidence * 100)}%</span>
+                </div>
+                {pasteReview.warnings.length > 0 ? (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-amber-900">
+                    {pasteReview.warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-[11px] text-amber-900">Check names, contact details, address, service, and timing before submitting.</p>
+                )}
+                {pasteReview.unparsedText && (
+                  <p className="mt-2 text-[11px] text-slate-700">Unmatched text is saved with the dispatcher-only source message. Add any technician instructions to the job description below.</p>
+                )}
+              </div>
+            )}
+          </section>
+
           {successMsg && (
             <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium">
               {successMsg}
@@ -1190,6 +1339,9 @@ export default function DispatchPage() {
                 onChange={(e) => setServiceType(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-900 bg-white"
               >
+                {!MANUAL_SERVICE_TYPES.includes(serviceType as (typeof MANUAL_SERVICE_TYPES)[number]) && (
+                  <option value={serviceType}>{serviceType}</option>
+                )}
                 <option value="Commercial Lock Change">Commercial Lock Change</option>
                 <option value="Storefront Mortise Cylinder">Storefront Mortise Cylinder</option>
                 <option value="Residential Lockout">Residential Lockout</option>
@@ -1327,10 +1479,10 @@ export default function DispatchPage() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || pasteNeedsReview}
               className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {submitting ? 'Dispatching...' : isScheduled ? '📅 Schedule Appointment & Notify Tech' : '🚀 Create & Dispatch Job'}
+              {submitting ? 'Dispatching...' : pasteNeedsReview ? 'Review paste to continue' : isScheduled ? '📅 Schedule Appointment & Notify Tech' : '🚀 Create & Dispatch Job'}
             </button>
           </form>
         </div>
@@ -1363,13 +1515,26 @@ export default function DispatchPage() {
             </div>
           </div>
 
+          <label htmlFor="dispatch-job-search" className="sr-only">Search jobs by number, customer, phone, or address</label>
+          <div className="relative mb-3">
+            <span aria-hidden="true" className="absolute left-3 top-2.5 text-slate-400">⌕</span>
+            <input
+              id="dispatch-job-search"
+              type="search"
+              value={jobSearch}
+              onChange={(event) => setJobSearch(event.target.value)}
+              placeholder="Search job number, customer, phone, or address"
+              className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+          </div>
+
           {loading ? (
             <div className="flex-1 flex items-center justify-center py-12 text-slate-400 text-sm">
               Loading jobs...
             </div>
           ) : filteredJobs.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center py-12 text-slate-400 text-sm">
-              <span>No jobs found for filter: {filter}</span>
+              <span>{jobSearch.trim() ? 'No jobs match your search.' : `No jobs found for filter: ${filter}`}</span>
             </div>
           ) : (
             <div className="space-y-3 overflow-y-auto max-h-[600px] pr-1">

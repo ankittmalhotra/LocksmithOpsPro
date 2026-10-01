@@ -22,6 +22,7 @@ interface Job {
   isManual?: boolean;
   serviceType: string;
   problemDescription: string;
+  intakeMessage?: string | null;
   serviceAddress: string;
   isScheduled: boolean;
   scheduledFor?: string | null;
@@ -469,6 +470,14 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
           </div></div>
         </fieldset>
       </form>
+
+      {job.intakeMessage && (
+        <section className="rounded-2xl border border-blue-200 bg-blue-50/60 p-5 shadow-sm">
+          <h2 className="text-sm font-black text-slate-900">Original intake message</h2>
+          <p className="mt-1 text-xs text-slate-600">Read-only copy of the message supplied during dispatch intake.</p>
+          <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-blue-100 bg-white p-3 text-xs leading-relaxed text-slate-800">{job.intakeMessage}</pre>
+        </section>
+      )}
 
       {canManagePaymentLink && (
         <section className="bg-white rounded-2xl border border-blue-200 shadow-sm p-5 space-y-3">

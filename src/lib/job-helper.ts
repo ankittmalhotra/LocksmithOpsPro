@@ -65,16 +65,17 @@ const legacyJobSelect = {
 
 function isMissingJobCompatibilityColumnError(error: unknown): boolean {
   const candidate = error as { code?: string; message?: string } | null;
-  return candidate?.code === 'P2022' && /(updatedAt|jobReceivedTimeSlot)/i.test(candidate.message || '');
+  return candidate?.code === 'P2022' && /(updatedAt|jobReceivedTimeSlot|intakeMessage)/i.test(candidate.message || '');
 }
 
 function normalizeLegacyJob<T extends { createdAt: Date }>(job: T) {
   return {
     ...job,
     // The fallback is only used while additive production columns are being
-    // applied. Existing records have no received-time value to backfill.
+    // applied. Missing optional values are null for these legacy rows.
     updatedAt: job.createdAt,
     jobReceivedTimeSlot: null,
+    intakeMessage: null,
   };
 }
 
@@ -123,6 +124,12 @@ export async function findTechniciansWithSettlements() {
 }
 
 export type JobWithDetails = Prisma.JobGetPayload<typeof jobWithDetails>;
+
+/** Omit the dispatcher-only source message from job payloads for technicians. */
+export function toTechnicianJobPayload<T extends { intakeMessage?: string | null }>(job: T): Omit<T, 'intakeMessage'> {
+  const { intakeMessage: _intakeMessage, ...technicianJob } = job;
+  return technicianJob;
+}
 
 /**
  * Resolves a job by either its unique UUID string or its string jobNumber.

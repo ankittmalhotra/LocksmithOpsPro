@@ -9,7 +9,7 @@ import {
   normalizeNanpPhone,
 } from '@/lib/sms-draft';
 import { parseTorontoDateTime } from '@/lib/timezone';
-import { findJobsWithDetails } from '@/lib/job-helper';
+import { findJobsWithDetails, toTechnicianJobPayload } from '@/lib/job-helper';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
 
@@ -53,7 +53,10 @@ async function handleGET(request: Request) {
     }
 
     const rawJobs = await findJobsWithDetails({ where, orderBy: { createdAt: 'desc' } });
-    const jobs = rawJobs.map(normalizeManualJobInvoice);
+    const normalizedJobs = rawJobs.map(normalizeManualJobInvoice);
+    const jobs = currentUser.role === 'TECHNICIAN'
+      ? normalizedJobs.map(toTechnicianJobPayload)
+      : normalizedJobs;
 
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {
@@ -98,7 +101,15 @@ async function handlePOST(request: Request) {
       fccId,
       isScheduled = false,
       scheduledFor,
+      intakeMessage,
     } = body;
+
+    if (intakeMessage !== undefined && (typeof intakeMessage !== 'string' || intakeMessage.length > 10_000)) {
+      return NextResponse.json(
+        { success: false, error: 'intakeMessage must be text no longer than 10,000 characters.' },
+        { status: 400 }
+      );
+    }
 
     if (!customerName || !customerPhone || !serviceAddress || !serviceType) {
       return NextResponse.json(
@@ -182,6 +193,7 @@ async function handlePOST(request: Request) {
         status: 'NEW',
         serviceType,
         problemDescription: problemDescription || '',
+        intakeMessage: typeof intakeMessage === 'string' ? intakeMessage : null,
         serviceAddress,
         workerCommissionRate: assignedTechnician?.commissionRate || 0,
         workerCommission: 0,

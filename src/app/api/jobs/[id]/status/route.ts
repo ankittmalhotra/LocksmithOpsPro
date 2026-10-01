@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { findJobByIdOrNumber } from '@/lib/job-helper';
+import { findJobByIdOrNumber, toTechnicianJobPayload } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
 import { canMutateJob, canTransitionJobStatus } from '@/lib/job-workflow';
 import { tryBuildDispatcherNotificationDraft } from '@/lib/sms-draft';
@@ -148,9 +148,13 @@ async function handlePOST(
       dispatcherNotificationWarnings = notification.warnings;
     }
 
+    const responseJob = currentUser.role === 'TECHNICIAN'
+      ? toTechnicianJobPayload(job)
+      : job;
+
     return NextResponse.json({
       success: true,
-      job,
+      job: responseJob,
       dispatcherNotification,
       dispatcherNotificationWarnings,
     });

@@ -124,6 +124,15 @@ export default function RingCentralCallAnalytics({
       const data = await response.json();
       if (response.ok && data.success) {
         setAnalytics(data);
+      } else if (data.connectRequired) {
+        setAnalytics((current) => ({
+          ...(current || {}),
+          ...data,
+          configured: true,
+          connected: false,
+          connectRequired: true,
+          cacheAvailable: current?.cacheAvailable || false,
+        }));
       } else {
         await fetchAnalytics();
       }
@@ -170,6 +179,15 @@ export default function RingCentralCallAnalytics({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canManageConnection && (analytics?.connectRequired || analytics?.connected === false) && (
+            <button
+              type="button"
+              onClick={() => { window.location.href = '/api/ringcentral/connect'; }}
+              className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 transition hover:bg-amber-100"
+            >
+              Reconnect RingCentral
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowDetails(true)}
@@ -210,13 +228,18 @@ export default function RingCentralCallAnalytics({
         <div className="mt-4 flex flex-col items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center">
           <div>
             <p className="font-black">Authorization needed</p>
-            <p className="mt-1 text-xs text-slate-600">{canManageConnection ? 'Authorize the read-only Call Log permission to start the daily count.' : 'An Admin must connect call tracking before Dispatcher analytics can be shown.'}</p>
+            <p className="mt-1 text-xs text-slate-600">{canManageConnection ? 'Reconnect to resume call and voicemail syncing.' : 'An Admin must reconnect call tracking before new calls can sync.'}</p>
             {analytics.error && <p className="mt-1 text-xs text-rose-600">{analytics.error}</p>}
           </div>
-          {canManageConnection && <button onClick={() => { window.location.href = '/api/ringcentral/connect'; }} className="shrink-0 rounded-xl bg-blue-600 px-4 py-2 text-xs font-black text-white transition hover:bg-blue-700">Connect call tracking</button>}
         </div>
       ) : (
         <>
+          {(analytics.connectRequired || !analytics.connected) && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              RingCentral authorization is needed to refresh calls. Cached analytics remain available until you reconnect.
+              {!canManageConnection && ' Ask an Admin to reconnect the account.'}
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
             <span>{analytics.cacheAvailable ? `Showing cached data${analytics.lastSyncedAt ? ` · last synced ${new Date(analytics.lastSyncedAt).toLocaleString()}` : ''}` : 'No successful sync yet.'}</span>
             {analytics.voicemailPermissionDenied ? (

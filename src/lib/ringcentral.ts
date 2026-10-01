@@ -172,18 +172,23 @@ async function getStoredToken() {
   return value ? unseal(value) : null;
 }
 
-function tokenFromResponse(data: any): RingCentralTokenData {
+function tokenFromResponse(data: any, previous?: RingCentralTokenData): RingCentralTokenData {
   const now = Math.floor(Date.now() / 1000);
   return {
     accessToken: data.access_token,
-    refreshToken: data.refresh_token,
+    // RingCentral normally rotates the single-use refresh token. Preserve the
+    // existing one if a compatible response omits it instead of losing future
+    // automatic renewals.
+    refreshToken: data.refresh_token || previous?.refreshToken,
     accessTokenExpiresAt: now + Number(data.expires_in || 3600),
-    refreshTokenExpiresAt: data.refresh_token_expires_in ? now + Number(data.refresh_token_expires_in) : undefined,
-    ownerId: data.owner_id,
+    refreshTokenExpiresAt: data.refresh_token_expires_in
+      ? now + Number(data.refresh_token_expires_in)
+      : previous?.refreshTokenExpiresAt,
+    ownerId: data.owner_id || previous?.ownerId,
   };
 }
 
-async function requestToken(config: RingCentralConfig, body: URLSearchParams) {
+async function requestToken(config: RingCentralConfig, body: URLSearchParams, previous?: RingCentralTokenData) {
   const response = await fetch(`${config.serverUrl}/restapi/oauth/token`, {
     method: 'POST',
     headers: {
@@ -199,7 +204,7 @@ async function requestToken(config: RingCentralConfig, body: URLSearchParams) {
     throw new RingCentralAuthRequiredError('RingCentral authorization expired or was rejected.');
   }
 
-  return tokenFromResponse(await response.json());
+  return tokenFromResponse(await response.json(), previous);
 }
 
 export async function exchangeRingCentralCode(code: string) {
@@ -225,7 +230,7 @@ async function getValidToken() {
     const refreshed = await requestToken(config, new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: stored.refreshToken,
-    }));
+    }), stored);
     return { token: refreshed, refreshed: true };
   }
 

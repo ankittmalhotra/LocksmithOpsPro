@@ -1096,34 +1096,9 @@ export default function DispatchPage() {
             </div>
             <button type="button" onClick={() => setShowAddJob(false)} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800" aria-label="Close Add Job">×</button>
           </div>
-          <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
-            {([
-              { value: 'NEW', title: 'New call', detail: 'Add to the queue' },
-              { value: 'ASSIGNED', title: 'Assigned', detail: 'Choose a technician' },
-              { value: 'COMPLETED', title: 'Completed', detail: 'Record closeout' },
-            ] as const).map((option) => (
-              <button key={option.value} type="button" onClick={() => {
-                if (option.value === 'COMPLETED') {
-                  resetManualJob();
-                  setEditingManualId(null);
-                }
-                setJobEntryMode(option.value);
-              }} className={`rounded-xl border p-2.5 text-left transition ${jobEntryMode === option.value ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
-                <span className="block text-xs font-extrabold text-slate-900">{option.title}</span>
-                <span className="block text-[10px] text-slate-500 mt-0.5">{option.detail}</span>
-              </button>
-            ))}
-          </div>
-          <h2 className="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center justify-between">
-            <span>{jobEntryMode === 'ASSIGNED' ? 'Assigned job details' : 'New job details'}</span>
-            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
-              &lt; 30 sec entry
-            </span>
-          </h2>
-
-          <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Paste message intake">
-            <label htmlFor="dispatch-paste-message" className="block text-xs font-extrabold text-slate-800">Paste a customer or partner message</label>
-            <p className="mt-1 text-[11px] text-slate-600">We’ll suggest job details for you to review. Nothing is created until you submit the completed form.</p>
+          <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Prefill job details">
+            <label htmlFor="dispatch-paste-message" className="block text-xs font-extrabold text-slate-800">Paste to prefill job details</label>
+            <p className="mt-1 text-[11px] text-slate-600">Paste a customer, WhatsApp, or partner message to prefill the form. Review every suggested field before creating the job.</p>
             <textarea
               id="dispatch-paste-message"
               value={dispatchPasteText}
@@ -1139,7 +1114,7 @@ export default function DispatchPage() {
             />
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <button type="button" onClick={handleParseDispatchPaste} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">Review details</button>
+                <button type="button" onClick={handleParseDispatchPaste} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">Extract details</button>
                 {(dispatchPasteText || pasteNeedsReview) && (
                   <button
                     type="button"
@@ -1181,6 +1156,31 @@ export default function DispatchPage() {
               </div>
             )}
           </section>
+          <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
+            {([
+              { value: 'NEW', title: 'New call', detail: 'Add to the queue' },
+              { value: 'ASSIGNED', title: 'Assigned', detail: 'Choose a technician' },
+              { value: 'COMPLETED', title: 'Completed', detail: 'Record closeout' },
+            ] as const).map((option) => (
+              <button key={option.value} type="button" onClick={() => {
+                if (option.value === 'COMPLETED') {
+                  resetManualJob();
+                  setEditingManualId(null);
+                }
+                setJobEntryMode(option.value);
+              }} className={`rounded-xl border p-2.5 text-left transition ${jobEntryMode === option.value ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                <span className="block text-xs font-extrabold text-slate-900">{option.title}</span>
+                <span className="block text-[10px] text-slate-500 mt-0.5">{option.detail}</span>
+              </button>
+            ))}
+          </div>
+          <h2 className="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center justify-between">
+            <span>{jobEntryMode === 'ASSIGNED' ? 'Assigned job details' : 'New job details'}</span>
+            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+              &lt; 30 sec entry
+            </span>
+          </h2>
+
 
           {successMsg && (
             <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium">

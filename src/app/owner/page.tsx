@@ -449,7 +449,21 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {currentUser?.role === 'ADMIN' && <>
+            <Link
+              href="/dispatch?addJob=1"
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow"
+            >
+              + Add Job
+            </Link>
+            <Link
+              href="/dispatch"
+              className="px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-xs"
+            >
+              Manage Jobs
+            </Link>
+          </>}
           <button
             onClick={() => setShowAddMember(true)}
             className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition shadow flex items-center gap-1.5"

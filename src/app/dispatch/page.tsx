@@ -127,6 +127,8 @@ interface Job {
 }
 
 type ManualPaymentStatus = 'PAID' | 'PENDING';
+type JobEntryMode = 'NEW' | 'ASSIGNED' | 'COMPLETED';
+type JobsView = 'BOARD' | 'TABLE';
 
 interface PaymentLinkPrompt {
   jobId: string;
@@ -174,6 +176,7 @@ export default function DispatchPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
+  const [jobsView, setJobsView] = useState<JobsView>('TABLE');
   const [jobSearch, setJobSearch] = useState('');
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>('all-time');
   const [comparisonMode, setComparisonMode] = useState<PeriodComparisonMode>('week');
@@ -231,7 +234,8 @@ export default function DispatchPage() {
   const [deletingTechnicianId, setDeletingTechnicianId] = useState<string | null>(null);
 
   const [technicians, setTechnicians] = useState<any[]>([]);
-  const [showManualJob, setShowManualJob] = useState(false);
+  const [showAddJob, setShowAddJob] = useState(false);
+  const [jobEntryMode, setJobEntryMode] = useState<JobEntryMode>('NEW');
   const [editingManualId, setEditingManualId] = useState<string | null>(null);
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [paymentLinkPrompt, setPaymentLinkPrompt] = useState<PaymentLinkPrompt | null>(null);
@@ -280,6 +284,13 @@ export default function DispatchPage() {
 
   useEffect(() => {
     fetchAuthAndJobs();
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('addJob') === '1') {
+      setShowAddJob(true);
+      setJobEntryMode('NEW');
+    }
   }, []);
 
   useEffect(() => {
@@ -355,7 +366,7 @@ export default function DispatchPage() {
           serviceAddress,
           serviceType,
           problemDescription,
-          technicianId,
+          technicianId: jobEntryMode === 'ASSIGNED' ? technicianId : null,
           isScheduled,
           scheduledFor: isScheduled && scheduledFor ? torontoDateTimeToIso(scheduledFor) : null,
           vehicleYear: vehicleYear || null,
@@ -373,7 +384,9 @@ export default function DispatchPage() {
         throw new Error(data.error || 'Failed to dispatch job');
       }
 
-      setSuccessMsg(`✅ Job #${data.job.jobNumber} created. Technician SMS draft is ready for review.`);
+      setSuccessMsg(jobEntryMode === 'ASSIGNED'
+        ? `✅ Job #${data.job.jobNumber} created and assigned. Technician SMS draft is ready for review.`
+        : `✅ Job #${data.job.jobNumber} added to the unassigned queue.`);
       setSmsDraft(data.smsDraft || null);
       setSmsWarnings(Array.isArray(data.smsDraftWarnings) ? data.smsDraftWarnings : []);
       setSmsAutoOpen(false);
@@ -387,6 +400,7 @@ export default function DispatchPage() {
       setPasteReview(null);
       setPasteNeedsReview(false);
       setPasteError('');
+      setShowAddJob(false);
       setIsScheduled(false);
       setScheduledFor('');
       setVehicleYear('');
@@ -539,12 +553,12 @@ export default function DispatchPage() {
     });
   };
 
-  const openNewManualJob = () => {
+  const openAddJob = () => {
     setEditingManualId(null);
     setErrorMsg('');
     setSuccessMsg('');
-    resetManualJob();
-    setShowManualJob(true);
+    setJobEntryMode('NEW');
+    setShowAddJob(true);
   };
 
   const openEditManualJob = (job: Job) => {
@@ -576,7 +590,8 @@ export default function DispatchPage() {
       otherTechnicianName: job.technicianName || '',
       technicianCommission: Number(job.workerCommission || 0).toFixed(2),
     });
-    setShowManualJob(true);
+    setJobEntryMode('COMPLETED');
+    setShowAddJob(true);
   };
 
   const handleManualJob = async (e: React.FormEvent) => {
@@ -605,7 +620,7 @@ export default function DispatchPage() {
         throw new Error(exactError);
       }
       setSuccessMsg(`✅ ${data.message}`);
-      setShowManualJob(false);
+      setShowAddJob(false);
       setEditingManualId(null);
       resetManualJob();
       fetchAuthAndJobs();
@@ -685,7 +700,7 @@ export default function DispatchPage() {
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to delete manual job');
       setSuccessMsg(`✅ ${data.message}`);
       if (editingManualId === job.id) {
-        setShowManualJob(false);
+        setShowAddJob(false);
         setEditingManualId(null);
       }
       fetchAuthAndJobs();
@@ -720,7 +735,6 @@ export default function DispatchPage() {
   );
   const unassignedJobs = activeJobs.filter((job) => !job.technician?.id && !job.technicianName);
   const paymentAttentionJobs = jobs.filter((job) => job.invoice?.paymentStatus === 'PENDING');
-  const manualJobs = jobs.filter((j) => j.isManual);
   const canManageManualJobs = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
   const canManageTechnicians = currentUser?.role === 'ADMIN' || currentUser?.role === 'DISPATCHER';
   const financialSummary = useMemo(() => {
@@ -780,7 +794,7 @@ export default function DispatchPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-            <span>📞</span> Dispatch Desk & Call Intake
+            <span>📞</span> Dispatch Desk
             <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             </span>
@@ -800,10 +814,10 @@ export default function DispatchPage() {
             </button>
             <button
               type="button"
-              onClick={openNewManualJob}
+              onClick={openAddJob}
               className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-extrabold shadow-md transition"
             >
-              + Add Manual Job
+              + Add Job
             </button>
           </div>
         )}
@@ -963,73 +977,6 @@ export default function DispatchPage() {
         </div>
       )}
 
-      {canManageManualJobs && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-6 overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-black text-slate-900">Manual Job Entries</h2>
-              <p className="text-xs text-slate-500 mt-0.5">All manually recorded completed jobs. Admins and Dispatchers can edit or delete these entries.</p>
-            </div>
-            <span className="text-xs font-black text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2.5 py-1">{manualJobs.length} entries</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
-                  <th className="py-2.5 px-4">Job #</th>
-                  <th className="py-2.5 px-4">Date</th>
-                  <th className="py-2.5 px-4">Customer</th>
-                  <th className="py-2.5 px-4">Type</th>
-                  <th className="py-2.5 px-4">Received Time</th>
-                  <th className="py-2.5 px-4">Technician</th>
-                  <th className="py-2.5 px-4">Payment</th>
-                  <th className="py-2.5 px-4">Total Collected</th>
-                  <th className="py-2.5 px-4">COGS (Parts, etc.)</th>
-                  <th className="py-2.5 px-4">HST Amount</th>
-                  <th className="py-2.5 px-4">Tax Status</th>
-                  <th className="py-2.5 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {manualJobs.length === 0 && (
-                  <tr>
-                    <td colSpan={12} className="py-8 px-4 text-center text-slate-500">No manual job entries yet.</td>
-                  </tr>
-                )}
-                {manualJobs.map((job) => (
-                  <tr key={job.id} className="hover:bg-slate-50/80">
-                    <td className="py-3 px-4 font-black text-slate-900">#{job.jobNumber}</td>
-                    <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
-                      {formatTorontoDateInput(job.completedAt || job.invoice?.paidAt || job.createdAt) || '—'}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-800">{job.customer.name}</div>
-                      <div className="text-[10px] text-slate-500">{job.customer.phone}</div>
-                    </td>
-                    <td className="py-3 px-4 text-slate-600 max-w-[180px]">{job.serviceType}</td>
-                    <td className="py-3 px-4 text-slate-600 whitespace-nowrap">{job.jobReceivedTimeSlot || '—'}</td>
-                    <td className="py-3 px-4 text-slate-700">{job.technician?.name || job.technicianName || 'Unassigned'}</td>
-                    <td className="py-3 px-4 font-bold text-slate-700">{(job.invoice?.paymentMethod || '—').replace('_', ' ')}</td>
-                    <td className="py-3 px-4 font-black text-slate-900">${Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2)}</td>
-                    <td className="py-3 px-4 text-slate-700">${Number(job.invoice?.cogsAmount || 0).toFixed(2)}</td>
-                    <td className="py-3 px-4 font-black text-amber-700">${Number(job.invoice?.taxAmount || 0).toFixed(2)}</td>
-                    <td className="py-3 px-4">
-                      <span className={job.invoice?.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>
-                        {job.invoice?.taxCollected === false ? 'Off Books' : 'On Books'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <button type="button" onClick={() => openEditManualJob(job)} className="px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold mr-1.5">Edit</button>
-                      <button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold disabled:opacity-50">{deletingManualId === job.id ? 'Deleting…' : 'Delete'}</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {showAddTechnician && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
@@ -1138,11 +1085,37 @@ export default function DispatchPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Fast Call Intake Form */}
-        <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+      <div className="grid grid-cols-1 gap-6">
+        {showAddJob && jobEntryMode !== 'COMPLETED' && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6" role="presentation">
+        <div role="dialog" aria-modal="true" aria-labelledby="add-job-title" className="w-full max-w-3xl max-h-[94vh] overflow-y-auto bg-white rounded-2xl border border-slate-200 p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 id="add-job-title" className="text-lg font-black text-slate-900">Add Job</h2>
+              <p className="text-xs text-slate-500 mt-1">Choose where this job is in the workflow, then enter its details.</p>
+            </div>
+            <button type="button" onClick={() => setShowAddJob(false)} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800" aria-label="Close Add Job">×</button>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
+            {([
+              { value: 'NEW', title: 'New call', detail: 'Add to the queue' },
+              { value: 'ASSIGNED', title: 'Assigned', detail: 'Choose a technician' },
+              { value: 'COMPLETED', title: 'Completed', detail: 'Record closeout' },
+            ] as const).map((option) => (
+              <button key={option.value} type="button" onClick={() => {
+                if (option.value === 'COMPLETED') {
+                  resetManualJob();
+                  setEditingManualId(null);
+                }
+                setJobEntryMode(option.value);
+              }} className={`rounded-xl border p-2.5 text-left transition ${jobEntryMode === option.value ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                <span className="block text-xs font-extrabold text-slate-900">{option.title}</span>
+                <span className="block text-[10px] text-slate-500 mt-0.5">{option.detail}</span>
+              </button>
+            ))}
+          </div>
           <h2 className="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center justify-between">
-            <span>Incoming Call Intake</span>
+            <span>{jobEntryMode === 'ASSIGNED' ? 'Assigned job details' : 'New job details'}</span>
             <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
               &lt; 30 sec entry
             </span>
@@ -1433,7 +1406,7 @@ export default function DispatchPage() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+            {jobEntryMode === 'ASSIGNED' && <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">
                   Technician Commission Rate (%)
@@ -1475,29 +1448,39 @@ export default function DispatchPage() {
                   {technicians.length === 0 && <option value="">No active technicians available</option>}
                 </select>
               </div>
-            </div>
+            </div>}
 
             <button
               type="submit"
               disabled={submitting || pasteNeedsReview}
               className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {submitting ? 'Dispatching...' : pasteNeedsReview ? 'Review paste to continue' : isScheduled ? '📅 Schedule Appointment & Notify Tech' : '🚀 Create & Dispatch Job'}
+              {submitting ? 'Saving...' : pasteNeedsReview ? 'Review paste to continue' : isScheduled ? '📅 Schedule & Assign Job' : jobEntryMode === 'ASSIGNED' ? 'Assign Job' : 'Add to New Jobs'}
             </button>
           </form>
         </div>
+        </div>
+        )}
 
         {/* Right Column: Active Dispatch Board / Jobs Queue */}
-        <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col">
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-2 border-b border-slate-100">
             <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <span>Jobs Board</span>
+              <span>Jobs</span>
               <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
                 {jobs.length} Total
               </span>
             </h2>
 
-            {/* Filter Pills */}
+            <div className="flex items-center rounded-lg bg-slate-100 p-1 text-xs" role="group" aria-label="Jobs view">
+              {(['TABLE', 'BOARD'] as const).map((view) => (
+                <button key={view} type="button" onClick={() => setJobsView(view)} aria-pressed={jobsView === view} className={`rounded-md px-2.5 py-1.5 font-bold transition ${jobsView === view ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                  {view === 'TABLE' ? 'Table' : 'Board'}
+                </button>
+              ))}
+            </div>
+
+            {/* Status filters */}
             <div className="flex items-center gap-1 text-xs">
               {(['ALL', 'ACTIVE', 'SCHEDULED', 'COMPLETED', 'ABANDONED'] as const).map((f) => (
                 <button
@@ -1537,6 +1520,33 @@ export default function DispatchPage() {
               <span>{jobSearch.trim() ? 'No jobs match your search.' : `No jobs found for filter: ${filter}`}</span>
             </div>
           ) : (
+            jobsView === 'TABLE' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1220px] text-left text-xs">
+                  <thead><tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
+                    <th className="py-2.5 px-3">Job</th><th className="py-2.5 px-3">Date / Received</th><th className="py-2.5 px-3">Customer / Address</th><th className="py-2.5 px-3">Service</th><th className="py-2.5 px-3">Status</th><th className="py-2.5 px-3">Technician</th><th className="py-2.5 px-3">Payment</th><th className="py-2.5 px-3">Total</th><th className="py-2.5 px-3">COGS</th><th className="py-2.5 px-3">HST</th><th className="py-2.5 px-3">Tax status</th><th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredJobs.map((job) => (
+                      <tr key={job.id} className="align-top hover:bg-slate-50/80">
+                        <td className="py-3 px-3 font-black text-slate-900">#{job.jobNumber}{job.isManual && <span className="ml-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-[9px] text-violet-800">Manual</span>}</td>
+                        <td className="py-3 px-3 whitespace-nowrap text-slate-600">{formatTorontoDateInput(job.completedAt || job.scheduledFor || job.createdAt) || '—'}{job.jobReceivedTimeSlot && <div className="mt-1 text-[10px]">{job.jobReceivedTimeSlot}</div>}</td>
+                        <td className="py-3 px-3"><div className="font-bold text-slate-800">{job.customer.name}</div><div className="text-[10px] text-slate-500">{job.customer.phone}</div><div className="mt-1 max-w-[240px] truncate text-[10px] text-slate-500" title={job.serviceAddress}>{job.serviceAddress}</div></td>
+                        <td className="py-3 px-3 text-slate-700">{job.serviceType}</td>
+                        <td className="py-3 px-3"><span className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-700">{job.status.replaceAll('_', ' ')}</span>{job.isScheduled && <div className="mt-1 text-[10px] text-violet-700">Scheduled</div>}</td>
+                        <td className="py-3 px-3 text-slate-700">{job.technician?.name || job.technicianName || 'Unassigned'}</td>
+                        <td className="py-3 px-3 whitespace-nowrap text-slate-700">{job.invoice ? <><div className="font-bold">{(job.invoice.paymentMethod || '—').replaceAll('_', ' ')}</div><div className="text-[10px]">{job.invoice.paymentStatus}</div></> : '—'}</td>
+                        <td className="py-3 px-3 whitespace-nowrap font-bold text-slate-800">{job.invoice ? `$${Number(job.invoice.totalAmountCollected || job.invoice.grandTotal || 0).toFixed(2)}` : '—'}</td>
+                        <td className="py-3 px-3 whitespace-nowrap text-slate-700">{job.invoice ? `$${Number(job.invoice.cogsAmount || 0).toFixed(2)}` : '—'}</td>
+                        <td className="py-3 px-3 whitespace-nowrap text-amber-700">{job.invoice ? `$${Number(job.invoice.taxAmount || 0).toFixed(2)}` : '—'}</td>
+                        <td className="py-3 px-3 whitespace-nowrap">{job.invoice ? <span className={job.invoice.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>{job.invoice.taxCollected === false ? 'Off books' : 'On books'}</span> : '—'}</td>
+                        <td className="py-3 px-3 text-right whitespace-nowrap"><Link href={`/dispatch/jobs/${job.id}`} className="rounded-lg bg-blue-50 px-2.5 py-1.5 font-bold text-blue-700 hover:bg-blue-100">View</Link>{job.isManual && <><button type="button" onClick={() => openEditManualJob(job)} className="ml-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 font-bold text-slate-700 hover:bg-slate-200">Edit</button><button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="ml-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">Delete</button></>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
             <div className="space-y-3 overflow-y-auto max-h-[600px] pr-1">
               {filteredJobs.map((job) => {
                 const isPaid = job.invoice?.paymentStatus === 'PAID';
@@ -1654,20 +1664,30 @@ export default function DispatchPage() {
                 );
               })}
             </div>
+            )
           )}
         </div>
       </div>
 
-      {showManualJob && (
+      {showAddJob && jobEntryMode === 'COMPLETED' && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
           <div role="dialog" aria-modal="true" aria-labelledby="manual-job-title" className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-6 shadow-2xl border border-slate-200">
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
-                <h2 id="manual-job-title" className="text-xl font-black text-slate-900">{editingManualId ? 'Edit Manual Job' : 'Add Manual Job'}</h2>
-                <p className="text-xs text-slate-500 mt-1">{editingManualId ? 'Update this completed manual entry.' : 'Record a completed job without dispatch notifications.'}</p>
+                <h2 id="manual-job-title" className="text-xl font-black text-slate-900">{editingManualId ? 'Edit Completed Job' : 'Add Job · Completed'}</h2>
+                <p className="text-xs text-slate-500 mt-1">{editingManualId ? 'Update this completed job entry.' : 'Record job details, payment, parts cost, and technician closeout.'}</p>
               </div>
-              <button type="button" onClick={() => setShowManualJob(false)} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
+              <button type="button" onClick={() => setShowAddJob(false)} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
             </div>
+            {!editingManualId && <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
+              {([
+                { value: 'NEW', title: 'New call', detail: 'Add to the queue' },
+                { value: 'ASSIGNED', title: 'Assigned', detail: 'Choose a technician' },
+                { value: 'COMPLETED', title: 'Completed', detail: 'Record closeout' },
+              ] as const).map((option) => <button key={option.value} type="button" onClick={() => setJobEntryMode(option.value)} className={`rounded-xl border p-2.5 text-left transition ${jobEntryMode === option.value ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                <span className="block text-xs font-extrabold text-slate-900">{option.title}</span><span className="block text-[10px] text-slate-500 mt-0.5">{option.detail}</span>
+              </button>)}
+            </div>}
             {errorMsg && (
               <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium break-words">
                 {errorMsg}
@@ -1800,8 +1820,8 @@ export default function DispatchPage() {
                 <input aria-label="Technician commission" required type="number" min="0" step="0.01" value={manualForm.technicianCommission} onChange={(e) => updateManualField('technicianCommission', e.target.value)} className="field-input" />
               </div>
               <div className="sm:col-span-2 flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button type="button" onClick={() => setShowManualJob(false)} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold">Cancel</button>
-                <button type="submit" disabled={manualSubmitting} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{manualSubmitting ? 'Saving...' : editingManualId ? 'Save Changes' : 'Save Manual Job'}</button>
+                <button type="button" onClick={() => setShowAddJob(false)} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold">Cancel</button>
+                <button type="submit" disabled={manualSubmitting} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{manualSubmitting ? 'Saving...' : editingManualId ? 'Save Changes' : 'Save Completed Job'}</button>
               </div>
             </form>
           </div>

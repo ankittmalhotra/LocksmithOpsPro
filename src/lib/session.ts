@@ -6,6 +6,8 @@ export interface AuthSession {
   name: string;
   phone: string;
   role: AppRole;
+  /** Present only while an admin is using the narrower dispatcher role. */
+  originalRole?: 'ADMIN';
 }
 
 const DEVELOPMENT_SESSION_SECRET = 'locksmith-ops-development-only';
@@ -212,6 +214,7 @@ function normalizeSession(value: unknown): AuthSession | null {
   const role = typeof parsed.role === 'string' && (APP_ROLES as readonly string[]).includes(parsed.role)
     ? parsed.role as AppRole
     : null;
+  const isAdminDispatcherMode = parsed.role === 'DISPATCHER' && parsed.originalRole === 'ADMIN';
   if (
     typeof parsed.id !== 'string' ||
     typeof parsed.name !== 'string' ||
@@ -226,6 +229,7 @@ function normalizeSession(value: unknown): AuthSession | null {
     name: parsed.name,
     phone: parsed.phone,
     role,
+    ...(isAdminDispatcherMode ? { originalRole: 'ADMIN' as const } : {}),
   };
 }
 

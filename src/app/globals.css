@@ -24,6 +24,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+@media (min-width: 768px) {
+  body.portal-shell #portal-main,
+  body.portal-shell footer { margin-left: 16rem; }
+  body.portal-shell.portal-shell-collapsed #portal-main,
+  body.portal-shell.portal-shell-collapsed footer { margin-left: 4.75rem; }
+}
+
+@media (max-width: 767px) {
+  body.portal-shell #portal-main { padding-top: 3.5rem; }
+}
+
 /* Touch-friendly buttons and inputs for field workers */
 input, select, textarea, button {
   touch-action: manipulation;

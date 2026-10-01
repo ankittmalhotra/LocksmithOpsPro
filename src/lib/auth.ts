@@ -21,7 +21,8 @@ export async function getCurrentUser(): Promise<AuthSession | null> {
       where: { id: session.id },
       select: { name: true, phone: true, role: true, active: true },
     });
-    if (!user || !user.active || user.role !== session.role) return null;
+    const persistedRole = session.originalRole || session.role;
+    if (!user || !user.active || user.role !== persistedRole) return null;
     return { ...session, name: user.name, phone: user.phone };
   } catch (error) {
     console.error('Session account validation failed:', error);

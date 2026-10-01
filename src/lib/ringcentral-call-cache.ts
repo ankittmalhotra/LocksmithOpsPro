@@ -6,7 +6,6 @@ import {
   listRingCentralInboundCalls,
   listRingCentralOutboundCalls,
   listRingCentralVoicemails,
-  persistRingCentralToken,
   ringCentralTorontoRange,
   ringCentralTorontoWeekToDateRange,
   RingCentralCallRecord,
@@ -152,25 +151,22 @@ async function claimRefresh() {
   const now = new Date();
   const leaseUntil = new Date(now.getTime() + LEASE_MINUTES * 60 * 1000);
   try {
-    return await prisma.$transaction(async (tx) => {
-      const existing = await tx.ringCentralCallSyncState.findUnique({ where: { sourceKey: SYNC_SOURCE_KEY } });
-      if (existing?.leaseUntil && existing.leaseUntil > now) return null;
-      return tx.ringCentralCallSyncState.upsert({
-        where: { sourceKey: SYNC_SOURCE_KEY },
-        create: {
-          sourceKey: SYNC_SOURCE_KEY,
-          status: 'RUNNING',
-          lastAttemptAt: now,
-          leaseUntil,
-        },
-        update: {
-          status: 'RUNNING',
-          lastAttemptAt: now,
-          leaseUntil,
-          lastError: null,
-        },
-      });
+    await prisma.ringCentralCallSyncState.upsert({
+      where: { sourceKey: SYNC_SOURCE_KEY },
+      create: { sourceKey: SYNC_SOURCE_KEY, status: 'IDLE' },
+      update: {},
     });
+    // A transaction containing a read followed by an unconditional update
+    // allows two Vercel workers to acquire the same lease. Claim atomically
+    // so only one worker can rotate the shared refresh token at a time.
+    const claimed = await prisma.ringCentralCallSyncState.updateMany({
+      where: {
+        sourceKey: SYNC_SOURCE_KEY,
+        OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+      },
+      data: { status: 'RUNNING', lastAttemptAt: now, leaseUntil, lastError: null },
+    });
+    return claimed.count === 1 ? readRingCentralSyncState() : null;
   } catch (error: any) {
     if (error?.code === 'P2002') return null;
     throw error;
@@ -266,12 +262,10 @@ export async function refreshRingCentralCallCache() {
           new Date(range.dateFrom).getTime(),
           Date.now() - VOICEMAIL_TRANSCRIPTION_RECHECK_DAYS * 86400000,
         )).toISOString();
-    // Keep the three API reads sequential so an expired OAuth access token is
-    // refreshed and persisted before the next request starts.
+    // Token renewal persists immediately inside the API client, including
+    // when a subsequent call-log or voicemail request fails.
     const inboundResult = await listRingCentralInboundCalls(range.dateFrom, range.dateTo);
-    if (inboundResult.refreshed) await persistRingCentralToken(inboundResult.token);
     const outboundResult = await listRingCentralOutboundCalls(range.dateFrom, range.dateTo);
-    if (outboundResult.refreshed) await persistRingCentralToken(outboundResult.token);
     // Re-read a short voicemail window so a transcript that finishes after
     // the message arrives is captured on the next refresh.
     const voicemailResult = await listRingCentralVoicemails(
@@ -279,7 +273,6 @@ export async function refreshRingCentralCallCache() {
       range.dateTo,
       targets.map((target) => target.phoneNumber),
     );
-    if (voicemailResult.refreshed) await persistRingCentralToken(voicemailResult.token);
     const records = [...inboundResult.records, ...outboundResult.records, ...voicemailResult.records];
     const writes = records.map((record) => callLogData(record, targets)).filter(Boolean);
     let upserted = 0;
@@ -317,7 +310,7 @@ export async function refreshRingCentralCallCache() {
       },
     });
 
-    const refreshedToken = [inboundResult, outboundResult, voicemailResult].find((result) => result.refreshed)?.token;
+    const refreshedToken = [voicemailResult, outboundResult, inboundResult].find((result) => result.refreshed)?.token;
     return {
       busy: false as const,
       refreshedToken,

@@ -102,6 +102,7 @@ export default function RingCentralCallAnalytics({
   const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
   const [loading, setLoading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {
     try {
@@ -121,6 +122,7 @@ export default function RingCentralCallAnalytics({
   const refreshAnalytics = async () => {
     try {
       setLoading(true);
+      setRefreshError(null);
       const response = await fetch(`/api/ringcentral/call-analytics/refresh?range=${selectedRange}`, { method: 'POST', cache: 'no-store' });
       const data = await response.json();
       if (response.ok && data.success) {
@@ -136,20 +138,20 @@ export default function RingCentralCallAnalytics({
         }));
       } else {
         await fetchAnalytics();
+        setRefreshError(data.error || 'Unable to refresh calls. Please try again shortly.');
       }
     } catch {
       await fetchAnalytics();
+      setRefreshError('Unable to refresh calls. Please try again shortly.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (refreshOnLoad) {
-      void refreshAnalytics();
-    } else {
-      void fetchAnalytics();
-    }
+    void fetchAnalytics().then((data) => {
+      if (refreshOnLoad && data?.success) void refreshAnalytics();
+    });
   }, [refreshOnLoad]);
 
   useEffect(() => {
@@ -218,6 +220,8 @@ export default function RingCentralCallAnalytics({
         </div>
       </div>
 
+      {refreshError && <div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{refreshError}</div>}
+
       {!analytics ? (
         <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">Loading call analytics…</div>
       ) : !analytics.configured && !analytics.cacheAvailable ? (
@@ -229,7 +233,7 @@ export default function RingCentralCallAnalytics({
         <div className="mt-4 flex flex-col items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center">
           <div>
             <p className="font-black">Authorization needed</p>
-            <p className="mt-1 text-xs text-slate-600">{analytics.authMethod === 'jwt' ? 'JWT authentication failed. An Admin should verify the RingCentral JWT and app credentials in Vercel.' : canManageConnection ? 'Reconnect to resume call and voicemail syncing.' : 'An Admin must reconnect call tracking before new calls can sync.'}</p>
+            <p className="mt-1 text-xs text-slate-600">{analytics.authMethod === 'jwt' ? 'Automatic renewal could not restore access. An Admin should review the connection details below.' : canManageConnection ? 'Reconnect to resume call and voicemail syncing.' : 'An Admin must reconnect call tracking before new calls can sync.'}</p>
             {analytics.error && <p className="mt-1 text-xs text-rose-600">{analytics.error}</p>}
           </div>
         </div>
@@ -237,8 +241,8 @@ export default function RingCentralCallAnalytics({
         <>
           {(analytics.connectRequired || !analytics.connected) && (
             <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              {analytics.authMethod === 'jwt' ? 'RingCentral JWT authentication failed. Cached analytics remain available; an Admin should verify RC_USER_JWT and the app credentials in Vercel.' : 'RingCentral authorization is needed to refresh calls. Cached analytics remain available until you reconnect.'}
-              {!canManageConnection && ' Ask an Admin to reconnect the account.'}
+              {analytics.error || 'Call tracking authorization is needed to refresh calls.'} Cached analytics remain available.
+              {!canManageConnection && ' Ask an Admin to review the connection.'}
             </div>
           )}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">

@@ -22,6 +22,7 @@ export type RingCentralTokenData = {
   accessTokenExpiresAt: number;
   refreshTokenExpiresAt?: number;
   ownerId?: string;
+  credentialKey?: string;
 };
 
 export type RingCentralCallRecord = {
@@ -69,6 +70,50 @@ export class RingCentralAuthRequiredError extends Error {
   }
 }
 
+export class RingCentralApiError extends Error {
+  status: number;
+  constructor(message: string, status = 502) {
+    super(message);
+    this.name = 'RingCentralApiError';
+    this.status = status;
+  }
+}
+
+// Normalize pasted environment values without ever logging credentials.
+function credentialValue(value?: string) {
+  return (value || '').trim().replace(/^(["'])([\s\S]*)\1$/, '$2').trim();
+}
+
+function credentialKey(config: RingCentralConfig) {
+  return createHash('sha256').update(JSON.stringify([config.serverUrl, config.clientId, config.clientSecret, config.jwt || ''])).digest('hex');
+}
+
+async function authorizationError(response: Response, config: RingCentralConfig, jwtGrant = false) {
+  const data = await response.json().catch(() => ({})) as { error?: string; errorCode?: string; errors?: Array<{ errorCode?: string }> };
+  // Provider descriptions may echo request values. Only expose bounded codes.
+  const rawCode = data.errorCode || data.errors?.[0]?.errorCode || data.error;
+  const code = typeof rawCode === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(rawCode) ? rawCode : null;
+  let message = 'RingCentral authorization was rejected. Reconnect the account.';
+  if (code === 'invalid_client' || ['OAU-120', 'OAU-121', 'OAU-146'].includes(code || '')) {
+    message = 'RingCentral rejected the app credentials. Update RC_APP_CLIENT_ID and RC_APP_CLIENT_SECRET in Vercel using the same production app, then redeploy.';
+  } else if (code === 'OAU-473') {
+    message = 'The JWT is not authorized for this RingCentral app. Add this app under the credential\'s Authorized Apps in the RingCentral Developer Console, then refresh calls.';
+  } else if (['unauthorized_client', 'OAU-112', 'OAU-125'].includes(code || '')) {
+    message = 'The RingCentral app does not allow this authentication method. Enable JWT authentication for the app used in Vercel.';
+  } else if (jwtGrant || config.jwt) {
+    message = 'RingCentral rejected the JWT credential. Verify it is active and authorized for this app; update RC_USER_JWT in Vercel if expired or revoked, then redeploy.';
+    if (jwtGrant && config.jwt) {
+      try {
+        const payload = JSON.parse(Buffer.from(config.jwt.split('.')[1], 'base64url').toString()) as { exp?: number };
+        if (typeof payload.exp === 'number' && payload.exp <= Date.now() / 1000) {
+          message = 'The RingCentral JWT credential has expired. Create a new JWT authorized for this app, update RC_USER_JWT in Vercel, then redeploy.';
+        }
+      } catch { /* RingCentral validates malformed JWTs; never expose payloads. */ }
+    }
+  }
+  return new RingCentralAuthRequiredError(`${message}${code ? ` (${code})` : ''}`);
+}
+
 function getSessionSecret() {
   return process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD || 'local-development-secret';
 }
@@ -102,11 +147,11 @@ function unseal(value: string): RingCentralTokenData | null {
 }
 
 export function getRingCentralConfig(): RingCentralConfig | null {
-  const clientId = process.env.RC_APP_CLIENT_ID;
-  const clientSecret = process.env.RC_APP_CLIENT_SECRET;
+  const clientId = credentialValue(process.env.RC_APP_CLIENT_ID);
+  const clientSecret = credentialValue(process.env.RC_APP_CLIENT_SECRET);
   if (!clientId || !clientSecret) return null;
 
-  const serverUrl = (process.env.RC_SERVER_URL || 'https://platform.ringcentral.com').replace(/\/$/, '');
+  const serverUrl = (credentialValue(process.env.RC_SERVER_URL) || 'https://platform.ringcentral.com').replace(/\/$/, '');
   const redirectUri = process.env.RC_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/ringcentral/callback`;
   const targetPhoneNumber = process.env.RC_TARGET_PHONE_NUMBER?.trim() || DEFAULT_TARGET_PHONE_NUMBER;
 
@@ -116,7 +161,7 @@ export function getRingCentralConfig(): RingCentralConfig | null {
     serverUrl,
     redirectUri,
     targetPhoneNumber,
-    jwt: process.env.RC_USER_JWT,
+    jwt: credentialValue(process.env.RC_USER_JWT).replace(/^Bearer\s+/i, '') || undefined,
   };
 }
 
@@ -206,10 +251,17 @@ async function requestToken(config: RingCentralConfig, body: URLSearchParams, pr
   });
 
   if (!response.ok) {
-    throw new RingCentralAuthRequiredError('RingCentral authorization expired or was rejected.');
+    if (response.status === 429) throw new RingCentralApiError('RingCentral is rate limiting requests. Wait a minute, then refresh calls again.', 429);
+    if (response.status >= 500) throw new RingCentralApiError('RingCentral is temporarily unavailable. Try refreshing calls again shortly.', 503);
+    if ([400, 401, 403].includes(response.status)) {
+      throw await authorizationError(response, config, body.get('grant_type') === 'urn:ietf:params:oauth:grant-type:jwt-bearer');
+    }
+    throw new Error(`RingCentral token request failed (${response.status}).`);
   }
 
-  return tokenFromResponse(await response.json(), previous);
+  const data = await response.json();
+  if (typeof data.access_token !== 'string' || !data.access_token) throw new Error('RingCentral returned an invalid token response. Try refreshing calls again.');
+  return { ...tokenFromResponse(data, previous), credentialKey: credentialKey(config) };
 }
 
 export async function exchangeRingCentralCode(code: string) {
@@ -223,26 +275,50 @@ export async function exchangeRingCentralCode(code: string) {
   }));
 }
 
-async function getValidToken() {
+const tokenRenewals = new Map<string, Promise<{ token: RingCentralTokenData; refreshed: boolean }>>();
+
+async function getValidToken(rejectedAccessToken?: string) {
   const config = getRingCentralConfig();
   if (!config) throw new Error('RingCentral API credentials are not configured.');
 
-  const stored = await getStoredToken();
+  const key = credentialKey(config);
+  const pending = tokenRenewals.get(key);
+  if (pending) return pending;
+  const candidate = await getStoredToken();
+  const stored = candidate?.credentialKey && candidate.credentialKey !== key ? null : candidate;
   const now = Math.floor(Date.now() / 1000);
-  if (stored && stored.accessTokenExpiresAt > now + 60) return { token: stored, refreshed: false };
+  if (stored && stored.accessToken !== rejectedAccessToken && stored.accessTokenExpiresAt > now + 60) return { token: stored, refreshed: false };
+  // Another request may have started renewal while the DB read was pending.
+  const started = tokenRenewals.get(key);
+  if (started) return started;
+  const renewal = renewToken(config, stored).then(async (token) => {
+    // Persist before using it: a later call-log or voicemail failure must not
+    // discard a rotated, single-use refresh token.
+    await persistRingCentralToken(token);
+    return { token, refreshed: true };
+  });
+  tokenRenewals.set(key, renewal);
+  try {
+    return await renewal;
+  } finally {
+    if (tokenRenewals.get(key) === renewal) tokenRenewals.delete(key);
+  }
+}
 
+async function renewToken(config: RingCentralConfig, stored: RingCentralTokenData | null) {
+  const now = Math.floor(Date.now() / 1000);
   if (stored?.refreshToken && (!stored.refreshTokenExpiresAt || stored.refreshTokenExpiresAt > now + 60)) {
     try {
       const refreshed = await requestToken(config, new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: stored.refreshToken,
       }), stored);
-      return { token: refreshed, refreshed: true };
+      return refreshed;
     } catch (error) {
       // A configured JWT is the durable server-to-server credential. If an
       // older OAuth refresh token has been revoked, fall through and obtain a
       // new access token with JWT instead of requiring a browser callback.
-      if (!config.jwt) throw error;
+      if (!config.jwt || !(error instanceof RingCentralAuthRequiredError)) throw error;
     }
   }
 
@@ -251,10 +327,30 @@ async function getValidToken() {
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
       assertion: config.jwt,
     }));
-    return { token, refreshed: true };
+    return token;
   }
 
   throw new RingCentralAuthRequiredError();
+}
+
+// Renew once on a server-rejected token, even if its recorded expiry is in
+// the future (revocation, session limits, password changes, etc.).
+async function authenticatedFetch(url: string, session: { token: RingCentralTokenData; refreshed: boolean }, accept = 'application/json') {
+  const request = () => fetch(url, {
+    headers: { Accept: accept, Authorization: `Bearer ${session.token.accessToken}` },
+    cache: 'no-store',
+  });
+  let response = await request();
+  if (response.status === 401) {
+    const renewed = await getValidToken(session.token.accessToken);
+    session.token = renewed.token;
+    session.refreshed = session.refreshed || renewed.refreshed;
+    response = await request();
+  }
+  if (response.status === 401) {
+    throw new RingCentralAuthRequiredError('RingCentral rejected the renewed access token. Verify the account and app authorization in RingCentral.');
+  }
+  return response;
 }
 
 export async function getRingCentralConnectionStatus() {
@@ -282,7 +378,7 @@ async function listRingCentralCalls(dateFrom: string, dateTo: string, direction?
   const config = getRingCentralConfig();
   if (!config) throw new Error('RingCentral API credentials are not configured.');
 
-  const { token, refreshed } = await getValidToken();
+  const session = await getValidToken();
   const records: RingCentralCallRecord[] = [];
   let page = 1;
   let totalPages: number | null = 1;
@@ -302,12 +398,7 @@ async function listRingCentralCalls(dateFrom: string, dateTo: string, direction?
     // can be format-sensitive, while call-log records may use E.164 or a
     // formatted national number for the same destination.
 
-    const response: Response = await fetch(nextPageUri || `${config.serverUrl}/restapi/v1.0/account/~/call-log?${params.toString()}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${token.accessToken}` },
-      cache: 'no-store',
-    });
-
-    if (response.status === 401) throw new RingCentralAuthRequiredError();
+    const response = await authenticatedFetch(nextPageUri || `${config.serverUrl}/restapi/v1.0/account/~/call-log?${params.toString()}`, session);
     if (!response.ok) throw new Error(`RingCentral call log request failed (${response.status}).`);
 
     const data: {
@@ -322,7 +413,7 @@ async function listRingCentralCalls(dateFrom: string, dateTo: string, direction?
     if (!nextPageUri && totalPages === null) break;
   }
 
-  return { records, token, refreshed };
+  return { records, ...session };
 }
 
 export async function listRingCentralInboundCalls(dateFrom: string, dateTo: string) {
@@ -363,7 +454,7 @@ type RingCentralVoicemailMessage = {
 
 async function fetchVoicemailTranscript(
   message: RingCentralVoicemailMessage,
-  token: RingCentralTokenData,
+  session: { token: RingCentralTokenData; refreshed: boolean },
 ) {
   const status = (message.vmTranscriptionStatus || '').toLowerCase();
   if (!status.includes('complete')) return null;
@@ -372,10 +463,7 @@ async function fetchVoicemailTranscript(
     attachment.type?.toLowerCase() === 'audiotranscription',
   );
   if (transcriptionAttachment?.uri) {
-    const response = await fetch(transcriptionAttachment.uri, {
-      headers: { Accept: 'text/plain, application/json', Authorization: `Bearer ${token.accessToken}` },
-      cache: 'no-store',
-    });
+    const response = await authenticatedFetch(transcriptionAttachment.uri, session, 'text/plain, application/json');
     if (response.ok) {
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('json')) {
@@ -411,7 +499,7 @@ export async function listRingCentralVoicemails(dateFrom: string, dateTo: string
   const config = getRingCentralConfig();
   if (!config) throw new Error('RingCentral API credentials are not configured.');
 
-  const { token, refreshed } = await getValidToken();
+  const session = await getValidToken();
   const messages: RingCentralVoicemailMessage[] = [];
   let page = 1;
   let totalPages: number | null = 1;
@@ -427,12 +515,8 @@ export async function listRingCentralVoicemails(dateFrom: string, dateTo: string
       perPage: '1000',
       page: String(page),
     });
-    const response: Response = await fetch(nextPageUri || `${config.serverUrl}/restapi/v1.0/account/~/extension/~/message-store?${params.toString()}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${token.accessToken}` },
-      cache: 'no-store',
-    });
-    if (response.status === 401) throw new RingCentralAuthRequiredError();
-    if (response.status === 403) return { records: [], token, refreshed, permissionDenied: true as const };
+    const response = await authenticatedFetch(nextPageUri || `${config.serverUrl}/restapi/v1.0/account/~/extension/~/message-store?${params.toString()}`, session);
+    if (response.status === 403) return { records: [], ...session, permissionDenied: true as const };
     if (!response.ok) throw new Error(`RingCentral voicemail request failed (${response.status}).`);
 
     const data: {
@@ -455,8 +539,9 @@ export async function listRingCentralVoicemails(dateFrom: string, dateTo: string
     const audioAttachment = message.attachments?.find((attachment) => attachment.type?.toLowerCase() === 'audiorecording');
     let transcript: string | null = null;
     try {
-      transcript = await fetchVoicemailTranscript(message, token);
-    } catch {
+      transcript = await fetchVoicemailTranscript(message, session);
+    } catch (error) {
+      if (error instanceof RingCentralAuthRequiredError) throw error;
       // A transcript can be temporarily unavailable while RingCentral is
       // still processing it. Keep the voicemail metadata and retry next sync.
     }
@@ -481,7 +566,7 @@ export async function listRingCentralVoicemails(dateFrom: string, dateTo: string
     });
   }
 
-  return { records, token, refreshed, permissionDenied: false as const };
+  return { records, ...session, permissionDenied: false as const };
 }
 
 export function ringCentralDateKey(value: string | Date) {

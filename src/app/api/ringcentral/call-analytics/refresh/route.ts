@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { getRingCentralAuthMethod, persistRingCentralToken, setRingCentralTokenCookie } from '@/lib/ringcentral';
+import { getRingCentralAuthMethod, RingCentralApiError, setRingCentralTokenCookie } from '@/lib/ringcentral';
 import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import { buildRingCentralCallAnalytics, RingCentralAuthRequiredError } from '@/lib/ringcentral-analytics';
 import { refreshRingCentralCallCache } from '@/lib/ringcentral-call-cache';
@@ -23,16 +23,16 @@ async function handlePOST(request: Request) {
       return NextResponse.json({ success: false, busy: true, error: 'A call refresh is already in progress.' }, { status: 409 });
     }
 
-    if (result.refreshedToken) {
-      await persistRingCentralToken(result.refreshedToken);
-    }
     const analytics = await buildRingCentralCallAnalytics(selectedRange);
     const response = NextResponse.json({ ...analytics.data, refreshed: true, fetched: result.fetched, upserted: result.upserted });
     if (result.refreshedToken) setRingCentralTokenCookie(response, result.refreshedToken);
     return response;
   } catch (err) {
     if (err instanceof RingCentralAuthRequiredError) {
-      return NextResponse.json({ success: true, configured: true, connected: false, authMethod: getRingCentralAuthMethod(), connectRequired: true, error: 'Authorization is required to sync call data.' }, { status: 401 });
+      return NextResponse.json({ success: true, configured: true, connected: false, authMethod: getRingCentralAuthMethod(), connectRequired: true, error: err.message }, { status: 401 });
+    }
+    if (err instanceof RingCentralApiError) {
+      return NextResponse.json({ success: false, error: err.message }, { status: err.status });
     }
     logCaughtRequestError(request, '/api/ringcentral/call-analytics/refresh', err);
     return NextResponse.json({ success: false, error: 'Unable to refresh call analytics right now.' }, { status: 502 });

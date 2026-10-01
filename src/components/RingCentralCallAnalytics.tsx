@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 type CallAnalytics = {
   configured: boolean;
   connected: boolean;
+  authMethod?: 'jwt' | 'oauth' | null;
   connectRequired?: boolean;
   cacheAvailable?: boolean;
   dataSource?: 'cache';
@@ -179,7 +180,7 @@ export default function RingCentralCallAnalytics({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canManageConnection && (analytics?.connectRequired || analytics?.connected === false) && (
+          {canManageConnection && analytics?.authMethod !== 'jwt' && (analytics?.connectRequired || analytics?.connected === false) && (
             <button
               type="button"
               onClick={() => { window.location.href = '/api/ringcentral/connect'; }}
@@ -228,7 +229,7 @@ export default function RingCentralCallAnalytics({
         <div className="mt-4 flex flex-col items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center">
           <div>
             <p className="font-black">Authorization needed</p>
-            <p className="mt-1 text-xs text-slate-600">{canManageConnection ? 'Reconnect to resume call and voicemail syncing.' : 'An Admin must reconnect call tracking before new calls can sync.'}</p>
+            <p className="mt-1 text-xs text-slate-600">{analytics.authMethod === 'jwt' ? 'JWT authentication failed. An Admin should verify the RingCentral JWT and app credentials in Vercel.' : canManageConnection ? 'Reconnect to resume call and voicemail syncing.' : 'An Admin must reconnect call tracking before new calls can sync.'}</p>
             {analytics.error && <p className="mt-1 text-xs text-rose-600">{analytics.error}</p>}
           </div>
         </div>
@@ -236,7 +237,7 @@ export default function RingCentralCallAnalytics({
         <>
           {(analytics.connectRequired || !analytics.connected) && (
             <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              RingCentral authorization is needed to refresh calls. Cached analytics remain available until you reconnect.
+              {analytics.authMethod === 'jwt' ? 'RingCentral JWT authentication failed. Cached analytics remain available; an Admin should verify RC_USER_JWT and the app credentials in Vercel.' : 'RingCentral authorization is needed to refresh calls. Cached analytics remain available until you reconnect.'}
               {!canManageConnection && ' Ask an Admin to reconnect the account.'}
             </div>
           )}

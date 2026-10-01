@@ -120,6 +120,11 @@ export function getRingCentralConfig(): RingCentralConfig | null {
   };
 }
 
+export function getRingCentralAuthMethod(): 'jwt' | 'oauth' | null {
+  const config = getRingCentralConfig();
+  return config ? (config.jwt ? 'jwt' : 'oauth') : null;
+}
+
 export function getRingCentralStateCookieName() {
   return RINGCENTRAL_STATE_COOKIE;
 }
@@ -227,11 +232,18 @@ async function getValidToken() {
   if (stored && stored.accessTokenExpiresAt > now + 60) return { token: stored, refreshed: false };
 
   if (stored?.refreshToken && (!stored.refreshTokenExpiresAt || stored.refreshTokenExpiresAt > now + 60)) {
-    const refreshed = await requestToken(config, new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: stored.refreshToken,
-    }), stored);
-    return { token: refreshed, refreshed: true };
+    try {
+      const refreshed = await requestToken(config, new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: stored.refreshToken,
+      }), stored);
+      return { token: refreshed, refreshed: true };
+    } catch (error) {
+      // A configured JWT is the durable server-to-server credential. If an
+      // older OAuth refresh token has been revoked, fall through and obtain a
+      // new access token with JWT instead of requiring a browser callback.
+      if (!config.jwt) throw error;
+    }
   }
 
   if (config.jwt) {
@@ -247,7 +259,7 @@ async function getValidToken() {
 
 export async function getRingCentralConnectionStatus() {
   const config = getRingCentralConfig();
-  if (!config) return { configured: false, connected: false, targetPhoneNumber: null };
+  if (!config) return { configured: false, connected: false, authMethod: null, targetPhoneNumber: null };
 
   const stored = await getStoredToken();
   const now = Math.floor(Date.now() / 1000);
@@ -261,6 +273,7 @@ export async function getRingCentralConnectionStatus() {
   return {
     configured: true,
     connected,
+    authMethod: config.jwt ? 'jwt' as const : 'oauth' as const,
     targetPhoneNumber: config.targetPhoneNumber || null,
   };
 }

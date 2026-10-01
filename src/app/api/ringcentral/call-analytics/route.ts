@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { persistRingCentralToken, setRingCentralTokenCookie } from '@/lib/ringcentral';
+import { getRingCentralAuthMethod, persistRingCentralToken, setRingCentralTokenCookie } from '@/lib/ringcentral';
 import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import { buildRingCentralCallAnalytics, RingCentralAuthRequiredError } from '@/lib/ringcentral-analytics';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
@@ -27,7 +27,7 @@ async function handleGET(request: Request) {
     return response;
   } catch (err) {
     if (err instanceof RingCentralAuthRequiredError) {
-      return NextResponse.json({ success: true, configured: true, connected: false, connectRequired: true, error: 'Authorization is required to sync call data.' });
+      return NextResponse.json({ success: true, configured: true, connected: false, authMethod: getRingCentralAuthMethod(), connectRequired: true, error: 'Authorization is required to sync call data.' });
     }
     logCaughtRequestError(request, '/api/ringcentral/call-analytics', err);
     return NextResponse.json({ success: false, error: 'Unable to load call analytics right now.' }, { status: 502 });

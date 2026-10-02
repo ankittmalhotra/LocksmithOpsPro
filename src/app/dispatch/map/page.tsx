@@ -3,12 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, MapPinned, RefreshCw } from 'lucide-react';
+import { CalendarDays, MapPin, MapPinned, RefreshCw } from 'lucide-react';
+import { formatTorontoDateInput } from '@/lib/timezone';
+
+type DateRange = 'today' | 'yesterday' | 'this-week' | 'all';
 
 type DispatchJob = {
   id: string;
   jobNumber: string;
   serviceAddress: string;
+  createdAt: string;
   customer?: { id?: string; name: string };
 };
 type CustomerLocation = {
@@ -44,6 +48,31 @@ function groupJobsByAddress(jobs: DispatchJob[]) {
   return [...groups.entries()].map(([key, group]) => ({ key, ...group }));
 }
 
+function getDateRange(dateRange: DateRange, now = new Date()) {
+  const today = formatTorontoDateInput(now);
+  if (dateRange === 'all') return { start: '', end: '' };
+  if (dateRange === 'today') return { start: today, end: today };
+
+  const date = new Date(`${today}T00:00:00Z`);
+  if (dateRange === 'yesterday') {
+    date.setUTCDate(date.getUTCDate() - 1);
+    const yesterday = date.toISOString().slice(0, 10);
+    return { start: yesterday, end: yesterday };
+  }
+
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+  return { start: date.toISOString().slice(0, 10), end: today };
+}
+
+function isInDateRange(job: DispatchJob, dateRange: DateRange, now = new Date()) {
+  if (dateRange === 'all') return true;
+  const jobDate = formatTorontoDateInput(job.createdAt);
+  if (!jobDate) return false;
+  const { start, end } = getDateRange(dateRange, now);
+  return jobDate >= start && jobDate <= end;
+}
+
 export default function DispatchMapPage() {
   const [jobs, setJobs] = useState<DispatchJob[]>([]);
   const [located, setLocated] = useState<CustomerLocation[]>([]);
@@ -52,9 +81,12 @@ export default function DispatchMapPage() {
   const [completedLookups, setCompletedLookups] = useState(0);
   const [error, setError] = useState('');
   const [unmatched, setUnmatched] = useState(0);
+  const [dateRange, setDateRange] = useState<DateRange>('all');
+  const [mapError, setMapError] = useState('');
   const [query, setQuery] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
-  const addressGroups = useMemo(() => groupJobsByAddress(jobs), [jobs]);
+  const dateFilteredJobs = useMemo(() => jobs.filter((job) => isInDateRange(job, dateRange)), [jobs, dateRange]);
+  const addressGroups = useMemo(() => groupJobsByAddress(dateFilteredJobs), [dateFilteredJobs]);
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markers = useRef<mapboxgl.Marker[]>([]);
@@ -72,7 +104,7 @@ export default function DispatchMapPage() {
   }, [refreshKey]);
 
   useEffect(() => {
-    if (!MAPBOX_TOKEN || jobs.length === 0) { setLocated([]); setUnmatched(0); setCompletedLookups(0); setGeocoding(false); return; }
+    if (!MAPBOX_TOKEN || dateFilteredJobs.length === 0) { setLocated([]); setUnmatched(0); setCompletedLookups(0); setGeocoding(false); return; }
     let cancelled = false;
     setGeocoding(true);
     setError('');
@@ -119,14 +151,29 @@ export default function DispatchMapPage() {
       }
     }).finally(() => { if (!cancelled) setGeocoding(false); });
     return () => { cancelled = true; };
-  }, [addressGroups, jobs]);
+  }, [addressGroups, dateFilteredJobs.length]);
 
   useEffect(() => {
     if (!MAPBOX_TOKEN || !mapContainer.current || map.current) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
-    map.current = new mapboxgl.Map({ container: mapContainer.current, style: 'mapbox://styles/mapbox/streets-v12', center: [-79.3832, 43.6532], zoom: 9 });
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-    return () => { markers.current.forEach((marker) => marker.remove()); markers.current = []; map.current?.remove(); map.current = null; };
+    try {
+      map.current = new mapboxgl.Map({ container: mapContainer.current, style: 'mapbox://styles/mapbox/streets-v12', center: [-79.3832, 43.6532], zoom: 9 });
+      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      map.current.on('load', () => map.current?.resize());
+      map.current.on('error', () => setMapError('The map tiles could not be loaded. Check that this Mapbox token allows Styles:Read access from this portal domain.'));
+      const observer = new ResizeObserver(() => map.current?.resize());
+      observer.observe(mapContainer.current);
+      return () => {
+        observer.disconnect();
+        markers.current.forEach((marker) => marker.remove());
+        markers.current = [];
+        map.current?.remove();
+        map.current = null;
+      };
+    } catch {
+      setMapError('The map could not be initialized in this browser. Reload the page or try another browser.');
+      return;
+    }
   }, []);
 
   useEffect(() => {
@@ -156,13 +203,25 @@ export default function DispatchMapPage() {
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div><p className="text-xs font-black uppercase tracking-[0.16em] text-blue-700">Customer insights</p><h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Customer locations</h1><p className="mt-1 text-sm text-slate-500">See where customers come from, based on every job in your history.</p></div>
+        <div><p className="text-xs font-black uppercase tracking-[0.16em] text-blue-700">Customer insights</p><h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Customer locations</h1><p className="mt-1 text-sm text-slate-500">Explore customer locations by job date.</p></div>
         <button onClick={() => setRefreshKey((value) => value + 1)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"><RefreshCw size={15} />Refresh locations</button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+        <label htmlFor="customer-map-date-range" className="inline-flex items-center gap-2 text-sm font-bold text-slate-700"><CalendarDays size={16} className="text-blue-600" />Job date</label>
+        <select id="customer-map-date-range" value={dateRange} onChange={(event) => setDateRange(event.target.value as DateRange)} className="min-w-40 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="this-week">This week</option>
+          <option value="all">All</option>
+        </select>
+        <p className="text-xs text-slate-500">{dateFilteredJobs.length} {dateFilteredJobs.length === 1 ? 'job' : 'jobs'} · dates use Toronto time</p>
       </div>
 
       {!MAPBOX_TOKEN ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"><h2 className="font-black">Mapbox token required</h2><p className="mt-1 leading-6">Set <code className="rounded bg-amber-100 px-1.5 py-0.5">NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN</code> to a public Mapbox token with URL restrictions for your portal domain, then reload this page.</p><a className="mt-2 inline-block font-bold underline" href="https://docs.mapbox.com/help/dive-deeper/access-tokens/" target="_blank" rel="noreferrer">Mapbox token setup</a></div> : <>
         <p className="mb-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5 text-xs leading-5 text-blue-900">Customer service addresses are sent to Mapbox to locate them. Locations are grouped by address and results are used for this map view only; coordinates are not saved to job records.</p>
         {error && <p role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
+        {mapError && <p role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{mapError}</p>}
         {unmatched > 0 && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{unmatched} {unmatched === 1 ? 'address could' : 'addresses could'} not be matched and {unmatched === 1 ? 'is' : 'are'} omitted from the map.</p>}
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="relative min-h-[520px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm sm:min-h-[650px]">
@@ -175,7 +234,7 @@ export default function DispatchMapPage() {
               {filtered.map((location) => <button key={location.key} onClick={() => focusLocation(location)} className="w-full rounded-xl border border-slate-200 p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/50">
                 <div className="flex items-start gap-2"><MapPin size={15} className="mt-0.5 shrink-0 text-blue-600" /><div className="min-w-0 flex-1"><p className="text-xs font-black text-slate-900">{location.address}</p><p className="mt-1 text-[11px] font-semibold text-slate-600">{location.customers.length} {location.customers.length === 1 ? 'customer' : 'customers'} · {location.jobs.length} {location.jobs.length === 1 ? 'job' : 'jobs'}</p><p className="mt-1 line-clamp-2 text-[11px] text-slate-500">{location.customers.map((customer) => customer.name).join(', ') || 'Customer name unavailable'}</p></div></div>
               </button>)}
-              {!loading && located.length === 0 && <div className="px-3 py-10 text-center"><MapPinned className="mx-auto text-slate-300" size={28} /><p className="mt-3 text-sm font-bold text-slate-700">No locations to show</p><p className="mt-1 text-xs text-slate-500">{jobs.length ? 'Mapbox could not match these addresses.' : 'There are no jobs in the history yet.'}</p></div>}
+              {!loading && !geocoding && located.length === 0 && <div className="px-3 py-10 text-center"><MapPinned className="mx-auto text-slate-300" size={28} /><p className="mt-3 text-sm font-bold text-slate-700">No locations to show</p><p className="mt-1 text-xs text-slate-500">{dateFilteredJobs.length ? 'Mapbox could not match these addresses.' : 'There are no jobs in this date range. Try This week or All.'}</p></div>}
               {located.length > 0 && filtered.length === 0 && <p className="p-5 text-center text-xs text-slate-500">No locations match that search.</p>}
             </div>
           </aside>

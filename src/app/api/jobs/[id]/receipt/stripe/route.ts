@@ -82,12 +82,28 @@ async function resolveCharge(invoice: any, jobId: string) {
     throw new Error('Stripe receipt unavailable: payment metadata does not match this invoice.');
   }
   const paymentIntentMetadataMatches = intent.metadata?.invoiceId === invoice.id && intent.metadata?.jobId === jobId;
+  const paymentIntentMetadataConflicts = (intent.metadata?.invoiceId && intent.metadata.invoiceId !== invoice.id)
+    || (intent.metadata?.jobId && intent.metadata.jobId !== jobId);
+  if (paymentIntentMetadataConflicts) {
+    throw new Error('Stripe receipt unavailable: payment intent metadata conflicts with this invoice.');
+  }
   if (!paymentIntentMetadataMatches) {
-    // Older Checkout Sessions only stored invoice/job metadata on the Session
-    // (or were persisted locally before every metadata field was added).
-    // The locally saved Session ID is the primary binding; require Stripe to
-    // return that exact paid Session and bind it to the exact verified intent.
-    // Any legacy metadata that is present must still agree with this invoice.
+    // Dual-price payments must have complete invoice/job metadata because it
+    // proves which customer-approved price Stripe collected. For legacy
+    // payments, the webhook's persisted Charge + PaymentIntent IDs are a
+    // stronger binding than optional Checkout Session metadata: Stripe has
+    // independently confirmed that this exact successful intent produced
+    // this exact paid charge for the recorded invoice amount.
+    if (invoice.pricingModel === 'DUAL_PRICE_V1') {
+      throw new Error('Stripe receipt unavailable: payment intent metadata does not verify the accepted dual-price invoice.');
+    }
+    if (invoice.stripeChargeId === chargeId && invoice.stripePaymentIntentId === chargeIntentId) {
+      return charge;
+    }
+
+    // Some older records only have a saved Checkout Session. In that case,
+    // bind the paid session to the verified intent and reject any conflicting
+    // legacy metadata that Stripe does return.
     if (!invoice.stripeSessionId) throw new Error('Stripe receipt unavailable: payment metadata does not match this invoice.');
     const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(invoice.stripeSessionId)}?expand[]=payment_intent`);
     const sessionIntentId = idOf(session.payment_intent);

@@ -191,7 +191,7 @@ export function calculateDualPriceManualCardQuote(params: {
   cardPriceDifferenceRate: number;
 }) {
   const nonCardPrice = roundToTwo(params.nonCardPrice);
-  const cardPriceDifferenceRate = roundToTwo(params.cardPriceDifferenceRate);
+  const cardPriceDifferenceRate = Math.round((params.cardPriceDifferenceRate + Number.EPSILON) * 10_000) / 10_000;
   const cardPrice = roundToTwo(nonCardPrice * (1 + cardPriceDifferenceRate));
   return {
     nonCardPrice,

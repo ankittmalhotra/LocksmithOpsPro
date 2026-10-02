@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getJobReceiptState, getLocksmithReceiptIssuer } from '@/lib/job-receipt';
+import { isPaymentDateOnOrAfterEffectiveDate } from '@/lib/job-receipt-policy';
 import { prisma } from '@/lib/prisma';
 import ReceiptAdminControls from './ReceiptAdminControls';
 
@@ -59,7 +60,7 @@ export default async function JobReceiptPage({ params }: { params: Promise<{ id:
       issuer = null;
       issuerIssue = 'Locksmith issuer configuration is incomplete; verify the legal identity, address, HST registration, and effective date before issuing a receipt.';
     }
-    if (issuer && (!invoice.paidAt || new Date(invoice.paidAt).getTime() < issuer.hstEffectiveDate.getTime())) {
+    if (issuer && !isPaymentDateOnOrAfterEffectiveDate(invoice.paidAt, issuer.hstEffectiveDate)) {
       issuerIssue = 'Receipt requires an authoritative payment date on or after Locksmith’s HST registration effective date.';
     }
   }
@@ -98,6 +99,7 @@ export default async function JobReceiptPage({ params }: { params: Promise<{ id:
                 <p className="text-xs text-slate-600">Business / corporation ID: {snapshot?.issuer?.corporationNumber || issuer.corporationNumber}</p>
                 <p className="text-xs text-slate-600">HST registration: {snapshot?.issuer?.hstRegistrationNumber || issuer.hstRegistrationNumber}</p>
                 <p className="text-xs text-slate-600">{snapshot?.issuer?.address || [issuer.addressLine1, issuer.city, issuer.province, issuer.postalCode, issuer.country].filter(Boolean).join(', ')}</p>
+                <p className="text-xs text-slate-600">{snapshot?.issuer?.email || issuer.email}</p>
               </div>
               <dl className="mt-4 divide-y divide-slate-100 text-sm">
                 <div className="flex justify-between gap-4 py-2"><dt className="text-slate-600">Service and parts</dt><dd className="font-semibold text-slate-900">{money(subtotal)}</dd></div>
@@ -125,7 +127,7 @@ export default async function JobReceiptPage({ params }: { params: Promise<{ id:
               <dl className="mt-4 divide-y divide-slate-100 text-sm">
                 <div className="flex justify-between gap-4 py-2"><dt className="text-slate-600">Document source</dt><dd className="font-semibold text-slate-900">Stripe</dd></div>
                 <div className="flex justify-between gap-4 py-2"><dt className="text-slate-600">Amount paid</dt><dd className="font-semibold text-slate-900">{money(invoice?.totalAmountCollected ?? invoice?.grandTotal)}</dd></div>
-                <div className="flex justify-between gap-4 py-2"><dt className="text-slate-600">Payment method</dt><dd className="font-semibold text-slate-900">Credit card</dd></div>
+                <div className="flex justify-between gap-4 py-2"><dt className="text-slate-600">Payment method</dt><dd className="font-semibold text-slate-900">{invoice?.paymentMethod?.replaceAll('_', ' ') || 'Card'}</dd></div>
               </dl>
               {state === 'stripe_partial_refund' && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-900">A partial refund is recorded. These are Stripe’s original documents and may not show the refund.</p>}
               <div className="mt-5 flex flex-wrap gap-2">

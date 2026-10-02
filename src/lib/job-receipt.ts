@@ -1,32 +1,9 @@
 import { prisma } from '@/lib/prisma';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { isPaymentDateOnOrAfterEffectiveDate } from '@/lib/job-receipt-policy';
+import { getJobReceiptState, requireLocksmithReceiptIssuer } from '@/lib/job-receipt-policy';
 
-export type JobReceiptState = 'local_ready' | 'stripe_ready' | 'stripe_partial_refund' | 'payment_pending' | 'off_books' | 'provider_missing' | 'refunded' | 'ineligible';
-
-export function getJobReceiptState(job: any): JobReceiptState {
-  if (!job?.invoice || job.status !== 'COMPLETED') return 'ineligible';
-  const invoice = job.invoice;
-  if (invoice.paymentStatus === 'REFUNDED') return 'refunded';
-  if (invoice.taxCollected !== true) return 'off_books';
-  if (invoice.paymentStatus !== 'PAID' && invoice.paymentStatus !== 'PARTIALLY_REFUNDED') return 'payment_pending';
-  if (invoice.paymentProvider === 'STRIPE') {
-    if (!['STRIPE_CARD', 'CREDIT_CARD', 'DEBIT_CARD'].includes(invoice.paymentMethod)) return 'provider_missing';
-    return invoice.paymentStatus === 'PARTIALLY_REFUNDED' ? 'stripe_partial_refund' : 'stripe_ready';
-  }
-  if (invoice.paymentStatus === 'PARTIALLY_REFUNDED') return 'provider_missing';
-  if (invoice.paymentMethod === 'CASH' || invoice.paymentMethod === 'INTERAC') return 'local_ready';
-  return 'provider_missing';
-}
-
-function requiredIssuer(entity: any) {
-  const required = [entity?.legalName, entity?.corporationNumber, entity?.addressLine1, entity?.city,
-    entity?.province, entity?.postalCode, entity?.country, entity?.hstRegistrationNumber];
-  if (!entity || entity.code !== 'LOCKSMITH' || required.some((value) => typeof value !== 'string' || !value.trim())
-    || !entity.hstEnabled || !entity.hstEffectiveDate) {
-    throw new Error('Receipt unavailable: Locksmith issuer configuration requires verified HST registration, effective date, business identity, and address.');
-  }
-  return entity;
-}
+export { getJobReceiptState } from '@/lib/job-receipt-policy';
 
 function money(value: unknown) { return `CAD $${Number(value || 0).toFixed(2)}`; }
 function safeText(value: unknown) { return String(value ?? '').replace(/[\u2010-\u2015]/g, '-').replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -39,10 +16,10 @@ function formatDate(value: unknown) {
 
 export async function getLocksmithReceiptIssuer() {
   const entity = await prisma.accountingEntity.findUnique({ where: { code: 'LOCKSMITH' } });
-  return requiredIssuer(entity);
+  return requireLocksmithReceiptIssuer(entity);
 }
 
-async function buildReceiptPdf(snapshot: any): Promise<Uint8Array> {
+export async function buildJobPaymentReceiptPdf(snapshot: any): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
@@ -59,6 +36,7 @@ async function buildReceiptPdf(snapshot: any): Promise<Uint8Array> {
   line(`Business / corporation ID: ${snapshot.issuer.corporationNumber}`, 609, regular, 10);
   line(`HST registration: ${snapshot.issuer.hstRegistrationNumber}`, 593, regular, 10);
   line(snapshot.issuer.address, 577, regular, 10);
+  line(snapshot.issuer.email, 559, regular, 10);
   line('BILL TO', 541, bold, 9, muted);
   line(snapshot.customer.name, 522, bold, 12);
   line(`Job #${snapshot.job.jobNumber}  |  ${snapshot.job.serviceType}`, 503, regular, 10);
@@ -108,10 +86,11 @@ export async function createOrLoadJobPaymentReceipt(job: any, issuedById: string
   if (!current || getJobReceiptState(current) !== 'local_ready' || !current.invoice) throw new Error('Receipt unavailable: payment or job details changed. Reload and try again.');
   const active = await tx.jobPaymentReceipt.findFirst({ where: { invoiceId: current.invoice.id, voidedAt: null } });
   if (active) return active;
-  const issuer = await getLocksmithReceiptIssuer();
+  const issuerRecord = await tx.accountingEntity.findUnique({ where: { code: 'LOCKSMITH' } });
+  const issuer = requireLocksmithReceiptIssuer(issuerRecord);
   const paidAt = current.invoice.paidAt;
   if (!paidAt || Number.isNaN(new Date(paidAt).getTime())) throw new Error('Receipt unavailable: an authoritative payment date is required.');
-  if (new Date(paidAt) < issuer.hstEffectiveDate) throw new Error('Receipt unavailable: the Locksmith HST registration was not effective on the payment date.');
+  if (!isPaymentDateOnOrAfterEffectiveDate(paidAt, issuer.hstEffectiveDate)) throw new Error('Receipt unavailable: the Locksmith HST registration was not effective on the payment date.');
   const total = Number(current.invoice.totalAmountCollected || current.invoice.grandTotal);
   const tax = Number(current.invoice.taxAmount || 0);
   const subtotal = Number(current.invoice.subtotal);
@@ -138,6 +117,7 @@ export async function createOrLoadJobPaymentReceipt(job: any, issuedById: string
     receiptNumber, revision, issuedAt: new Date().toISOString(), paidAt: new Date(paidAt).toISOString(),
     issuer: {
       legalName: issuer.legalName, corporationNumber: issuer.corporationNumber,
+      email: issuer.email,
       hstRegistrationNumber: displayHst(issuer.hstRegistrationNumber),
       address: [issuer.addressLine1, issuer.city, issuer.province, issuer.postalCode, issuer.country].filter(Boolean).join(', '),
     },
@@ -150,7 +130,7 @@ export async function createOrLoadJobPaymentReceipt(job: any, issuedById: string
     payment: { method: current.invoice.paymentMethod },
     amounts: { subtotal, tax, taxRate, total, partsTotal, laborTotal },
   };
-  const pdfBytes = await buildReceiptPdf(snapshot);
+  const pdfBytes = await buildJobPaymentReceiptPdf(snapshot);
   const previous = await tx.jobPaymentReceipt.findFirst({ where: { invoiceId: current.invoice.id, voidedAt: { not: null }, replacementId: null }, orderBy: { revision: 'desc' } });
   const created = await tx.jobPaymentReceipt.create({ data: {
     invoiceId: current.invoice.id, receiptNumber, revision, issuedById,

@@ -8,7 +8,7 @@ import {
   DEFAULT_CARD_PRICE_DIFFERENCE_RATE,
   MAX_CARD_PRICE_DIFFERENCE_RATE,
   isCardPaymentMethod,
-  SupportedPaymentMethod,
+  type SupportedPaymentMethod,
 } from '@/lib/calculations';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_PAYMENT_METHODS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { normalizeJobNumber } from '@/lib/job-number';
@@ -112,9 +112,10 @@ async function handlePOST(request: Request) {
       ? parseManualPercentage(
           body.cardPriceDifferenceRate === undefined ? DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100 : body.cardPriceDifferenceRate,
           'Card price difference',
+          MAX_CARD_PRICE_DIFFERENCE_RATE * 100,
         )
       : 0;
-    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE * 100) {
+    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE) {
       return NextResponse.json({ success: false, error: `Card-price difference cannot exceed ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.` }, { status: 400 });
     }
     if (pendingCardPayment && (body.customerAcceptedCardPrice !== true

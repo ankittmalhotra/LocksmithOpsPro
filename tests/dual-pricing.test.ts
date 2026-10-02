@@ -15,5 +15,6 @@ assert.equal(quote.calculation.subtotal, 104);
 assert.equal(quote.calculation.grandTotal, 104, 'Checkout base amount is the accepted card service price before Stripe Tax');
 assert.equal(quote.calculation.cardSurchargeRate, 0, 'Dual pricing must not store a card surcharge rate');
 assert.equal(quote.calculation.cardSurchargeAmount, 0, 'Dual pricing must not create a card surcharge line');
+assert.equal(calculateDualPriceManualCardQuote({ nonCardPrice: 100, cardPriceDifferenceRate: 0.0399 }).cardPrice, 103.99, 'Percentage precision is preserved to 0.01%');
 
 console.log('Dual-pricing quote checks passed.');

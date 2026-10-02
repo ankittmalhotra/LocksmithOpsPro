@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
 import { getJobReceiptState, getLocksmithReceiptIssuer } from '@/lib/job-receipt';
+import { requiresCurrentStripeIssuerVerification } from '@/lib/job-receipt-policy';
 import { StripeApiError, stripeGet } from '@/lib/stripe';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 
@@ -17,9 +18,7 @@ function stripeUrl(value: unknown, hosts: string[]) {
 }
 
 async function verifyLocksmithStripeIssuer(issuer: any) {
-  const configuredAccountId = process.env.LOCKSMITH_STRIPE_ACCOUNT_ID?.trim();
-  const account = await stripeGet('/account');
-  if (configuredAccountId && account.id !== configuredAccountId) throw new Error('Stripe receipt unavailable: payment account does not match the configured Locksmith account.');
+  const account = await verifyStripeAccountPin();
   const businessName = account.business_profile?.name || account.company?.name;
   if (businessName !== issuer.legalName) throw new Error('Stripe receipt unavailable: Stripe legal name does not match the Locksmith issuer.');
   const stripeAddress = account.company?.address || account.business_profile?.support_address;
@@ -31,6 +30,13 @@ async function verifyLocksmithStripeIssuer(issuer: any) {
   const taxList = await stripeGet('/tax_ids?limit=100');
   const hstMatch = Array.isArray(taxList.data) && taxList.data.some((tax: any) => tax.type === 'ca_gst_hst' && normalizeIdentifier(tax.value) === normalizeIdentifier(issuer.hstRegistrationNumber));
   if (!hstMatch) throw new Error('Stripe receipt unavailable: the verified Locksmith HST number is not configured on the Stripe account.');
+  return account;
+}
+
+async function verifyStripeAccountPin() {
+  const configuredAccountId = process.env.LOCKSMITH_STRIPE_ACCOUNT_ID?.trim();
+  const account = await stripeGet('/account');
+  if (configuredAccountId && account.id !== configuredAccountId) throw new Error('Stripe receipt unavailable: payment account does not match the configured Locksmith account.');
   return account;
 }
 
@@ -85,7 +91,7 @@ async function resolveCharge(invoice: any, jobId: string) {
   return charge;
 }
 
-async function paidStripeInvoice(invoice: any, expectedAmount: number, hstNumber: string, issuerLegalName: string, jobId: string, verifiedPaymentIntentId: string | null) {
+async function paidStripeInvoice(invoice: any, expectedAmount: number, issuer: any | null, jobId: string, verifiedPaymentIntentId: string | null) {
   if (!invoice.stripeInvoiceId) throw new Error('Paid Stripe invoice PDF is not available for this payment.');
   const remote = await stripeGet(`/invoices/${encodeURIComponent(invoice.stripeInvoiceId)}?expand[]=account_tax_ids&expand[]=payment_intent`);
   if (remote.status !== 'paid' || remote.currency !== 'cad' || amountCents(remote.amount_paid) !== expectedAmount) {
@@ -96,16 +102,18 @@ async function paidStripeInvoice(invoice: any, expectedAmount: number, hstNumber
     || remote.metadata?.invoiceId !== invoice.id || remote.metadata?.jobId !== jobId) {
     throw new Error('Stripe invoice unavailable: invoice metadata or payment intent does not match this job and payment.');
   }
-  if (remote.account_name && remote.account_name !== issuerLegalName) {
+  if (issuer && remote.account_name && remote.account_name !== issuer.legalName) {
     throw new Error('Stripe invoice unavailable: seller name does not match the Locksmith issuer.');
   }
-  const taxIds = Array.isArray(remote.account_tax_ids) ? remote.account_tax_ids : [];
-  const values = await Promise.all(taxIds.map(async (tax: any) => {
-    if (tax && typeof tax === 'object') return tax;
-    return stripeGet(`/tax_ids/${encodeURIComponent(String(tax))}`);
-  }));
-  if (!values.some((tax: any) => tax.type === 'ca_gst_hst' && normalizeIdentifier(tax.value) === normalizeIdentifier(hstNumber))) {
-    throw new Error('Stripe invoice unavailable: its HST registration does not match Locksmith.');
+  if (issuer) {
+    const taxIds = Array.isArray(remote.account_tax_ids) ? remote.account_tax_ids : [];
+    const values = await Promise.all(taxIds.map(async (tax: any) => {
+      if (tax && typeof tax === 'object') return tax;
+      return stripeGet(`/tax_ids/${encodeURIComponent(String(tax))}`);
+    }));
+    if (!values.some((tax: any) => tax.type === 'ca_gst_hst' && normalizeIdentifier(tax.value) === normalizeIdentifier(issuer.hstRegistrationNumber))) {
+      throw new Error('Stripe invoice unavailable: its HST registration does not match Locksmith.');
+    }
   }
   return stripeUrl(remote.invoice_pdf, ['invoice.stripe.com', 'pay.stripe.com']);
 }
@@ -122,14 +130,14 @@ async function handleGET(request: Request, { params }: { params: Promise<{ id: s
     if (!['stripe_ready', 'stripe_partial_refund'].includes(receiptState)) return NextResponse.json({ success: false, error: 'Receipt unavailable: this job is not a verified paid, on-books Stripe payment.' }, { status: 409, headers: { 'Cache-Control': 'private, no-store' } });
     if (!job.invoice) return NextResponse.json({ success: false, error: 'Stripe invoice not found' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
     const invoice = job.invoice;
-    const issuer = await getLocksmithReceiptIssuer();
-    const paidAt = invoice.paidAt;
-    if (!paidAt || Number.isNaN(new Date(paidAt).getTime())) throw new Error('Stripe receipt unavailable: an authoritative payment date is required.');
+    const verifyNewQuoteIssuer = requiresCurrentStripeIssuerVerification(invoice);
+    const issuer = verifyNewQuoteIssuer ? await getLocksmithReceiptIssuer() : null;
     // These are Stripe's existing, already-issued documents. Preserve their
     // original tax treatment and allow older paid jobs to retrieve them; only
     // new portal-generated on-books receipts are constrained by the HST
     // registration effective date.
-    await verifyLocksmithStripeIssuer(issuer);
+    if (issuer) await verifyLocksmithStripeIssuer(issuer);
+    else await verifyStripeAccountPin();
     const query = new URL(request.url).searchParams;
     const kind = query.get('kind') || 'receipt';
     if (kind !== 'receipt' && kind !== 'invoice') return NextResponse.json({ success: false, error: 'kind must be receipt or invoice' }, { status: 400, headers: { 'Cache-Control': 'private, no-store' } });
@@ -141,7 +149,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ id: s
     }
     const expected = amountCents(Number(invoice.totalAmountCollected || invoice.grandTotal) * 100);
     if (expected === null) throw new Error('Stripe invoice unavailable: recorded invoice amount is invalid.');
-    const destination = await paidStripeInvoice(invoice, expected, issuer.hstRegistrationNumber, issuer.legalName, job.id, idOf(charge.payment_intent));
+    const destination = await paidStripeInvoice(invoice, expected, issuer, job.id, idOf(charge.payment_intent));
     if (!destination) return NextResponse.json({ success: false, error: 'Stripe paid invoice PDF is unavailable.' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
     return NextResponse.redirect(destination, { status: 302, headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {

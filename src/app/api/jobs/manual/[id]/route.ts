@@ -178,9 +178,10 @@ async function handlePATCH(
               : DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100)
             : body.cardPriceDifferenceRate,
           'Card price difference',
+          MAX_CARD_PRICE_DIFFERENCE_RATE * 100,
         )
       : 0;
-    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE * 100) {
+    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE) {
       return NextResponse.json({ success: false, error: `Card-price difference cannot exceed ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.` }, { status: 400 });
     }
     if (pendingCardPayment && (body.customerAcceptedCardPrice !== true

@@ -4,7 +4,7 @@
 
 Let a user record a company expense that was initially paid using a partner's or another person's money, including a personal credit card or cash, then record the business repaying that person from the company's bank account. Keep the expense, amount owed, repayments, receipts, and accountant classification visible together in the correct entity's Books.
 
-The portal must preserve two separate sets of books: `1001744934 ONTARIO INC.` (IT & Marketing) and `1001348245 ONTARIO INC.` (Locksmith). A personal-paid expense belongs to the entity that incurred it, regardless of which person paid. A repayment is a settlement of the amount owed by that entity; it must not create another expense, reduce operational profit a second time, or flow into the Locksmith-to-IT profit-sharing calculation.
+The portal must preserve two separate sets of books: `1001744934 ONTARIO INC.` (IT & Marketing) and `Better Call Locksmith Inc.` (corporation number `1001348245`, Locksmith). A personal-paid expense belongs to the entity that incurred it, regardless of which person paid. A repayment is a settlement of the amount owed by that entity; it must not create another expense, reduce operational profit a second time, or flow into the Locksmith-to-IT profit-sharing calculation.
 
 Example: a $300 accounting bill plus $39 HST was paid personally for IT & Marketing. Record one IT expense for $300 + $39 and mark it “Paid personally — $339 owed to [person].” When IT pays that person $339, record a repayment linked to the expense. The outstanding balance becomes zero. The expense remains $300 of expense and $39 of possible input tax credit, subject to accountant confirmation and valid supporting evidence.
 

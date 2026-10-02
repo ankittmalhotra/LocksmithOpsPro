@@ -1711,13 +1711,13 @@ export default function BooksPage() {
                 }}
                 issuer={state.entity}
                 recipient={{
-                  legalName: '1001348245 ONTARIO INC.',
+                  legalName: 'Better Call Locksmith Inc.',
                   corporationNumber: '1001348245',
                   email: 'bcltoronto1@gmail.com',
-                  addressLine1: '27 Knollside Drive',
-                  city: 'Richmond Hill',
+                  addressLine1: '222 Spadina Avenue, Unit 114',
+                  city: 'Toronto',
                   province: 'Ontario',
-                  postalCode: 'L4C4W7',
+                  postalCode: 'M5T 3B3',
                   country: 'Canada',
                 }}
               />
@@ -2602,7 +2602,7 @@ export default function BooksPage() {
               </div>
               <div>
                 <p className='text-xs font-black uppercase tracking-wide text-slate-500'>To</p>
-                <p className='mt-1 font-bold text-slate-900'>{selectedRecipient?.legalName || '1001348245 ONTARIO INC.'}</p>
+                <p className='mt-1 font-bold text-slate-900'>{selectedRecipient?.legalName || 'Better Call Locksmith Inc.'}</p>
                 <p className='text-slate-500'>OCN: {selectedRecipient?.corporationNumber || '1001348245'}</p>
                 {selectedRecipient?.addressLine1 && <p className='text-slate-500'>{[selectedRecipient.addressLine1, selectedRecipient.city, selectedRecipient.province, selectedRecipient.postalCode, selectedRecipient.country].filter(Boolean).join(', ')}</p>}
               </div>

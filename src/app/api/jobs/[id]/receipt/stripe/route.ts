@@ -9,6 +9,10 @@ import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger'
 function idOf(value: any): string | null { return typeof value === 'string' ? value : typeof value?.id === 'string' ? value.id : null; }
 function amountCents(value: unknown) { return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null; }
 function normalizeIdentifier(value: unknown) { return String(value || '').replace(/[^a-z0-9]/gi, '').toUpperCase(); }
+function normalizeProvince(value: unknown) {
+  const normalized = normalizeIdentifier(value);
+  return normalized === 'ON' ? 'ONTARIO' : normalized;
+}
 function stripeUrl(value: unknown, hosts: string[]) {
   if (typeof value !== 'string') return null;
   try {
@@ -22,8 +26,11 @@ async function verifyLocksmithStripeIssuer(issuer: any) {
   const businessName = account.business_profile?.name || account.company?.name;
   if (businessName !== issuer.legalName) throw new Error('Stripe receipt unavailable: Stripe legal name does not match the Locksmith issuer.');
   const stripeAddress = account.company?.address || account.business_profile?.support_address;
-  if (!stripeAddress || stripeAddress.line1 !== issuer.addressLine1 || stripeAddress.city !== issuer.city
-    || stripeAddress.state !== issuer.province || normalizeIdentifier(stripeAddress.postal_code) !== normalizeIdentifier(issuer.postalCode)
+  const stripeStreetAddress = stripeAddress && [stripeAddress.line1, stripeAddress.line2].filter((part: unknown) => typeof part === 'string' && part.trim()).join(' ');
+  if (!stripeAddress || normalizeIdentifier(stripeStreetAddress) !== normalizeIdentifier(issuer.addressLine1)
+    || normalizeIdentifier(stripeAddress.city) !== normalizeIdentifier(issuer.city)
+    || normalizeProvince(stripeAddress.state) !== normalizeProvince(issuer.province)
+    || normalizeIdentifier(stripeAddress.postal_code) !== normalizeIdentifier(issuer.postalCode)
     || (stripeAddress.country && stripeAddress.country !== 'CA')) {
     throw new Error('Stripe receipt unavailable: Stripe business address does not match the Locksmith issuer.');
   }
@@ -85,7 +92,7 @@ async function resolveCharge(invoice: any, jobId: string) {
     const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(invoice.stripeSessionId)}?expand[]=payment_intent`);
     const sessionIntentId = idOf(session.payment_intent);
     if (session.id !== invoice.stripeSessionId || session.payment_status !== 'paid'
-      || (session.client_reference_id && session.client_reference_id !== invoice.id)
+      || (session.client_reference_id && session.client_reference_id !== invoice.id && session.client_reference_id !== jobId)
       || (session.metadata?.invoiceId && session.metadata.invoiceId !== invoice.id)
       || (session.metadata?.jobId && session.metadata.jobId !== jobId)
       || sessionIntentId !== chargeIntentId) {

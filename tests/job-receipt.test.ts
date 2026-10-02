@@ -37,8 +37,8 @@ test('HST effective date compares the Toronto payment date to the registered cal
 
 test('receipt issuer validation requires Locksmith identity and a valid HST registration', () => {
   const issuer = {
-    code: 'LOCKSMITH', legalName: '1001348245 ONTARIO INC.', corporationNumber: '1001348245', email: 'bcltoronto1@gmail.com',
-    addressLine1: '27 Knollside Drive', city: 'Richmond Hill', province: 'Ontario', postalCode: 'L4C4W7', country: 'Canada',
+    code: 'LOCKSMITH', legalName: 'Better Call Locksmith Inc.', corporationNumber: '1001348245', email: 'bcltoronto1@gmail.com',
+    addressLine1: '222 Spadina Avenue, Unit 114', city: 'Toronto', province: 'Ontario', postalCode: 'M5T 3B3', country: 'Canada',
     hstRegistrationNumber: '70229 1725 RT0001', hstEffectiveDate: new Date('2026-01-01T00:00:00.000Z'), hstEnabled: true,
   };
   assert.equal(requireLocksmithReceiptIssuer(issuer).hstRegistrationNumber, '702291725RT0001');
@@ -53,8 +53,8 @@ test('historical Stripe documents retain their original issuer and tax presentat
 });
 
 const issuerFixture = {
-  code: 'LOCKSMITH', legalName: '1001348245 ONTARIO INC.', corporationNumber: '1001348245', email: 'bcltoronto1@gmail.com',
-  addressLine1: '27 Knollside Drive', city: 'Richmond Hill', province: 'Ontario', postalCode: 'L4C4W7', country: 'Canada',
+  code: 'LOCKSMITH', legalName: 'Better Call Locksmith Inc.', corporationNumber: '1001348245', email: 'bcltoronto1@gmail.com',
+  addressLine1: '222 Spadina Avenue, Unit 114', city: 'Toronto', province: 'Ontario', postalCode: 'M5T 3B3', country: 'Canada',
   hstRegistrationNumber: '702291725RT0001', hstEffectiveDate: new Date('2026-01-01T00:00:00.000Z'), hstEnabled: true,
 };
 const receiptFixture: { currentJob: any; receipts: any[]; issuer: any; prisma: any } = {
@@ -102,7 +102,7 @@ const { buildJobPaymentReceiptPdf, createOrLoadJobPaymentReceipt } = await impor
 test('receipt PDF builder emits a readable single-page PDF', async () => {
   const bytes = await buildJobPaymentReceiptPdf({
     receiptNumber: 'LR-1001-01', revision: 1, issuedAt: '2026-09-30T16:00:00Z', paidAt: '2026-09-30T15:00:00Z',
-    issuer: { legalName: '1001348245 ONTARIO INC.', corporationNumber: '1001348245', email: 'bcltoronto1@gmail.com', hstRegistrationNumber: '70229 1725 RT0001', address: '27 Knollside Drive, Richmond Hill, Ontario, L4C4W7, Canada' },
+    issuer: { legalName: 'Better Call Locksmith Inc.', corporationNumber: '1001348245', email: 'bcltoronto1@gmail.com', hstRegistrationNumber: '70229 1725 RT0001', address: '222 Spadina Avenue, Unit 114, Toronto, Ontario, M5T 3B3, Canada' },
     customer: { name: 'Example Customer' },
     job: { jobNumber: '1001', serviceType: 'Residential', description: 'Lock repair', serviceAddress: '1 Main Street', partsBreakdownReconciled: false, parts: [] },
     payment: { method: 'CASH' },
@@ -134,7 +134,7 @@ test('local receipt issuance verifies HST date, snapshots Locksmith identity, an
   const snapshot = issued.snapshot as any;
 
   assert.equal(issued.receiptNumber, 'LR-1001-01');
-  assert.equal(snapshot.issuer.legalName, '1001348245 ONTARIO INC.');
+  assert.equal(snapshot.issuer.legalName, 'Better Call Locksmith Inc.');
   assert.equal(snapshot.issuer.corporationNumber, '1001348245');
   assert.equal(snapshot.issuer.email, 'bcltoronto1@gmail.com');
   assert.equal(snapshot.issuer.hstRegistrationNumber, '70229 1725 RT0001');

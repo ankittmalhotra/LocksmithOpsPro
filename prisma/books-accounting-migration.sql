@@ -135,7 +135,7 @@ CREATE INDEX IF NOT EXISTS "AccountingAuditEvent_invoiceId_createdAt_idx" ON "Ac
 INSERT INTO "AccountingEntity" ("code", "legalName", "corporationNumber", "email", "addressLine1", "city", "province", "postalCode", "country", "authorizedPersonName", "authorizedPersonTitle", "hstRegistrationNumber", "partnerBillingAnchor")
 VALUES
   ('IT_MARKETING', '1001744934 ONTARIO INC.', '1001744934', NULL, NULL, NULL, 'Ontario', NULL, 'Canada', NULL, NULL, '752857771RT0001', DATE '2026-09-07'),
-  ('LOCKSMITH', '1001348245 ONTARIO INC.', '1001348245', 'bcltoronto1@gmail.com', '27 Knollside Drive', 'Richmond Hill', 'Ontario', 'L4C4W7', 'Canada', 'UMAR QURESHI', 'Director', NULL, DATE '2026-09-07')
+  ('LOCKSMITH', 'Better Call Locksmith Inc.', '1001348245', 'bcltoronto1@gmail.com', '222 Spadina Avenue, Unit 114', 'Toronto', 'Ontario', 'M5T 3B3', 'Canada', 'UMAR QURESHI', 'Director', NULL, DATE '2026-09-07')
 ON CONFLICT ("code") DO UPDATE SET
   "legalName" = EXCLUDED."legalName",
   "corporationNumber" = EXCLUDED."corporationNumber",

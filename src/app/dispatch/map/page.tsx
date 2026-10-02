@@ -83,6 +83,7 @@ export default function DispatchMapPage() {
   const [unmatched, setUnmatched] = useState(0);
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [mapError, setMapError] = useState('');
+  const [mapReady, setMapReady] = useState(false);
   const [query, setQuery] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const dateFilteredJobs = useMemo(() => jobs.filter((job) => isInDateRange(job, dateRange)), [jobs, dateRange]);
@@ -159,8 +160,14 @@ export default function DispatchMapPage() {
     try {
       map.current = new mapboxgl.Map({ container: mapContainer.current, style: 'mapbox://styles/mapbox/streets-v12', center: [-79.3832, 43.6532], zoom: 9 });
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-      map.current.on('load', () => map.current?.resize());
-      map.current.on('error', () => setMapError('The map tiles could not be loaded. Check that this Mapbox token allows Styles:Read access from this portal domain.'));
+      map.current.on('load', () => {
+        map.current?.resize();
+        setMapReady(true);
+        setMapError('');
+      });
+      map.current.on('error', () => {
+        setMapError('Mapbox could not load the map tiles. Check the public token’s Styles:Read access and allowed portal domains.');
+      });
       const observer = new ResizeObserver(() => map.current?.resize());
       observer.observe(mapContainer.current);
       return () => {
@@ -224,8 +231,9 @@ export default function DispatchMapPage() {
         {mapError && <p role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{mapError}</p>}
         {unmatched > 0 && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{unmatched} {unmatched === 1 ? 'address could' : 'addresses could'} not be matched and {unmatched === 1 ? 'is' : 'are'} omitted from the map.</p>}
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="relative min-h-[520px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm sm:min-h-[650px]">
-            <div ref={mapContainer} className="absolute inset-0" />
+          <div className="relative h-[65vh] min-h-[520px] max-h-[800px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm">
+            <div ref={mapContainer} className="absolute inset-0 h-full w-full" />
+            {!mapReady && !mapError && <div className="absolute inset-0 z-[1] grid place-items-center bg-slate-100/80 text-sm font-semibold text-slate-600"><span className="rounded-xl bg-white/95 px-4 py-3 shadow-sm">Loading Mapbox map…</span></div>}
             {(loading || geocoding) && <div className="absolute left-3 top-3 z-10 rounded-xl border border-white/70 bg-white/95 px-3 py-2 text-xs font-bold text-slate-700 shadow"><span className="inline-flex items-center gap-2"><span className="h-2 w-2 animate-pulse rounded-full bg-blue-600" />{loading ? 'Loading job history…' : `Locating addresses… ${completedLookups}/${addressGroups.length}`}</span></div>}
           </div>
           <aside className="flex max-h-[650px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

@@ -2,14 +2,15 @@ import { findJobsWithDetails } from '@/lib/job-helper';
 import {
   getRingCentralConnectionStatus,
   getCallDurationSeconds,
+  groupRingCentralInboundCalls,
   isCallForTarget,
+  isQualifyingRingCentralInboundCall,
   isRingCentralMissedInboundCall,
   isRingCentralVoicemail,
   ringCentralDateKey,
   ringCentralTorontoRange,
   RingCentralAuthRequiredError,
   setRingCentralTokenCookie,
-  uniqueInboundCalls,
 } from '@/lib/ringcentral';
 import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import {
@@ -59,6 +60,7 @@ export type RingCentralCallAnalytics = {
     sessionId: string | null;
     telephonySessionId: string | null;
     activityKind: 'answered' | 'missed' | 'voicemail';
+    countsAsReceived: boolean;
     missedOpportunity: boolean;
     callbackTime: string | null;
     voicemailTranscript: string | null;
@@ -97,27 +99,15 @@ function isSuccessfulCallback(record: ReturnType<typeof cachedRowToCallRecord>) 
 }
 
 function buildCallDetails(records: ReturnType<typeof cachedRowToCallRecord>[], callbackRecords: ReturnType<typeof cachedRowToCallRecord>[], targetPhoneNumbers: string[]) {
-  const grouped = new Map<string, ReturnType<typeof cachedRowToCallRecord>[]>();
-  for (const record of records) {
-    if (record.direction?.toLowerCase() !== 'inbound' || !isCallForTarget(record, targetPhoneNumbers)) continue;
-    const caller = normalizePhone(record.from?.phoneNumber);
-    if (!record.startTime || !caller) continue;
-    const key = `${ringCentralDateKey(record.startTime)}:${caller}`;
-    const group = grouped.get(key) || [];
-    group.push(record);
-    grouped.set(key, group);
-  }
-
-  return Array.from(grouped.values()).map((group) => {
-    const ordered = [...group].sort((left, right) => new Date(left.startTime || 0).getTime() - new Date(right.startTime || 0).getTime());
-    const realCalls = ordered.filter((record) => !isRingCentralVoicemail(record) && !isRingCentralMissedInboundCall(record) && (getCallDurationSeconds(record) === null || (getCallDurationSeconds(record) || 0) >= 30));
+  return groupRingCentralInboundCalls(records, targetPhoneNumbers).map((ordered) => {
+    const realCalls = ordered.filter(isQualifyingRingCentralInboundCall);
     const voicemailRecords = ordered.filter(isRingCentralVoicemail);
     const missedRecords = ordered.filter(isRingCentralMissedInboundCall);
     const primary = realCalls[0] || voicemailRecords[0] || missedRecords[0] || ordered[0];
     const missedActivity = [...missedRecords, ...voicemailRecords].sort((left, right) => new Date(right.startTime || 0).getTime() - new Date(left.startTime || 0).getTime())[0];
     const callerNumber = normalizePhone(primary.from?.phoneNumber);
     const missedAt = missedActivity?.startTime ? new Date(missedActivity.startTime).getTime() : 0;
-    const callback = callerNumber && missedAt
+    const callback = callerNumber.length >= 7 && missedAt
       ? callbackRecords
         .filter((record) => isSuccessfulCallback(record))
         .filter((record) => isCallForTarget(record, targetPhoneNumbers))
@@ -146,6 +136,7 @@ function buildCallDetails(records: ReturnType<typeof cachedRowToCallRecord>[], c
       sessionId: primary.sessionId || null,
       telephonySessionId: primary.telephonySessionId || null,
       activityKind,
+      countsAsReceived: realCalls.length > 0,
       missedOpportunity: realCalls.length === 0 && Boolean(missedActivity) && !callback,
       callbackTime: callback?.startTime || null,
       voicemailTranscript: voicemail?.voicemailTranscript || null,
@@ -174,7 +165,6 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     : {};
   const cachedRecords = cachedRows.map(cachedRowToCallRecord);
   const callbackRecords = callbackRows.map(cachedRowToCallRecord);
-  const calls = uniqueInboundCalls(cachedRecords, targetPhoneNumbers);
   const jobs = await findJobsWithDetails({
     where: {
       createdAt: {
@@ -185,12 +175,9 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     orderBy: { createdAt: 'asc' },
   });
 
-  const callRows = calls.map((call) => ({
-    call,
-    date: call.startTime ? ringCentralDateKey(call.startTime) : '',
-  }));
-
   const callDetails = buildCallDetails(cachedRecords, callbackRecords, targetPhoneNumbers);
+  // The card, graph and popup must all count the same daily lead rows.
+  const receivedCalls = callDetails.filter((call) => call.countsAsReceived);
   const missedOpportunities = callDetails.filter((call) => call.missedOpportunity).length;
 
   const dailyByDate = new Map<string, { received: number; converted: number }>();
@@ -207,7 +194,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     };
   });
 
-  for (const row of callRows) {
+  for (const row of receivedCalls) {
     const daily = dailyByDate.get(row.date);
     if (!daily) continue;
     daily.received += 1;
@@ -245,9 +232,9 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
       summary: { ...summary, conversionRate: percent(summary.converted, summary.received), missedOpportunities },
       daily,
       callDetails,
-      totalCalls: callRows.length,
+      totalCalls: receivedCalls.length,
       totalConvertedCalls,
-      conversionRate: percent(totalConvertedCalls, callRows.length),
+      conversionRate: percent(totalConvertedCalls, receivedCalls.length),
       lastSyncedAt: syncState?.lastSuccessAt?.toISOString(),
       voicemailPermissionDenied: Boolean(syncMetadata.voicemailPermissionDenied),
       syncError: syncState?.lastError || undefined,

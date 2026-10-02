@@ -689,42 +689,55 @@ function normalizeCallerPhone(value?: string) {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
+export function isQualifyingRingCentralInboundCall(record: RingCentralCallRecord) {
+  // Unknown durations remain eligible for older cached payloads. Explicitly
+  // missed calls and voicemails never count, even if ringing lasted 30+ seconds.
+  return record.direction?.toLowerCase() === 'inbound'
+    && !isRingCentralVoicemail(record)
+    && !isRingCentralMissedInboundCall(record);
+}
+
+export function groupRingCentralInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string | string[]) {
+  const inbound = records.filter((record) => record.direction?.toLowerCase() === 'inbound'
+    && isCallForTarget(record, targetPhoneNumber)
+    && record.startTime && Number.isFinite(new Date(record.startTime).getTime()));
+  const sessionKey = (record: RingCentralCallRecord) => {
+    const identity = record.telephonySessionId ? `telephony:${record.telephonySessionId}`
+      : record.sessionId ? `session:${record.sessionId}`
+      : record.id ? `id:${record.id}`
+      : record.sourceKey ? `source:${record.sourceKey}` : null;
+    return identity ? `${ringCentralDateKey(record.startTime!)}:${identity}` : null;
+  };
+
+  // A leg with hidden caller ID can still belong to a session whose other leg
+  // provides the number. Resolve those sessions before grouping daily leads.
+  const sessionCallers = new Map<string, string>();
+  for (const record of inbound) {
+    const caller = normalizeCallerPhone(record.from?.phoneNumber);
+    const session = sessionKey(record);
+    if (caller.length >= 7 && session && !sessionCallers.has(session)) sessionCallers.set(session, caller);
+  }
+
+  const grouped = new Map<string, RingCentralCallRecord[]>();
+  inbound.forEach((record, index) => {
+    const session = sessionKey(record);
+    const caller = (session && sessionCallers.get(session)) || normalizeCallerPhone(record.from?.phoneNumber);
+    const date = ringCentralDateKey(record.startTime!);
+    // Never group every anonymous caller together, or infer identity from a
+    // caller name. Without a number, deduplicate only a known session/record.
+    const key = caller.length >= 7 ? `${date}:phone:${caller}`
+      : session || `${date}:anonymous:${index}`;
+    const group = grouped.get(key) || [];
+    group.push(record);
+    grouped.set(key, group);
+  });
+  return Array.from(grouped.values()).map((group) => group.sort((left, right) =>
+    new Date(left.startTime!).getTime() - new Date(right.startTime!).getTime()));
+}
+
 export function uniqueInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string | string[]) {
-  const filtered = records
-    .filter((record) => record.direction?.toLowerCase() === 'inbound' && isCallForTarget(record, targetPhoneNumber))
-    .filter((record) => !isRingCentralVoicemail(record))
-    .filter((record) => {
-      const duration = getCallDurationSeconds(record);
-      // Keep records with no duration for backwards compatibility with older
-      // call-log payloads, but exclude known calls shorter than 30 seconds.
-      return duration === null || duration >= MIN_REAL_CALL_DURATION_SECONDS;
-    });
-
-  const seenSessions = new Set<string>();
-  const sessionDeduped = filtered.filter((record) => {
-    const key = record.telephonySessionId || record.sessionId || record.id;
-    if (!key) return true;
-    if (seenSessions.has(key)) return false;
-    seenSessions.add(key);
-    return true;
-  });
-
-  // Preserve the earliest qualifying call so a later job on the same day can
-  // still be matched to the lead's first call.
-  sessionDeduped.sort((left, right) => {
-    const leftTime = left.startTime ? new Date(left.startTime).getTime() : Number.MAX_SAFE_INTEGER;
-    const rightTime = right.startTime ? new Date(right.startTime).getTime() : Number.MAX_SAFE_INTEGER;
-    return leftTime - rightTime;
-  });
-
-  const seenLeads = new Set<string>();
-  return sessionDeduped.filter((record) => {
-    const callerPhone = normalizeCallerPhone(record.from?.phoneNumber);
-    if (!callerPhone || callerPhone.length < 7 || !record.startTime) return true;
-
-    const leadKey = `${ringCentralDateKey(record.startTime)}:${callerPhone}`;
-    if (seenLeads.has(leadKey)) return false;
-    seenLeads.add(leadKey);
-    return true;
-  });
+  return groupRingCentralInboundCalls(records, targetPhoneNumber)
+    .map((group) => group.find(isQualifyingRingCentralInboundCall))
+    .filter((record): record is RingCentralCallRecord => Boolean(record))
+    .sort((left, right) => new Date(left.startTime!).getTime() - new Date(right.startTime!).getTime());
 }

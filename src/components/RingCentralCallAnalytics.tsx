@@ -34,6 +34,7 @@ type CallAnalytics = {
     sessionId: string | null;
     telephonySessionId: string | null;
     activityKind: 'answered' | 'missed' | 'voicemail';
+    countsAsReceived: boolean;
     missedOpportunity: boolean;
     callbackTime: string | null;
     voicemailTranscript: string | null;
@@ -102,6 +103,7 @@ export default function RingCentralCallAnalytics({
   const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
   const [loading, setLoading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [detailsView, setDetailsView] = useState<'received' | 'missed' | 'all'>('received');
   const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {
@@ -169,6 +171,10 @@ export default function RingCentralCallAnalytics({
   const periodLabel = activeRange === 'last-week' ? 'last 7 days' : activeRange === 'yesterday' ? 'yesterday' : 'today';
   const summary = analytics?.summary || { received: 0, converted: 0, conversionRate: 0, missedOpportunities: 0 };
   const maxDailyCalls = useMemo(() => Math.max(1, ...daily.map((day) => Math.max(day.received, day.converted))), [daily]);
+  const allDetails = analytics?.callDetails || [];
+  const receivedDetails = allDetails.filter((call) => call.countsAsReceived);
+  const missedDetails = allDetails.filter((call) => !call.countsAsReceived);
+  const visibleDetails = detailsView === 'received' ? receivedDetails : detailsView === 'missed' ? missedDetails : allDetails;
 
   return (
     <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-sm" aria-labelledby="call-analytics-title">
@@ -193,7 +199,7 @@ export default function RingCentralCallAnalytics({
           )}
           <button
             type="button"
-            onClick={() => setShowDetails(true)}
+            onClick={() => { setDetailsView('received'); setShowDetails(true); }}
             disabled={loading || !analytics?.callDetails}
             className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -257,7 +263,7 @@ export default function RingCentralCallAnalytics({
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Calls received · {activeRangeLabel}</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-blue-700">{summary.received}</div>
-              <p className="mt-auto pt-1 text-[11px] text-slate-500">30+ sec calls; repeat callers counted once</p>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">30+ sec answered calls; repeat callers counted once per day</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted · {activeRangeLabel}</div>
@@ -338,14 +344,32 @@ export default function RingCentralCallAnalytics({
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
               <div>
                 <h2 id="call-details-title" className="text-base font-black text-slate-900">Call details · {activeRangeLabel}</h2>
-                <p className="mt-1 text-xs text-slate-500">{analytics.callDetails?.length || 0} inbound lead activit{analytics.callDetails?.length === 1 ? 'y' : 'ies'} · Toronto time</p>
+                <p className="mt-1 text-xs text-slate-500">{receivedDetails.length} calls received · {missedDetails.length} other call activities · Toronto time</p>
               </div>
               <button type="button" onClick={() => setShowDetails(false)} className="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close call details">×</button>
             </div>
 
             <div className="overflow-auto p-4 sm:p-6">
-              {!analytics.callDetails || analytics.callDetails.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">No qualifying calls found for this period.</div>
+              <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Call detail category">
+                {([
+                  { value: 'received', label: 'Received calls', count: receivedDetails.length },
+                  { value: 'missed', label: 'Missed / voicemail / short', count: missedDetails.length },
+                  { value: 'all', label: 'All activity', count: allDetails.length },
+                ] as const).map((view) => (
+                  <button
+                    key={view.value}
+                    type="button"
+                    aria-pressed={detailsView === view.value}
+                    onClick={() => setDetailsView(view.value)}
+                    className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${detailsView === view.value ? 'border-blue-200 bg-blue-50 text-blue-700' : view.value === 'missed' && summary.missedOpportunities > 0 ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    {view.label} ({view.count})
+                  </button>
+                ))}
+              </div>
+              <p className="mb-4 text-[11px] text-slate-500">Received calls match the card and graph. Missed calls, voicemail and calls under 30 seconds are shown separately and do not increase that total. Known callers count once per Toronto day; unknown numbers count by call session.</p>
+              {visibleDetails.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">{detailsView === 'received' ? 'No qualifying calls received for this period.' : detailsView === 'missed' ? 'No missed calls, voicemail or short calls for this period.' : 'No inbound call activity for this period.'}</div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
                   <table className="min-w-[1240px] w-full border-collapse text-left text-xs">
@@ -363,8 +387,8 @@ export default function RingCentralCallAnalytics({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {analytics.callDetails.map((call, index) => (
-                        <tr key={call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`} className={`align-top transition ${call.missedOpportunity ? 'bg-rose-50/80 hover:bg-rose-100/80' : 'hover:bg-blue-50/40'}`}>
+                      {visibleDetails.map((call, index) => (
+                        <tr key={`${call.date}:${call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`}`} className={`align-top transition ${call.missedOpportunity ? 'bg-rose-50/80 hover:bg-rose-100/80' : 'hover:bg-blue-50/40'}`}>
                           <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{formatCallTime(call.time, true)}</td>
                           <td className="px-4 py-3">
                             <div className="font-bold text-slate-900">{formatPhoneNumber(call.callerNumber)}</div>
@@ -386,6 +410,7 @@ export default function RingCentralCallAnalytics({
                               <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">{call.activityKind}</span>
                             )}
                             {call.callbackTime && <div className="mt-1 text-[11px] text-slate-500">Callback: {formatCallTime(call.callbackTime)}</div>}
+                            <div className="mt-1 text-[10px] text-slate-500">{call.countsAsReceived ? 'Included in received total' : 'Not included in received total'}</div>
                           </td>
                           <td className="px-4 py-3">
                             <div className="font-semibold text-slate-800">{displayValue(call.result)}</div>

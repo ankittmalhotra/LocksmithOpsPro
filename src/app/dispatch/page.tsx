@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
-import { DEFAULT_MANUAL_CARD_SURCHARGE_RATE, roundToTwo } from '@/lib/calculations';
+import { calculateDualPriceManualCardQuote, DEFAULT_CARD_PRICE_DIFFERENCE_RATE, MAX_CARD_PRICE_DIFFERENCE_RATE, roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
@@ -48,7 +48,7 @@ function validateManualForm(form: Record<string, string>) {
   }
   if (!Number.isFinite(Number(form.totalAmountCollected)) || Number(form.totalAmountCollected) <= 0) {
     return pendingCardPayment
-      ? 'Amount to be collected excluding tax must be greater than 0.'
+      ? 'Non-card price before tax must be greater than 0.'
       : 'Total amount collected must be greater than 0.';
   }
   if (!Number.isFinite(Number(form.cogsAmount)) || Number(form.cogsAmount) < 0) {
@@ -58,9 +58,18 @@ function validateManualForm(form: Record<string, string>) {
     return 'Technician commission must be a valid non-negative amount.';
   }
   if (pendingCardPayment) {
-    const cardFeePercent = Number(form.cardSurchargeRate);
-    if (!Number.isFinite(cardFeePercent) || cardFeePercent < 0 || cardFeePercent > 100) {
-      return 'Card processing fee must be between 0% and 100%.';
+    const priceDifferencePercent = Number(form.cardPriceDifferenceRate);
+    if (!Number.isFinite(priceDifferencePercent) || priceDifferencePercent < 0 || priceDifferencePercent > MAX_CARD_PRICE_DIFFERENCE_RATE * 100) {
+      return `Card-price difference must be between 0% and ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.`;
+    }
+    if (form.customerAcceptedCardPrice !== 'yes') {
+      return 'Confirm that the customer explicitly accepted the card price shown above.';
+    }
+    if (!['VERBAL', 'WRITTEN'].includes(form.quoteAcceptanceMethod)) {
+      return 'Select whether the customer accepted verbally or in writing.';
+    }
+    if (!form.quoteAcceptanceEvidence?.trim()) {
+      return 'Add a note recording how the customer accepted the card price.';
     }
   }
   if (!form.technicianId) {
@@ -82,6 +91,7 @@ interface Job {
   workerCommission: number;
   workerCommissionRate: number;
   status: string;
+  receiptState?: 'local_ready' | 'stripe_ready' | 'stripe_partial_refund' | 'payment_pending' | 'off_books' | 'provider_missing' | 'refunded' | 'ineligible';
   isAbandoned: boolean;
   isManual?: boolean;
   createdAt: string;
@@ -118,8 +128,17 @@ interface Job {
     paymentMethod: string;
     taxCollected?: boolean;
     cardSurchargeRate?: number;
+    cardPriceDifferenceRate?: number | null;
+    pricingModel?: string | null;
+    nonCardPrice?: number | null;
+    cardPrice?: number | null;
+    acceptedPriceOption?: string | null;
+    quoteAcceptanceMethod?: string | null;
+    quoteAcceptanceEvidence?: string | null;
     paidAt?: string | null;
     paymentStatus: string;
+    paymentProvider?: string | null;
+    stripeInvoiceId?: string | null;
     stripePaymentUrl?: string | null;
     stripePaymentLinkExpiresAt?: string | null;
     paymentUrl?: string | null;
@@ -258,7 +277,10 @@ export default function DispatchPage() {
     description: '',
     paymentMethod: 'CASH',
     paymentStatus: 'PAID',
-    cardSurchargeRate: String(DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100),
+    cardPriceDifferenceRate: String(DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100),
+    customerAcceptedCardPrice: 'no',
+    quoteAcceptanceMethod: 'VERBAL',
+    quoteAcceptanceEvidence: '',
     cogsAmount: '0.00',
     totalAmountCollected: '',
     taxCollected: 'yes',
@@ -557,7 +579,14 @@ export default function DispatchPage() {
   };
 
   const updateManualField = (field: string, value: string) => {
-    setManualForm((current) => ({ ...current, [field]: value }));
+    const changesQuote = ['totalAmountCollected', 'cardPriceDifferenceRate', 'paymentMethod', 'paymentStatus'].includes(field);
+    setManualForm((current) => ({
+      ...current,
+      [field]: value,
+      ...(changesQuote && current[field] !== value
+        ? { customerAcceptedCardPrice: 'no', quoteAcceptanceEvidence: '' }
+        : {}),
+    }));
   };
 
   const resetManualJob = () => {
@@ -565,7 +594,10 @@ export default function DispatchPage() {
       jobNumber: '', jobDate: formatTorontoDateInput(), customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
       serviceType: MANUAL_SERVICE_TYPES[0], jobReceivedTimeSlot: '', otherServiceType: '', description: '', paymentMethod: 'CASH',
       paymentStatus: 'PAID',
-      cardSurchargeRate: String(DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100),
+      cardPriceDifferenceRate: String(DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100),
+      customerAcceptedCardPrice: 'no',
+      quoteAcceptanceMethod: 'VERBAL',
+      quoteAcceptanceEvidence: '',
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
       otherTechnicianName: '',
       technicianCommission: '0.00',
@@ -603,10 +635,13 @@ export default function DispatchPage() {
       description: job.problemDescription,
       paymentMethod: job.invoice?.paymentMethod || 'CASH',
       paymentStatus: job.invoice?.paymentStatus === 'PENDING' ? 'PENDING' : 'PAID',
-      cardSurchargeRate: (job.invoice?.paymentStatus === 'PENDING'
+      cardPriceDifferenceRate: (job.invoice?.paymentStatus === 'PENDING'
         && isCardPaymentMethod(job.invoice?.paymentMethod || '')
-        ? Number(job.invoice?.cardSurchargeRate ?? DEFAULT_MANUAL_CARD_SURCHARGE_RATE) * 100
-        : DEFAULT_MANUAL_CARD_SURCHARGE_RATE).toFixed(2),
+        ? Number(job.invoice?.cardPriceDifferenceRate ?? DEFAULT_CARD_PRICE_DIFFERENCE_RATE) * 100
+        : DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100).toFixed(2),
+      customerAcceptedCardPrice: job.invoice?.acceptedPriceOption === 'CARD' ? 'yes' : 'no',
+      quoteAcceptanceMethod: job.invoice?.quoteAcceptanceMethod || 'VERBAL',
+      quoteAcceptanceEvidence: job.invoice?.quoteAcceptanceEvidence || '',
       cogsAmount: Number(job.invoice?.cogsAmount || 0).toFixed(2),
       totalAmountCollected: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
       taxCollected: job.invoice?.taxCollected === false ? 'no' : 'yes',
@@ -879,6 +914,14 @@ export default function DispatchPage() {
             )}
           </section>
   );
+
+  const pendingCardQuote = manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod);
+  const enteredNonCardPrice = Number(manualForm.totalAmountCollected);
+  const enteredCardDifference = Number(manualForm.cardPriceDifferenceRate) / 100;
+  const manualDualPriceQuote = pendingCardQuote && Number.isFinite(enteredNonCardPrice) && enteredNonCardPrice > 0
+    && Number.isFinite(enteredCardDifference) && enteredCardDifference >= 0 && enteredCardDifference <= MAX_CARD_PRICE_DIFFERENCE_RATE
+    ? calculateDualPriceManualCardQuote({ nonCardPrice: enteredNonCardPrice, cardPriceDifferenceRate: enteredCardDifference })
+    : null;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -1565,7 +1608,7 @@ export default function DispatchPage() {
                         <td className="py-3 px-3 whitespace-nowrap text-slate-700">{job.invoice ? `$${Number(job.invoice.cogsAmount || 0).toFixed(2)}` : '—'}</td>
                         <td className="py-3 px-3 whitespace-nowrap text-amber-700">{job.invoice ? `$${Number(job.invoice.taxAmount || 0).toFixed(2)}` : '—'}</td>
                         <td className="py-3 px-3 whitespace-nowrap">{job.invoice ? <span className={job.invoice.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>{job.invoice.taxCollected === false ? 'Off books' : 'On books'}</span> : '—'}</td>
-                        <td className="py-3 px-3 text-right whitespace-nowrap"><Link href={`/dispatch/jobs/${job.id}`} className="rounded-lg bg-blue-50 px-2.5 py-1.5 font-bold text-blue-700 hover:bg-blue-100">View</Link>{job.isManual && <><button type="button" onClick={() => openEditManualJob(job)} className="ml-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 font-bold text-slate-700 hover:bg-slate-200">Edit</button><button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="ml-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">Delete</button></>}</td>
+                        <td className="py-3 px-3 text-right whitespace-nowrap"><Link href={`/dispatch/jobs/${job.id}`} className="rounded-lg bg-blue-50 px-2.5 py-1.5 font-bold text-blue-700 hover:bg-blue-100">View</Link>{job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="ml-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-bold text-emerald-700 hover:bg-emerald-100" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}{job.isManual && <><button type="button" onClick={() => openEditManualJob(job)} className="ml-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 font-bold text-slate-700 hover:bg-slate-200">Edit</button><button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="ml-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">Delete</button></>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1684,6 +1727,8 @@ export default function DispatchPage() {
                       >
                         View / Edit
                       </Link>
+                      {job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="rounded-lg bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 hover:bg-emerald-100" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}
+                      {job.status === 'COMPLETED' && job.receiptState && !['local_ready', 'stripe_ready', 'stripe_partial_refund'].includes(job.receiptState) && <span className="text-[10px] text-slate-500">{job.receiptState === 'payment_pending' ? 'Receipt unavailable: payment pending' : job.receiptState === 'off_books' ? 'Receipt unavailable: off books' : job.receiptState === 'provider_missing' ? 'Receipt unavailable: payment provider not verified' : job.receiptState === 'refunded' ? 'Receipt unavailable: refunded' : ''}</span>}
                     </div>
                   </div>
                 );
@@ -1782,19 +1827,19 @@ export default function DispatchPage() {
                   <option value="PAID">Received</option>
                   <option value="PENDING">Pending</option>
                 </select>
-                {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod) && (
-                  <p className="mt-1 text-[10px] text-blue-700">After saving, you can generate a payment link and prepare an SMS for the customer.</p>
+                {pendingCardQuote && (
+                  <p className="mt-1 text-[10px] text-blue-700">After saving, you can generate a payment link and prepare an SMS for the customer. The link uses the card price the customer accepted.</p>
                 )}
               </div>
               <div>
                 <label className="field-label">
-                  {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod)
-                    ? 'Amount to be collected (excluding tax) *'
+                  {pendingCardQuote
+                    ? 'Non-card price before tax *'
                     : 'Total amount collected *'}
                 </label>
                 <input
-                  aria-label={manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod)
-                    ? 'Amount to be collected excluding tax'
+                  aria-label={pendingCardQuote
+                    ? 'Non-card price before tax'
                     : 'Total amount collected'}
                   required
                   type="number"
@@ -1804,16 +1849,49 @@ export default function DispatchPage() {
                   onChange={(e) => updateManualField('totalAmountCollected', e.target.value)}
                   className="field-input"
                 />
-                {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod) && (
-                  <p className="mt-1 text-[10px] text-blue-700">Stripe will calculate Ontario HST at Checkout.</p>
+                {pendingCardQuote && (
+                  <p className="mt-1 text-[10px] text-blue-700">Enter the lower non-card price before HST. Both options and estimated Ontario HST totals are shown below before recording acceptance.</p>
                 )}
               </div>
-              {manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod) && (
+              {pendingCardQuote && (
                 <div>
-                  <label className="field-label">Card processing fee (%) *</label>
-                  <input aria-label="Card processing fee percentage" required type="number" min="0" max="100" step="0.01" value={manualForm.cardSurchargeRate} onChange={(e) => updateManualField('cardSurchargeRate', e.target.value)} className="field-input" />
-                  <p className="mt-1 text-[10px] text-slate-500">Default 4%. This appears as a separate taxable card fee.</p>
+                  <label className="field-label">Card-price difference (%) *</label>
+                  <input aria-label="Card-price difference percentage" required type="number" min="0" max={MAX_CARD_PRICE_DIFFERENCE_RATE * 100} step="0.01" value={manualForm.cardPriceDifferenceRate} onChange={(e) => updateManualField('cardPriceDifferenceRate', e.target.value)} className="field-input" />
+                  <p className="mt-1 text-[10px] text-slate-500">This sets the separately quoted card price. It is not added as a card surcharge, processing fee, or admin fee line.</p>
                 </div>
+              )}
+              {pendingCardQuote && manualDualPriceQuote && (
+                <section className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50 p-3" aria-live="polite" aria-label="Customer price options">
+                  <h3 className="text-xs font-black text-slate-900">Show both prices and estimated tax before the customer approves</h3>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-bold text-slate-600">Non-card price</p>
+                      <p className="text-base font-black text-slate-900">${manualDualPriceQuote.nonCardPrice.toFixed(2)} + ${manualDualPriceQuote.nonCardTaxEstimate.toFixed(2)} estimated HST</p>
+                      <p className="text-xs font-bold text-slate-700">Estimated total: ${manualDualPriceQuote.nonCardTotalEstimate.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-lg border border-blue-300 bg-white p-3">
+                      <p className="text-[11px] font-bold text-blue-800">Card price · {Number(manualForm.cardPriceDifferenceRate || 0).toFixed(2)}% price difference</p>
+                      <p className="text-base font-black text-slate-900">${manualDualPriceQuote.cardPrice.toFixed(2)} + ${manualDualPriceQuote.cardTaxEstimate.toFixed(2)} estimated HST</p>
+                      <p className="text-xs font-bold text-slate-700">Estimated total: ${manualDualPriceQuote.cardTotalEstimate.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[10px] text-slate-700">For an Ontario taxable service, these totals estimate 13% HST. Stripe calculates final tax using the customer’s billing location. The customer must see and accept the selected price before approval; this portal form records the dispatcher’s acceptance record and does not itself send the quote.</p>
+                  <label className="mt-3 flex items-start gap-2 text-[11px] font-bold text-slate-800">
+                    <input type="checkbox" className="mt-0.5" checked={manualForm.customerAcceptedCardPrice === 'yes'} onChange={(e) => updateManualField('customerAcceptedCardPrice', e.target.checked ? 'yes' : 'no')} />
+                    Customer explicitly accepted the displayed card price and was shown both options and the estimated tax-inclusive totals.
+                  </label>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <label className="text-[10px] font-bold text-slate-700">Acceptance method
+                      <select aria-label="Quote acceptance method" className="field-input mt-1 bg-white" value={manualForm.quoteAcceptanceMethod} onChange={(e) => updateManualField('quoteAcceptanceMethod', e.target.value)}>
+                        <option value="VERBAL">Verbal</option><option value="WRITTEN">Written</option>
+                      </select>
+                    </label>
+                    <label className="text-[10px] font-bold text-slate-700">Acceptance note *
+                      <input aria-label="Quote acceptance note" required maxLength={500} className="field-input mt-1" value={manualForm.quoteAcceptanceEvidence} onChange={(e) => updateManualField('quoteAcceptanceEvidence', e.target.value)} placeholder="When/how the customer accepted" />
+                    </label>
+                  </div>
+                  <p className="mt-2 text-[10px] text-amber-800">Use this dual-price presentation only after Locksmith’s processor and accountant confirm the pricing and HST treatment.</p>
+                </section>
               )}
               <div>
                 <label className="field-label">COGS (Parts, etc.) amount *</label>

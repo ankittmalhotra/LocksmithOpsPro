@@ -120,6 +120,7 @@ enum PaymentMethod {
 enum PaymentStatus {
   PENDING
   PAID
+  PARTIALLY_REFUNDED
   REFUNDED
 }
 
@@ -258,6 +259,17 @@ model Invoice {
   taxAmount            Float   @default(0.0)
   cardSurchargeRate    Float   @default(0.024) // Compliant 2.4% Canadian card cost-of-acceptance
   cardSurchargeAmount  Float   @default(0.0)
+  // New manual Checkout quotes persist both disclosed prices and proof of
+  // which customer-approved option is being collected. Null denotes legacy.
+  pricingModel             String?
+  nonCardPrice             Float?
+  cardPrice                Float?
+  cardPriceDifferenceRate  Float?
+  acceptedPriceOption      String?
+  quoteAcceptanceMethod    String?
+  quoteAcceptedAt          DateTime?
+  quoteAcceptedById        String?
+  quoteAcceptanceEvidence String?
   grandTotal           Float // Final amount billed
   totalAmountCollected Float   @default(0.0)
   taxCollected         Boolean @default(true)
@@ -288,6 +300,30 @@ model Invoice {
 
   paidAt    DateTime?
   createdAt DateTime  @default(now())
+
+  jobReceipts JobPaymentReceipt[]
+}
+
+// Locally issued operational receipts are immutable audit records. The PDF
+// bytes and the exact values used to render them are retained together.
+model JobPaymentReceipt {
+  id              String   @id @default(uuid())
+  invoiceId       String
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  receiptNumber   String   @unique
+  revision        Int
+  issuedAt        DateTime @default(now())
+  issuedById      String
+  snapshot        Json
+  pdfBytes        Bytes
+  voidedAt        DateTime?
+  voidReason      String?
+  replacementId   String?  @unique
+  replacement    JobPaymentReceipt? @relation("JobPaymentReceiptReplacement", fields: [replacementId], references: [id])
+  replacedReceipt JobPaymentReceipt? @relation("JobPaymentReceiptReplacement")
+
+  @@unique([invoiceId, revision])
+  @@index([invoiceId, voidedAt])
 }
 
 // Stripe may retry an event. A durable event ID makes webhook processing

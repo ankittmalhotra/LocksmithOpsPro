@@ -74,6 +74,9 @@ Before deploying a build that uses the additive dispatcher-edit and manual-job f
 
 - `prisma/job-updated-at-migration.sql` adds `Job.updatedAt` for dispatcher edit concurrency.
 - `prisma/manual-job-received-time-migration.sql` adds `Job.jobReceivedTimeSlot` for the manual-job intake window.
+- `prisma/job-payment-receipts-migration.sql` adds immutable local job receipt snapshots. Apply it before deploying the receipt endpoints.
+- `prisma/job-dual-pricing-migration.sql` adds nullable versioned dual-price quote and acceptance fields to invoices. Apply it before deploying the pending-card quote UI/API; legacy rows remain `NULL` and keep their prior interpretation.
+- `prisma/locksmith-hst-registration-migration.sql` updates only the Locksmith Books entity with the business-supplied HST number and effective date. Apply it after confirming the issuer row's name and address.
 
 These migrations are additive and preserve existing job business data. Existing rows receive a migration-time default for the new non-null `updatedAt` column, while existing `jobReceivedTimeSlot` values remain `NULL` until a manual job is edited or recorded with a time window. Verify both columns exist before serving the new application build.
 
@@ -86,9 +89,19 @@ ADMIN_PASSWORD="a-strong-admin-password"
 NEXT_PUBLIC_APP_URL="https://your-domain.example"
 STRIPE_SECRET_KEY="sk_live_..."
 STRIPE_WEBHOOK_SECRET="whsec_..."
+# Optional account pin; when set, Stripe receipt requests must match this account.
+LOCKSMITH_STRIPE_ACCOUNT_ID="acct_..."
+# Set true only after Locksmith's payment processor and accountant approve the dual-price presentation and HST treatment.
+LOCKSMITH_DUAL_PRICING_APPROVED="false"
 # Optional for the current hosted Checkout redirect:
 STRIPE_PUBLISHABLE_KEY="pk_live_..."
 ```
+
+Job receipts are limited to Admin and Dispatcher users. Verify the `LOCKSMITH` accounting entity has the legal identity/address registered for Locksmith, HST number `702291725RT0001`, HST enabled, and effective date `2026-01-01`. Apply the Locksmith HST migration to an existing database; seed/default changes do not update an existing row. Stripe receipt requests check the live account's legal name, address, and HST ID against this entity; set `LOCKSMITH_STRIPE_ACCOUNT_ID` to pin the expected account when available. Test a payment and inspect the hosted receipt and paid invoice PDF for the corporation/business ID, legal name, address, HST registration, and tax before sending new customers to Stripe. Stripe documents for older jobs remain the original documents already issued by Stripe. Newly generated local receipts require a payment date on or after the HST effective date. The receipt endpoints fail closed when issuer configuration is incomplete or mismatched. Do not use the IT Marketing HST number.
+
+New pending-card manual quotes use `DUAL_PRICE_V1`: both the lower non-card price and the higher card price are stored, with dispatcher-entered customer acceptance evidence. Stripe Checkout receives only the accepted card service price and calculates tax; the portal does not add a card/admin fee line. Keep `LOCKSMITH_DUAL_PRICING_APPROVED=false` until the processor and accountant review the presentation and HST treatment. The quote form shows Ontario tax-inclusive estimates; Stripe Checkout must show its final billing-location tax total before card authorization. Existing legacy invoice rows with no pricing model are not silently converted; re-quote them before creating a new payment link. Previously paid Stripe jobs continue to expose Stripe's original hosted receipt and paid invoice without rewriting the issued document. Apply `prisma/job-dual-pricing-migration.sql` before deployment.
+
+Configure the Stripe webhook to deliver `charge.refunded` so fully refunded Stripe payments lose receipt eligibility. Partial refunds remain linked to Stripe's original document and should be reconciled with the customer separately.
 
 `ADMIN_PASSWORD` is used only for the built-in Admin login. Staff accounts created from the Admin console receive their own password hash. Do not use the development fallback password in production.
 
@@ -186,13 +199,13 @@ Vercel will run `prisma generate && next build` automatically. Within 60 seconds
    - `invoice.paid`
    - `invoice.payment_failed`
    - `invoice.sent`
+   - `charge.refunded`
 4. Copy the Signing Secret into Vercel as `STRIPE_WEBHOOK_SECRET`.
 5. Enable **Stripe Tax** and configure the business address and Ontario tax
-   registration in Stripe Tax settings. Pending manual card Checkout Sessions
-   send two taxable exclusive line items: the service amount and the
-   dispatcher-configured card processing fee (default 4%). Stripe calculates
-   the final tax from the customer's billing address and displays the service,
-   card fee, and tax separately.
+   registration in Stripe Tax settings. New manual card quotes use the
+   accepted card price as one taxable service line; Stripe calculates the
+   final tax from the customer's billing address. No separate card/admin fee
+   line is added to the new dual-price invoice.
 
 For local testing, use the Stripe CLI instead of a Dashboard endpoint:
 
@@ -204,11 +217,12 @@ stripe listen --forward-to localhost:3000/api/webhooks/stripe
 Copy the `whsec_...` value printed by the CLI into local `.env`. The CLI
 secret and a Dashboard endpoint secret are different and must not be mixed.
 
-Pending Credit Card/Debit Card manual jobs create a hosted Checkout Session.
-The dispatcher enters the service amount before tax and can change the card
-processing fee percentage (default 4%). For example, a $100 service amount
-creates a $100 service line, a $4 card processing fee line, and Stripe Tax
-calculates the Ontario tax on the taxable $104 subtotal.
+Pending Credit Card/Debit Card manual jobs create a hosted Checkout Session
+after the customer has accepted the disclosed card price. For example, a $100
+non-card price and 4% price difference are stored as $100 and $104 before tax;
+the Stripe invoice contains the accepted $104 service line, with tax calculated
+by Stripe. The portal does not represent the difference as a separate card or
+admin fee.
 The customer enters their email on Stripe Checkout. Stripe then creates and
 sends the paid invoice after successful payment. The application updates its
 invoice only from verified Stripe webhooks, not from the success redirect.

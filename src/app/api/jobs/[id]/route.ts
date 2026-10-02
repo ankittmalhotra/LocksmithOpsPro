@@ -15,6 +15,7 @@ import {
 } from '@/lib/job-workflow';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { getJobReceiptState } from '@/lib/job-receipt';
 
 const DISPATCHER_STATUSES = [
   'NEW',
@@ -105,7 +106,7 @@ async function handleGET(
       return NextResponse.json({ success: true, job: toTechnicianJobPayload(job) });
     }
 
-    return NextResponse.json({ success: true, job });
+    return NextResponse.json({ success: true, job: { ...job, receiptState: getJobReceiptState(job) } });
   } catch (err: any) {
     logCaughtRequestError(request, '/api/jobs/[id]', err);
     return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to load job') }, { status: 500 });

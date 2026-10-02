@@ -34,7 +34,7 @@ export interface AccountingEntitySummary {
 /** Values used when an entity has not yet been inserted by the seed/bootstrap. */
 export const ACCOUNTING_ENTITY_DEFAULTS: Record<
   AccountingEntityCode,
-  Omit<AccountingEntitySummary, 'id' | 'hstEffectiveDate' | 'hstEnabled' | 'currency'> & {
+  Omit<AccountingEntitySummary, 'id' | 'currency'> & {
     partnerBillingAnchor: string;
   }
 > = {
@@ -51,6 +51,8 @@ export const ACCOUNTING_ENTITY_DEFAULTS: Record<
     authorizedPersonName: null,
     authorizedPersonTitle: null,
     hstRegistrationNumber: '752857771RT0001',
+    hstEffectiveDate: null,
+    hstEnabled: false,
     partnerBillingAnchor: '2026-09-07',
   },
   LOCKSMITH: {
@@ -65,7 +67,11 @@ export const ACCOUNTING_ENTITY_DEFAULTS: Record<
     country: 'Canada',
     authorizedPersonName: 'UMAR QURESHI',
     authorizedPersonTitle: 'Director',
-    hstRegistrationNumber: null,
+    // Locksmith registration supplied by the business; normalized to the
+    // CRA/Stripe identifier form without display spaces.
+    hstRegistrationNumber: '702291725RT0001',
+    hstEffectiveDate: '2026-01-01',
+    hstEnabled: true,
     partnerBillingAnchor: '2026-09-07',
   },
 };

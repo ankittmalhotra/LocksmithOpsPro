@@ -3,6 +3,7 @@ import { createHash, createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   createStripePaymentLink,
+  expireStripeCheckoutSession,
   toStripeCents,
   verifyStripeWebhookSignature,
 } from '../src/lib/stripe.ts';
@@ -19,6 +20,28 @@ test.afterEach(() => {
 test('converts server invoice amounts to integer CAD cents', () => {
   assert.equal(toStripeCents(123.456, 'amount'), 12346);
   assert.throws(() => toStripeCents(Number.NaN, 'amount'));
+});
+
+test('expires an open Checkout Session before a quote edit', async () => {
+  process.env.STRIPE_SECRET_KEY = 'sk_test_backend_unit';
+  const calls: Array<{ method: string; url: string; body: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const method = String(init?.method || 'GET');
+    const url = String(input);
+    const body = String(init?.body || '');
+    calls.push({ method, url, body });
+    if (method === 'GET') {
+      return new Response(JSON.stringify({ id: 'cs_test_to_expire', status: 'open', payment_status: 'unpaid' }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ id: 'cs_test_to_expire', status: 'expired' }), { status: 200 });
+  };
+
+  await expireStripeCheckoutSession('cs_test_to_expire');
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.method, 'GET');
+  assert.equal(calls[1]?.method, 'POST');
+  assert.equal(calls[1]?.url, 'https://api.stripe.com/v1/checkout/sessions/cs_test_to_expire/expire');
 });
 
 test('creates hosted Checkout without prefilled customer email and with idempotency', async () => {
@@ -192,6 +215,68 @@ test('uses Stripe Tax and itemizes the service plus configurable card fee', asyn
   assert.equal(body.get('line_items[1][price_data][unit_amount]'), '400');
   assert.equal(body.get('line_items[1][price_data][product_data][name]'), 'Card Processing Fee');
   assert.equal(body.get('line_items[1][price_data][product_data][tax_code]'), 'txcd_20030000');
+});
+
+test('dual-price Checkout sends only the accepted card service price and reconciles its exact quote metadata', async () => {
+  process.env.STRIPE_SECRET_KEY = 'sk_test_backend_unit';
+  const checkoutBodies: URLSearchParams[] = [];
+  globalThis.fetch = async (_input, init) => {
+    checkoutBodies.push(new URLSearchParams(String(init?.body || '')));
+    return new Response(JSON.stringify({
+      id: 'cs_test_dual_price',
+      url: 'https://checkout.stripe.com/dual-price',
+      status: 'open',
+      amount_subtotal: 10400,
+      amount_total: 11752,
+      total_details: { amount_tax: 1352 },
+    }), { status: 200 });
+  };
+
+  const params = {
+    invoiceId: 'invoice-dual-price',
+    customerId: 'customer-dual-price',
+    jobId: 'job-dual-price',
+    jobNumber: '1042',
+    customerName: 'Dual Price Customer',
+    customerPhone: '+14165551042',
+    customerAddress: '42 Main Street, Toronto, ON',
+    stripeCustomerId: 'cus_dual_price',
+    grandTotal: 104,
+    subtotal: 104,
+    taxAmount: 0,
+    cardSurchargeAmount: 0,
+    pricingModel: 'DUAL_PRICE_V1',
+    automaticTax: true,
+    returnUrl: 'https://portal.example.test/dispatch/jobs/job-dual-price',
+    requestRevision: 'quote-revision-1',
+  };
+  const result = await createStripePaymentLink(params);
+
+  assert.equal(checkoutBodies.length, 1);
+  const body = checkoutBodies[0];
+  if (!body) throw new Error('Checkout request body was not captured');
+  assert.equal(body.get('automatic_tax[enabled]'), 'true');
+  assert.equal(body.get('line_items[0][price_data][unit_amount]'), '10400');
+  assert.equal(body.get('line_items[0][price_data][product_data][name]'), 'Locksmith Service - Job #1042');
+  assert.equal(body.get('line_items[0][price_data][product_data][tax_code]'), 'txcd_20030000');
+  assert.equal(body.get('line_items[0][price_data][tax_behavior]'), 'exclusive');
+  assert.equal(body.get('line_items[1][price_data][unit_amount]'), null);
+  assert.doesNotMatch(body.toString(), /Card Processing|Surcharge|Admin Fee/i);
+  assert.equal(body.get('metadata[pricingModel]'), 'DUAL_PRICE_V1');
+  assert.equal(body.get('metadata[acceptedPriceOption]'), 'CARD');
+  assert.equal(body.get('metadata[cardPriceCents]'), '10400');
+  assert.equal(body.get('invoice_creation[invoice_data][metadata][pricingModel]'), 'DUAL_PRICE_V1');
+  assert.equal(body.get('invoice_creation[invoice_data][metadata][acceptedPriceOption]'), 'CARD');
+  assert.equal(body.get('invoice_creation[invoice_data][metadata][cardPriceCents]'), '10400');
+  assert.equal(result.amountTotal, 117.52);
+  assert.equal(result.amountTax, 13.52);
+
+  await assert.rejects(
+    createStripePaymentLink({ ...params, grandTotal: 105 }),
+    /accepted card service price as its only pre-tax amount/,
+    'A mismatched pre-tax total must not be sent to Stripe',
+  );
+  assert.equal(checkoutBodies.length, 1, 'Invalid quote totals fail before a second Stripe request');
 });
 
 test('verifies Stripe raw webhook signatures and rejects stale or altered payloads', () => {

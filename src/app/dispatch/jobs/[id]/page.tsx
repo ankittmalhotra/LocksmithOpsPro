@@ -19,6 +19,7 @@ interface Job {
   jobNumber: string;
   updatedAt: string;
   status: string;
+  receiptState?: 'local_ready' | 'stripe_ready' | 'stripe_partial_refund' | 'payment_pending' | 'off_books' | 'provider_missing' | 'refunded' | 'ineligible';
   isManual?: boolean;
   serviceType: string;
   problemDescription: string;
@@ -431,6 +432,7 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
           <Link href="/dispatch" className="text-xs font-bold text-blue-700 hover:underline">← Back to dispatch desk</Link>
           <h1 className="text-2xl font-black text-slate-900 mt-1">Job #{job.jobNumber}</h1>
           <p className="text-xs text-slate-500">Dispatcher job editor • {job.status.replaceAll('_', ' ')}</p>
+          {job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="mt-2 inline-flex rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}
         </div>
         <span className={`px-3 py-1 rounded-lg text-xs font-black border ${isOpen ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-700 border-slate-300'}`}>{isOpen ? 'OPEN' : 'CLOSED'}</span>
       </div>

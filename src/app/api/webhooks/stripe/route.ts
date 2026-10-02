@@ -74,12 +74,16 @@ async function findInvoiceForEvent(tx: Prisma.TransactionClient, object: StripeO
   const clientReferenceId = stringValue(object.client_reference_id);
   const sessionId = stringValue(object.id);
   const stripeInvoiceId = providerId(object.id);
+  const stripeChargeId = object.object === 'charge' ? stringValue(object.id) : null;
+  const paymentIntentId = providerId(object.payment_intent);
   const candidates: Prisma.InvoiceWhereInput[] = [];
 
   if (metadataInvoiceId) candidates.push({ id: metadataInvoiceId });
   if (metadataJobId) candidates.push({ jobId: metadataJobId });
   if (clientReferenceId) candidates.push({ id: clientReferenceId }, { jobId: clientReferenceId });
   if (sessionId) candidates.push({ stripeSessionId: sessionId });
+  if (stripeChargeId) candidates.push({ stripeChargeId });
+  if (paymentIntentId) candidates.push({ stripePaymentIntentId: paymentIntentId });
   if (stripeInvoiceId && object.object === 'invoice') candidates.push({ stripeInvoiceId });
   if (candidates.length === 0) return null;
 
@@ -93,8 +97,47 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
   const object = asRecord(event.data?.object);
   if (!object) return;
 
-  const invoice = await findInvoiceForEvent(tx, object);
+  const candidate = await findInvoiceForEvent(tx, object);
+  if (!candidate) {
+    if (event.type === 'charge.refunded') {
+      // Roll back the event ledger row too, so Stripe can retry after the
+      // corresponding invoice/payment identifiers have been persisted.
+      throw new Error('Unmatched Stripe refund event; retry after the payment record is available.');
+    }
+    return;
+  }
+
+  // Serialize Stripe settlement with quote edits and payment-link creation.
+  // The first lookup only identifies the row to lock; all decisions below use
+  // a fresh invoice/job snapshot read after acquiring the same row lock used by
+  // manual quote edits.
+  await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${candidate.id} FOR UPDATE`;
+  const invoice = await tx.invoice.findUnique({
+    where: { id: candidate.id },
+    include: { job: { include: { customer: true } } },
+  });
   if (!invoice) return;
+
+  const checkoutEvent = event.type.startsWith('checkout.session.');
+  const invoiceEvent = event.type.startsWith('invoice.');
+  const eventObjectId = providerId(object.id);
+  if (checkoutEvent && invoice.stripeSessionId !== eventObjectId) {
+    // A previous quote's Checkout URL may still be in a customer's browser.
+    // Never attach that payment (or its failure/expiry state) to the new quote.
+    // Throwing rolls back the event ledger row and asks Stripe to retry, which
+    // also covers the short window before a newly-created session is persisted.
+    if (event.type === 'checkout.session.completed'
+      || event.type === 'checkout.session.async_payment_succeeded') {
+      throw new Error('Stale Stripe Checkout session completed after its invoice quote changed. Payment requires manual reconciliation.');
+    }
+    return;
+  }
+  if (invoiceEvent && invoice.stripeInvoiceId !== eventObjectId) {
+    if (event.type === 'invoice.paid') {
+      throw new Error('Stale Stripe invoice was paid after its invoice quote changed. Payment requires manual reconciliation.');
+    }
+    return;
+  }
 
   const now = new Date();
   const customerDetails = asRecord(object.customer_details);
@@ -153,6 +196,30 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     (event.type === 'checkout.session.completed' && object.payment_status === 'paid');
   const sessionFailed = event.type === 'checkout.session.async_payment_failed';
   const sessionExpired = event.type === 'checkout.session.expired';
+  const fullRefund = event.type === 'charge.refunded'
+    && typeof object.amount === 'number'
+    && typeof object.amount_refunded === 'number'
+    && object.amount > 0
+    && object.amount_refunded >= object.amount;
+  const partialRefund = event.type === 'charge.refunded'
+    && typeof object.amount === 'number'
+    && typeof object.amount_refunded === 'number'
+    && object.amount_refunded > 0
+    && object.amount_refunded < object.amount;
+
+  if (confirmedPayment && invoice.pricingModel === 'DUAL_PRICE_V1') {
+    const metadata = asRecord(object.metadata);
+    const observedSubtotalCents = typeof object.amount_subtotal === 'number'
+      ? object.amount_subtotal
+      : typeof object.subtotal === 'number' ? object.subtotal : null;
+    const expectedCardPriceCents = Math.round(Number(invoice.cardPrice || 0) * 100);
+    if (metadata?.pricingModel !== 'DUAL_PRICE_V1'
+      || metadata?.acceptedPriceOption !== 'CARD'
+      || metadata?.cardPriceCents !== String(expectedCardPriceCents)
+      || observedSubtotalCents !== expectedCardPriceCents) {
+      throw new Error('Stripe payment does not match the accepted dual-price card quote; settlement was not recorded. Reconcile this payment against the saved quote before marking it paid.');
+    }
+  }
 
   if (event.type === 'invoice.sent') {
     invoiceData.invoiceSentAt = invoice.invoiceSentAt || now;
@@ -162,10 +229,12 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     if (sessionFailed) invoiceData.stripeSessionStatus = 'payment_failed';
   }
   if (sessionExpired) invoiceData.stripeSessionStatus = 'expired';
+  if (fullRefund && invoice.paymentProvider === 'STRIPE') invoiceData.paymentStatus = 'REFUNDED';
+  if (partialRefund && invoice.paymentProvider === 'STRIPE' && invoice.paymentStatus !== 'REFUNDED') invoiceData.paymentStatus = 'PARTIALLY_REFUNDED';
 
   // A Stripe confirmation can only settle a card invoice. Never let a
   // webhook change a cash/Interac invoice to PAID.
-  if (confirmedPayment && isCardPaymentMethod(invoice.paymentMethod)) {
+  if (confirmedPayment && isCardPaymentMethod(invoice.paymentMethod) && !['PARTIALLY_REFUNDED', 'REFUNDED'].includes(invoice.paymentStatus)) {
     invoiceData.paymentStatus = 'PAID';
     invoiceData.totalAmountCollected = stripeTotal ?? invoice.grandTotal;
     invoiceData.paidAt = invoice.paidAt || now;

@@ -5,8 +5,9 @@ import { findJobByIdOrNumber } from '@/lib/job-helper';
 import {
   calculateJobSettlementPosition,
   calculateManualInvoice,
-  calculatePendingManualCardInvoice,
-  DEFAULT_MANUAL_CARD_SURCHARGE_RATE,
+  calculateDualPriceManualCardQuote,
+  DEFAULT_CARD_PRICE_DIFFERENCE_RATE,
+  MAX_CARD_PRICE_DIFFERENCE_RATE,
   isCardPaymentMethod,
   type SupportedPaymentMethod,
 } from '@/lib/calculations';
@@ -16,10 +17,13 @@ import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { torontoDateToMidnightIso } from '@/lib/timezone';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { expireStripeCheckoutSession } from '@/lib/stripe';
 import { ManualJobInputError, parseManualAmount, parseManualPercentage } from '@/lib/manual-amount';
 
 const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
 type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
+
+class ManualJobConflictError extends Error {}
 
 function isManualRole(role: string) {
   return role === 'ADMIN' || role === 'DISPATCHER';
@@ -56,6 +60,13 @@ async function handlePATCH(
       return NextResponse.json({ success: false, error: 'Manual job invoice is missing' }, { status: 409 });
     }
     const invoice = job.invoice;
+    if (invoice.paymentProvider === 'STRIPE' && ['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(invoice.paymentStatus)) {
+      return NextResponse.json({ success: false, error: 'Paid Stripe records are provider-authoritative and cannot be edited here.' }, { status: 409 });
+    }
+    const activeReceipt = await prisma.jobPaymentReceipt.findFirst({ where: { invoiceId: invoice.id, voidedAt: null }, select: { receiptNumber: true } });
+    if (activeReceipt) {
+      return NextResponse.json({ success: false, error: `Manual job has issued receipt ${activeReceipt.receiptNumber}. An Admin must void it with a reason before making changes; issue a new receipt after the correction.` }, { status: 409 });
+    }
 
     const body = await request.json();
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -159,19 +170,31 @@ async function handlePATCH(
     const payment = paymentMethod as SupportedPaymentMethod;
     const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
     const pendingCardPayment = paymentStatus === 'PENDING' && isCardPaymentMethod(payment);
-    const cardSurchargeRate = pendingCardPayment
+    const cardPriceDifferenceRate = pendingCardPayment
       ? parseManualPercentage(
-          body.cardSurchargeRate === undefined
-            ? (invoice.paymentStatus === 'PENDING' && isCardPaymentMethod(invoice.paymentMethod || '')
-              ? Number(invoice.cardSurchargeRate ?? DEFAULT_MANUAL_CARD_SURCHARGE_RATE) * 100
-              : DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100)
-            : body.cardSurchargeRate,
-          'Card processing fee',
+          body.cardPriceDifferenceRate === undefined
+            ? (invoice.pricingModel === 'DUAL_PRICE_V1'
+              ? Number(invoice.cardPriceDifferenceRate ?? DEFAULT_CARD_PRICE_DIFFERENCE_RATE) * 100
+              : DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100)
+            : body.cardPriceDifferenceRate,
+          'Card price difference',
         )
       : 0;
-    const manualCalculation = pendingCardPayment
-      ? calculatePendingManualCardInvoice({ amountToBeCollected: totalAmountCollected, cardSurchargeRate })
-      : calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected });
+    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE * 100) {
+      return NextResponse.json({ success: false, error: `Card-price difference cannot exceed ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.` }, { status: 400 });
+    }
+    if (pendingCardPayment && (body.customerAcceptedCardPrice !== true
+      || !['VERBAL', 'WRITTEN'].includes(body.quoteAcceptanceMethod)
+      || typeof body.quoteAcceptanceEvidence !== 'string'
+      || !body.quoteAcceptanceEvidence.trim()
+      || body.quoteAcceptanceEvidence.trim().length > 500)) {
+      return NextResponse.json({ success: false, error: 'Record that the customer accepted the displayed card price, select verbal or written acceptance, and add an acceptance note before saving.' }, { status: 400 });
+    }
+    const dualPriceQuote = pendingCardPayment
+      ? calculateDualPriceManualCardQuote({ nonCardPrice: totalAmountCollected, cardPriceDifferenceRate })
+      : null;
+    const manualCalculation = dualPriceQuote?.calculation
+      || calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected });
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
       grandTotal: manualCalculation.grandTotal,
@@ -184,13 +207,48 @@ async function handlePATCH(
         || invoice.paymentMethod !== payment
         || invoice.paymentStatus !== paymentStatus
         || Number(invoice.totalAmountCollected || invoice.grandTotal || 0) !== totalAmountCollected
-        || Number(invoice.cardSurchargeRate || 0) !== cardSurchargeRate
+        || Number(invoice.cardPriceDifferenceRate || 0) !== cardPriceDifferenceRate
+        || invoice.acceptedPriceOption !== (pendingCardPayment ? 'CARD' : null)
         || customerName !== job.customer.name
         || customerPhone !== job.customer.phone
         || serviceAddress !== job.serviceAddress
       );
 
+    // The database reference alone does not revoke a Checkout URL already in
+    // the customer's possession. Expire it at Stripe before changing its quote;
+    // if payment won the race, Stripe refuses expiration and this edit stops.
+    if (shouldInvalidatePaymentLink && invoice.stripeSessionId) {
+      await expireStripeCheckoutSession(invoice.stripeSessionId);
+    }
+
     const updatedJob = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${invoice.id} FOR UPDATE`;
+      const fresh = await tx.job.findUnique({ where: { id: job.id }, include: { invoice: true } });
+      if (!fresh || !fresh.invoice || fresh.updatedAt.getTime() !== job.updatedAt.getTime()) {
+        throw new ManualJobConflictError('Manual job changed while this edit was being prepared. Reload and try again.');
+      }
+      const freshLinkWouldBeInvalidated = Boolean(fresh.invoice.stripeSessionId || fresh.invoice.stripePaymentUrl)
+        && (
+          !pendingCardPayment
+          || fresh.invoice.paymentMethod !== payment
+          || fresh.invoice.paymentStatus !== paymentStatus
+          || Number(fresh.invoice.totalAmountCollected || fresh.invoice.grandTotal || 0) !== totalAmountCollected
+          || Number(fresh.invoice.cardPriceDifferenceRate || 0) !== cardPriceDifferenceRate
+          || fresh.invoice.acceptedPriceOption !== (pendingCardPayment ? 'CARD' : null)
+          || customerName !== job.customer.name
+          || customerPhone !== job.customer.phone
+          || serviceAddress !== job.serviceAddress
+        );
+      const linkChangedDuringEdit = fresh.invoice.stripeSessionId !== invoice.stripeSessionId
+        || fresh.invoice.stripePaymentUrl !== invoice.stripePaymentUrl;
+      if (linkChangedDuringEdit && freshLinkWouldBeInvalidated) {
+        throw new ManualJobConflictError('A Stripe payment link was created while this edit was being prepared. Reload and retry so the active link can be expired safely.');
+      }
+      if (fresh.invoice.paymentProvider === 'STRIPE' && ['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(fresh.invoice.paymentStatus)) {
+        throw new ManualJobConflictError('Paid Stripe records are provider-authoritative and cannot be edited here.');
+      }
+      const issuedReceipt = await tx.jobPaymentReceipt.findFirst({ where: { invoiceId: invoice.id, voidedAt: null }, select: { receiptNumber: true } });
+      if (issuedReceipt) throw new ManualJobConflictError(`Manual job has issued receipt ${issuedReceipt.receiptNumber}. An Admin must void it with a reason before making changes; issue a new receipt after the correction.`);
       let customerId = job.customerId;
       const customerChanged = customerName !== job.customer.name
         || customerPhone !== job.customer.phone
@@ -230,6 +288,15 @@ async function handlePATCH(
           taxAmount: manualCalculation.taxAmount,
           cardSurchargeRate: manualCalculation.cardSurchargeRate,
           cardSurchargeAmount: manualCalculation.cardSurchargeAmount,
+          pricingModel: pendingCardPayment ? 'DUAL_PRICE_V1' : null,
+          nonCardPrice: dualPriceQuote?.nonCardPrice ?? null,
+          cardPrice: dualPriceQuote?.cardPrice ?? null,
+          cardPriceDifferenceRate: dualPriceQuote?.cardPriceDifferenceRate ?? null,
+          acceptedPriceOption: pendingCardPayment ? 'CARD' : null,
+          quoteAcceptanceMethod: pendingCardPayment ? body.quoteAcceptanceMethod : null,
+          quoteAcceptedAt: pendingCardPayment ? new Date() : null,
+          quoteAcceptedById: pendingCardPayment ? currentUser.id : null,
+          quoteAcceptanceEvidence: pendingCardPayment ? body.quoteAcceptanceEvidence.trim() : null,
           grandTotal: manualCalculation.grandTotal,
           totalAmountCollected,
           taxCollected: pendingCardPayment ? true : taxCollected,
@@ -300,6 +367,9 @@ async function handlePATCH(
       revenueEmail,
     });
   } catch (err: any) {
+    if (err instanceof ManualJobConflictError) {
+      return NextResponse.json({ success: false, error: err.message }, { status: 409 });
+    }
     if (err instanceof ManualJobInputError) {
       return NextResponse.json({ success: false, error: err.message }, { status: 400 });
     }
@@ -330,12 +400,30 @@ async function handleDELETE(
       return NextResponse.json({ success: false, error: 'Manual job entry not found' }, { status: 404 });
     }
 
-    await prisma.job.delete({ where: { id: job.id } });
+    if (job.invoice) {
+      const invoiceId = job.invoice.id;
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${invoiceId} FOR UPDATE`;
+        const freshInvoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+        if (!freshInvoice) throw new ManualJobConflictError('Manual job invoice changed. Reload and try again.');
+        if (freshInvoice.paymentProvider === 'STRIPE' && ['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(freshInvoice.paymentStatus)) {
+          throw new ManualJobConflictError('Paid Stripe records are provider-authoritative and cannot be deleted.');
+        }
+        const issuedReceipt = await tx.jobPaymentReceipt.findFirst({ where: { invoiceId }, select: { receiptNumber: true } });
+        if (issuedReceipt) throw new ManualJobConflictError(`Manual job has receipt history beginning with ${issuedReceipt.receiptNumber} and cannot be deleted.`);
+        await tx.job.delete({ where: { id: job.id } });
+      });
+    } else {
+      await prisma.job.delete({ where: { id: job.id } });
+    }
     return NextResponse.json({
       success: true,
       message: `Manual Job #${job.jobNumber} deleted successfully.`,
     });
   } catch (err: any) {
+    if (err instanceof ManualJobConflictError) {
+      return NextResponse.json({ success: false, error: err.message }, { status: 409 });
+    }
     logCaughtRequestError(request, '/api/jobs/manual/[id]', err);
     return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Failed to delete manual job') }, { status: 500 });
   }

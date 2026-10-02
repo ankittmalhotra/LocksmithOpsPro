@@ -72,6 +72,25 @@ async function handlePOST(
       );
     }
 
+    if (invoice.pricingModel !== 'DUAL_PRICE_V1'
+      || invoice.acceptedPriceOption !== 'CARD'
+      || !invoice.quoteAcceptedAt
+      || !invoice.quoteAcceptedById
+      || !invoice.quoteAcceptanceMethod
+      || !invoice.quoteAcceptanceEvidence) {
+      return NextResponse.json(
+        { success: false, error: 'A recorded customer acceptance of the disclosed card price is required. Review the two-price quote and update this job before creating a payment link.' },
+        { status: 409 },
+      );
+    }
+
+    if (process.env.LOCKSMITH_DUAL_PRICING_APPROVED !== 'true') {
+      return NextResponse.json(
+        { success: false, error: 'Payment links for the dual-price quote are disabled until Locksmith’s payment processor and accountant approve the customer pricing and HST treatment.' },
+        { status: 503 },
+      );
+    }
+
     const now = new Date();
     if (isActiveCheckoutSession(invoice, now)) {
       return NextResponse.json({
@@ -96,6 +115,7 @@ async function handlePOST(
       subtotal: invoice.subtotal,
       taxAmount: invoice.taxAmount,
       cardSurchargeAmount: invoice.cardSurchargeAmount,
+      pricingModel: invoice.pricingModel,
       automaticTax: true,
       returnUrl: getReturnUrl(request, job.id),
       requestRevision: job.updatedAt.toISOString(),
@@ -103,6 +123,12 @@ async function handlePOST(
     const result = await createStripePaymentLink(paymentParams);
 
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${invoice.id} FOR UPDATE`;
+      const currentJob = await tx.job.findUnique({ where: { id: job.id }, select: { updatedAt: true } });
+      if (!currentJob || currentJob.updatedAt.toISOString() !== paymentParams.requestRevision) {
+        throw new PaymentLinkStateChangedError();
+      }
+
       if (result.customerId) {
         const customerUpdate = await tx.customer.updateMany({
           where: {
@@ -123,6 +149,10 @@ async function handlePOST(
           subtotal: invoice.subtotal,
           taxAmount: invoice.taxAmount,
           cardSurchargeAmount: invoice.cardSurchargeAmount,
+          pricingModel: invoice.pricingModel,
+          cardPrice: invoice.cardPrice,
+          acceptedPriceOption: invoice.acceptedPriceOption,
+          quoteAcceptedAt: invoice.quoteAcceptedAt,
           totalAmountCollected: invoice.totalAmountCollected,
           stripeSessionId: invoice.stripeSessionId,
         },
@@ -136,8 +166,8 @@ async function handlePOST(
           stripePaymentLinkExpiresAt: result.expiresAt,
           stripeInvoiceId: result.stripeInvoiceId,
           stripePaymentIntentId: result.stripePaymentIntentId,
-          ...(result.amountTotal !== null ? { grandTotal: result.amountTotal } : {}),
-          ...(result.amountTax !== null ? { taxAmount: result.amountTax } : {}),
+          // Keep the accepted service price as the pre-tax quote until the
+          // verified paid webhook records Stripe's final tax-inclusive total.
         },
       });
       if (invoiceUpdate.count !== 1) throw new PaymentLinkStateChangedError();

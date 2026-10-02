@@ -12,6 +12,7 @@ import { parseTorontoDateTime } from '@/lib/timezone';
 import { findJobsWithDetails, toTechnicianJobPayload } from '@/lib/job-helper';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { getJobReceiptState } from '@/lib/job-receipt';
 
 async function handleGET(request: Request) {
   try {
@@ -56,7 +57,7 @@ async function handleGET(request: Request) {
     const normalizedJobs = rawJobs.map(normalizeManualJobInvoice);
     const jobs = currentUser.role === 'TECHNICIAN'
       ? normalizedJobs.map(toTechnicianJobPayload)
-      : normalizedJobs;
+      : normalizedJobs.map((job) => ({ ...job, receiptState: getJobReceiptState(job) }));
 
     return NextResponse.json({ success: true, jobs });
   } catch (err: any) {

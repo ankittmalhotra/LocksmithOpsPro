@@ -55,6 +55,9 @@ async function main() {
       country: 'Canada',
       authorizedPersonName: 'UMAR QURESHI',
       authorizedPersonTitle: 'Director',
+      hstRegistrationNumber: '702291725RT0001',
+      hstEffectiveDate: new Date('2026-01-01T00:00:00.000Z'),
+      hstEnabled: true,
     },
   ];
 

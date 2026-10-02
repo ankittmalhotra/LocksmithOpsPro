@@ -2,7 +2,7 @@
  * Financial Calculation Engine for Locksmith Operations
  * - Ontario 13% HST (Tax)
  * - Legacy 2.4% surcharge for existing closeout/forward flows
- * - Configurable 4% default surcharge for pending manual card invoices
+ * - Versioned dual-price quote helper for new pending manual card invoices
  * - Forward calculation (Items -> Subtotal + Tax + Surcharge)
  * - Reverse calculation (Lump sum received -> Subtotal + Tax breakdown)
  * - Contractor Commission & Cash-in-hand Settlement Ledger
@@ -13,6 +13,8 @@ export const STRIPE_CARD_SURCHARGE_RATE = 0.024; // 2.4% Canadian Code of Conduc
 // Pending manual card jobs are quoted before tax. This is intentionally
 // separate from the legacy closeout surcharge used by other flows.
 export const DEFAULT_MANUAL_CARD_SURCHARGE_RATE = 0.04;
+export const DEFAULT_CARD_PRICE_DIFFERENCE_RATE = 0.04;
+export const MAX_CARD_PRICE_DIFFERENCE_RATE = 0.04;
 export const CRA_HST_BUSINESS_NUMBER = '83921 4092 RT0001';
 
 export interface CalculationBreakdown {
@@ -176,6 +178,40 @@ export function calculatePendingManualCardInvoice(params: {
     cardSurchargeAmount,
     // Before Checkout, this is the pre-tax amount Stripe will charge.
     grandTotal: roundToTwo(subtotal + cardSurchargeAmount),
+  };
+}
+
+/**
+ * New manual quotes disclose two pre-tax prices. The non-card price is the
+ * service price and the card price is a separately quoted total price; this
+ * helper never creates a surcharge line or sets legacy surcharge fields.
+ */
+export function calculateDualPriceManualCardQuote(params: {
+  nonCardPrice: number;
+  cardPriceDifferenceRate: number;
+}) {
+  const nonCardPrice = roundToTwo(params.nonCardPrice);
+  const cardPriceDifferenceRate = roundToTwo(params.cardPriceDifferenceRate);
+  const cardPrice = roundToTwo(nonCardPrice * (1 + cardPriceDifferenceRate));
+  return {
+    nonCardPrice,
+    cardPrice,
+    cardPriceDifferenceRate,
+    nonCardTaxEstimate: roundToTwo(nonCardPrice * ONTARIO_HST_RATE),
+    cardTaxEstimate: roundToTwo(cardPrice * ONTARIO_HST_RATE),
+    nonCardTotalEstimate: roundToTwo(nonCardPrice * (1 + ONTARIO_HST_RATE)),
+    cardTotalEstimate: roundToTwo(cardPrice * (1 + ONTARIO_HST_RATE)),
+    calculation: {
+      subtotal: cardPrice,
+      partsTotal: 0,
+      laborTotal: cardPrice,
+      taxRate: ONTARIO_HST_RATE,
+      taxAmount: 0,
+      cardSurchargeRate: 0,
+      cardSurchargeAmount: 0,
+      // Stripe Tax determines the final total at Checkout.
+      grandTotal: cardPrice,
+    } satisfies CalculationBreakdown,
   };
 }
 

@@ -24,6 +24,8 @@ export interface CreatePaymentLinkParams {
   subtotal: number;
   taxAmount: number;
   cardSurchargeAmount: number;
+  /** New quotes send the accepted card price as a single service line. */
+  pricingModel?: string | null;
   /** Enables Stripe Tax for the pending manual-card pricing path. */
   automaticTax?: boolean;
   returnUrl: string;
@@ -72,6 +74,30 @@ export class StripeApiError extends Error {
     super(message);
     this.name = 'StripeApiError';
     this.status = status;
+  }
+}
+
+export type StripeObjectResponse = Record<string, any>;
+
+export async function stripeGet(path: string): Promise<StripeObjectResponse> {
+  if (!path.startsWith('/') || path.includes('..')) throw new StripeApiError('Invalid Stripe API path', 400);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch(`${STRIPE_API_BASE_URL}${path}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${getStripeSecretKey()}` },
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    let payload: StripeObjectResponse = {};
+    try { payload = await response.json() as StripeObjectResponse; } catch { /* status error below */ }
+    if (!response.ok) {
+      throw new StripeApiError(getString(payload.error?.message) || `Stripe API request failed with status ${response.status}`, response.status);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -173,6 +199,25 @@ async function stripePost(
   return payload;
 }
 
+/** Expire a saved, open Checkout Session before its local quote is changed. */
+export async function expireStripeCheckoutSession(sessionId: string): Promise<void> {
+  if (!sessionId.trim() || sessionId.includes('/')) throw new StripeApiError('Invalid Stripe Checkout Session ID', 400);
+  const current = await stripeGet(`/checkout/sessions/${encodeURIComponent(sessionId)}`);
+  if (current.id !== sessionId) throw new StripeApiError('Stripe returned a different Checkout Session.', 409);
+  if (current.status === 'expired') return;
+  if (current.status !== 'open' || current.payment_status === 'paid') {
+    throw new StripeApiError('Checkout Session is no longer open. Reload the paid or completed job before editing its quote.', 409);
+  }
+  const response = await stripePost(
+    `/checkout/sessions/${encodeURIComponent(sessionId)}/expire`,
+    new URLSearchParams(),
+    `expire-checkout-${sessionId}`,
+  );
+  if (response.status !== 'expired') {
+    throw new StripeApiError('Stripe did not confirm Checkout Session expiration; the quote was not changed.', 409);
+  }
+}
+
 async function createStripeCustomer(params: CreatePaymentLinkParams): Promise<string> {
   const body = new URLSearchParams({
     name: params.customerName,
@@ -205,10 +250,15 @@ export async function createStripePaymentLink(
 ): Promise<PaymentLinkResult> {
   const subtotalCents = toStripeCents(params.subtotal, 'Subtotal');
   const taxCents = toStripeCents(params.taxAmount, 'Tax amount');
-  const surchargeCents = toStripeCents(params.cardSurchargeAmount, 'Card surcharge');
+  const dualPriceQuote = params.pricingModel === 'DUAL_PRICE_V1';
+  const surchargeCents = dualPriceQuote ? 0 : toStripeCents(params.cardSurchargeAmount, 'Card surcharge');
   const totalCents = toStripeCents(params.grandTotal, 'Grand total');
   const itemizedCents = subtotalCents + taxCents + surchargeCents;
   const automaticTax = params.automaticTax === true;
+
+  if (dualPriceQuote && (!automaticTax || surchargeCents !== 0 || taxCents !== 0 || subtotalCents !== totalCents)) {
+    throw new Error('Dual-price Checkout must use the accepted card service price as its only pre-tax amount; Stripe Tax supplies the final tax and total.');
+  }
 
   // The invoice total is authoritative. Normally the rounded component sum
   // equals it; if legacy data has a one-cent drift, use one total line item so
@@ -251,8 +301,19 @@ export async function createStripePaymentLink(
     'metadata[jobId]': params.jobId,
     'metadata[jobNumber]': params.jobNumber,
     'metadata[customerId]': params.customerId,
+    'payment_intent_data[metadata][invoiceId]': params.invoiceId,
+    'payment_intent_data[metadata][jobId]': params.jobId,
   });
   if (params.requestRevision) body.set('metadata[jobRevision]', params.requestRevision);
+  if (dualPriceQuote) {
+    const acceptedCardPriceCents = String(subtotalCents);
+    body.set('metadata[pricingModel]', 'DUAL_PRICE_V1');
+    body.set('metadata[acceptedPriceOption]', 'CARD');
+    body.set('metadata[cardPriceCents]', acceptedCardPriceCents);
+    body.set('invoice_creation[invoice_data][metadata][pricingModel]', 'DUAL_PRICE_V1');
+    body.set('invoice_creation[invoice_data][metadata][acceptedPriceOption]', 'CARD');
+    body.set('invoice_creation[invoice_data][metadata][cardPriceCents]', acceptedCardPriceCents);
+  }
 
   if (automaticTax) {
     body.set('automatic_tax[enabled]', 'true');
@@ -272,7 +333,9 @@ export async function createStripePaymentLink(
     let index = 0;
     if (addLineItem(body, index, params.subtotal, `Locksmith Service - Job #${params.jobNumber}`, automaticTax)) index += 1;
     if (!automaticTax && addLineItem(body, index, params.taxAmount, 'Ontario HST (13%)')) index += 1;
-    addLineItem(body, index, params.cardSurchargeAmount, automaticTax ? 'Card Processing Fee' : 'Card Processing Surcharge', automaticTax);
+    if (!dualPriceQuote) {
+      addLineItem(body, index, params.cardSurchargeAmount, automaticTax ? 'Card Processing Fee' : 'Card Processing Surcharge', automaticTax);
+    }
   } else {
     addLineItem(body, 0, params.grandTotal, `Locksmith Service - Job #${params.jobNumber}`, automaticTax);
   }

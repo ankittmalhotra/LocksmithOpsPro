@@ -4,8 +4,9 @@ import { getCurrentUser } from '@/lib/auth';
 import {
   calculateJobSettlementPosition,
   calculateManualInvoice,
-  calculatePendingManualCardInvoice,
-  DEFAULT_MANUAL_CARD_SURCHARGE_RATE,
+  calculateDualPriceManualCardQuote,
+  DEFAULT_CARD_PRICE_DIFFERENCE_RATE,
+  MAX_CARD_PRICE_DIFFERENCE_RATE,
   isCardPaymentMethod,
   SupportedPaymentMethod,
 } from '@/lib/calculations';
@@ -107,15 +108,27 @@ async function handlePOST(request: Request) {
     const payment = paymentMethod as SupportedPaymentMethod;
     const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
     const pendingCardPayment = paymentStatus === 'PENDING' && isCardPaymentMethod(payment);
-    const cardSurchargeRate = pendingCardPayment
+    const cardPriceDifferenceRate = pendingCardPayment
       ? parseManualPercentage(
-          body.cardSurchargeRate === undefined ? DEFAULT_MANUAL_CARD_SURCHARGE_RATE * 100 : body.cardSurchargeRate,
-          'Card processing fee',
+          body.cardPriceDifferenceRate === undefined ? DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100 : body.cardPriceDifferenceRate,
+          'Card price difference',
         )
       : 0;
-    const manualCalculation = pendingCardPayment
-      ? calculatePendingManualCardInvoice({ amountToBeCollected: totalAmountCollected, cardSurchargeRate })
-      : calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected: body.taxCollected });
+    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE * 100) {
+      return NextResponse.json({ success: false, error: `Card-price difference cannot exceed ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.` }, { status: 400 });
+    }
+    if (pendingCardPayment && (body.customerAcceptedCardPrice !== true
+      || !['VERBAL', 'WRITTEN'].includes(body.quoteAcceptanceMethod)
+      || typeof body.quoteAcceptanceEvidence !== 'string'
+      || !body.quoteAcceptanceEvidence.trim()
+      || body.quoteAcceptanceEvidence.trim().length > 500)) {
+      return NextResponse.json({ success: false, error: 'Record that the customer accepted the displayed card price, select verbal or written acceptance, and add an acceptance note before saving.' }, { status: 400 });
+    }
+    const dualPriceQuote = pendingCardPayment
+      ? calculateDualPriceManualCardQuote({ nonCardPrice: totalAmountCollected, cardPriceDifferenceRate })
+      : null;
+    const manualCalculation = dualPriceQuote?.calculation
+      || calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected: body.taxCollected });
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
       grandTotal: manualCalculation.grandTotal,
@@ -162,6 +175,15 @@ async function handlePOST(request: Request) {
               taxAmount: manualCalculation.taxAmount,
               cardSurchargeRate: manualCalculation.cardSurchargeRate,
               cardSurchargeAmount: manualCalculation.cardSurchargeAmount,
+              pricingModel: pendingCardPayment ? 'DUAL_PRICE_V1' : null,
+              nonCardPrice: dualPriceQuote?.nonCardPrice ?? null,
+              cardPrice: dualPriceQuote?.cardPrice ?? null,
+              cardPriceDifferenceRate: dualPriceQuote?.cardPriceDifferenceRate ?? null,
+              acceptedPriceOption: pendingCardPayment ? 'CARD' : null,
+              quoteAcceptanceMethod: pendingCardPayment ? body.quoteAcceptanceMethod : null,
+              quoteAcceptedAt: pendingCardPayment ? new Date() : null,
+              quoteAcceptedById: pendingCardPayment ? currentUser.id : null,
+              quoteAcceptanceEvidence: pendingCardPayment ? body.quoteAcceptanceEvidence.trim() : null,
               grandTotal: manualCalculation.grandTotal,
               totalAmountCollected,
               // Stripe Tax is always on for pending card invoices.

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import test from 'node:test';
 
-const fixture: { invoiceKind: 'receipt' | 'invoice'; issuerReads: number; stripeReads: string[] } = {
-  invoiceKind: 'receipt', issuerReads: 0, stripeReads: [],
+const fixture: { invoiceKind: 'receipt' | 'invoice'; issuerReads: number; stripeReads: string[]; emptyIntentMetadata: boolean; omitSessionMetadata: boolean; conflictingSessionMetadata: boolean } = {
+  invoiceKind: 'receipt', issuerReads: 0, stripeReads: [], emptyIntentMetadata: false, omitSessionMetadata: false, conflictingSessionMetadata: false,
 };
 Object.assign(globalThis, { __stripeReceiptFixture: fixture });
 
@@ -30,7 +30,7 @@ const hooks = registerHooks({
           return { id: 'job-1', status: 'COMPLETED', invoice: {
             id: 'invoice-1', paymentStatus: 'PAID', taxCollected: true, paymentProvider: 'STRIPE', paymentMethod: 'CREDIT_CARD',
             totalAmountCollected: 113, grandTotal: 113, stripeChargeId: 'ch_legacy', stripePaymentIntentId: 'pi_legacy',
-            stripeSessionId: null, stripeInvoiceId: 'in_legacy', pricingModel: null, paidAt: null,
+            stripeSessionId: 'cs_legacy', stripeInvoiceId: 'in_legacy', pricingModel: null, paidAt: null,
           } };
         }
       `,
@@ -51,7 +51,14 @@ const hooks = registerHooks({
           };
           if (path === '/payment_intents/pi_legacy?expand[]=latest_charge') return {
             id: 'pi_legacy', status: 'succeeded', amount_received: 11300, latest_charge: 'ch_legacy',
-            metadata: { invoiceId: 'invoice-1', jobId: 'job-1' },
+            metadata: fixture.emptyIntentMetadata ? {} : { invoiceId: 'invoice-1', jobId: 'job-1' },
+          };
+          if (path === '/checkout/sessions/cs_legacy?expand[]=payment_intent') return fixture.omitSessionMetadata ? {
+            id: 'cs_legacy', status: 'complete', payment_status: 'paid', payment_intent: 'pi_legacy',
+          } : {
+            id: 'cs_legacy', status: 'complete', payment_status: 'paid', payment_intent: 'pi_legacy',
+            client_reference_id: 'invoice-1',
+            metadata: { invoiceId: 'invoice-1', jobId: fixture.conflictingSessionMetadata ? 'another-job' : 'job-1' },
           };
           if (path === '/invoices/in_legacy?expand[]=account_tax_ids&expand[]=payment_intent') return {
             id: 'in_legacy', status: 'paid', currency: 'cad', amount_paid: 11300, payment_intent: 'pi_legacy',
@@ -95,4 +102,39 @@ test('historical paid Stripe invoice PDF is returned unchanged without revalidat
   assert.equal(fixture.stripeReads.some((path) => path.startsWith('/tax_ids/')), false);
 });
 
-test.after(() => hooks.deregister());
+test('legacy paid Checkout Session can verify its stored payment intent when optional metadata is absent', async () => {
+  fixture.issuerReads = 0;
+  fixture.stripeReads = [];
+  fixture.emptyIntentMetadata = true;
+  fixture.omitSessionMetadata = true;
+  fixture.conflictingSessionMetadata = false;
+  const response = await GET(new Request('https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=receipt'), { params: Promise.resolve({ id: 'job-1' }) });
+
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), 'https://pay.stripe.com/receipts/legacy-receipt');
+  assert.ok(fixture.stripeReads.includes('/checkout/sessions/cs_legacy?expand[]=payment_intent'));
+  fixture.emptyIntentMetadata = false;
+  fixture.omitSessionMetadata = false;
+});
+
+test('saved Checkout Session with conflicting invoice metadata is rejected', async () => {
+  fixture.issuerReads = 0;
+  fixture.stripeReads = [];
+  fixture.emptyIntentMetadata = true;
+  fixture.omitSessionMetadata = false;
+  fixture.conflictingSessionMetadata = true;
+  // A legacy session without metadata is accepted above. Here Stripe does
+  // return metadata, but it points to a different job and must fail closed.
+  const response = await GET(new Request('https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=receipt'), { params: Promise.resolve({ id: 'job-1' }) });
+
+  assert.equal(response.status, 409);
+  assert.match(await response.text(), /saved Checkout Session does not verify/);
+  fixture.conflictingSessionMetadata = false;
+});
+
+test.after(() => {
+  fixture.emptyIntentMetadata = false;
+  fixture.omitSessionMetadata = false;
+  fixture.conflictingSessionMetadata = false;
+  hooks.deregister();
+});

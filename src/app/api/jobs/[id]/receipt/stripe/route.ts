@@ -77,13 +77,17 @@ async function resolveCharge(invoice: any, jobId: string) {
   const paymentIntentMetadataMatches = intent.metadata?.invoiceId === invoice.id && intent.metadata?.jobId === jobId;
   if (!paymentIntentMetadataMatches) {
     // Older Checkout Sessions only stored invoice/job metadata on the Session
-    // and generated invoice. Accept their PaymentIntent only when Stripe's
-    // saved, paid Session binds the exact same charge intent to this invoice.
+    // (or were persisted locally before every metadata field was added).
+    // The locally saved Session ID is the primary binding; require Stripe to
+    // return that exact paid Session and bind it to the exact verified intent.
+    // Any legacy metadata that is present must still agree with this invoice.
     if (!invoice.stripeSessionId) throw new Error('Stripe receipt unavailable: payment metadata does not match this invoice.');
     const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(invoice.stripeSessionId)}?expand[]=payment_intent`);
     const sessionIntentId = idOf(session.payment_intent);
-    if (session.payment_status !== 'paid' || session.client_reference_id !== invoice.id
-      || session.metadata?.invoiceId !== invoice.id || session.metadata?.jobId !== jobId
+    if (session.id !== invoice.stripeSessionId || session.payment_status !== 'paid'
+      || (session.client_reference_id && session.client_reference_id !== invoice.id)
+      || (session.metadata?.invoiceId && session.metadata.invoiceId !== invoice.id)
+      || (session.metadata?.jobId && session.metadata.jobId !== jobId)
       || sessionIntentId !== chargeIntentId) {
       throw new Error('Stripe receipt unavailable: saved Checkout Session does not verify this paid invoice and payment intent.');
     }

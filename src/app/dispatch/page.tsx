@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { DEFAULT_MANUAL_CARD_SURCHARGE_RATE, roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
+import AddressAutocomplete from '@/components/AddressAutocomplete';
 import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import PeriodComparisonWidget, { type PeriodComparisonMode, type PeriodComparisons } from '@/components/PeriodComparisonWidget';
 import type { SmsDraft } from '@/lib/sms-draft';
@@ -1272,12 +1273,11 @@ export default function DispatchPage() {
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Service Location / Address *
               </label>
-              <input
-                type="text"
+              <AddressAutocomplete
                 required
                 placeholder="e.g. 663 Bloor Street West, Toronto, ON M6G 1L1"
                 value={serviceAddress}
-                onChange={(e) => setServiceAddress(e.target.value)}
+                onChange={setServiceAddress}
                 className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-900"
               />
             </div>
@@ -1751,7 +1751,7 @@ export default function DispatchPage() {
               </div>
               <div className="sm:col-span-2">
                 <label className="field-label">Service address *</label>
-                <input aria-label="Service address" required value={manualForm.serviceAddress} onChange={(e) => updateManualField('serviceAddress', e.target.value)} className="field-input" />
+                <AddressAutocomplete aria-label="Service address" required value={manualForm.serviceAddress} onChange={(value) => updateManualField('serviceAddress', value)} className="field-input" />
               </div>
               <div>
                 <label className="field-label">Type of job *</label>

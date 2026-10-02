@@ -98,7 +98,15 @@ async function resolveCharge(invoice: any, jobId: string) {
       throw new Error('Stripe receipt unavailable: payment intent metadata does not verify the accepted dual-price invoice.');
     }
     if (invoice.stripeChargeId === chargeId && invoice.stripePaymentIntentId === chargeIntentId) {
-      return charge;
+      return { charge, paidInvoice: null };
+    }
+
+    // A paid invoice can belong to a later Checkout attempt than the saved
+    // Session (which may now be expired). Verify the invoice's actual payment
+    // allocation instead of requiring that obsolete Session to be paid.
+    if (invoice.stripeInvoiceId) {
+      const paidInvoice = await verifyPaidStripeInvoice(invoice, expected, null, jobId, chargeIntentId);
+      return { charge, paidInvoice };
     }
 
     // Some older records only have a saved Checkout Session. In that case,
@@ -115,19 +123,36 @@ async function resolveCharge(invoice: any, jobId: string) {
       throw new Error('Stripe receipt unavailable: saved Checkout Session does not verify this paid invoice and payment intent.');
     }
   }
-  return charge;
+  return { charge, paidInvoice: null };
 }
 
-async function paidStripeInvoice(invoice: any, expectedAmount: number, issuer: any | null, jobId: string, verifiedPaymentIntentId: string | null) {
+async function verifyPaidStripeInvoice(invoice: any, expectedAmount: number, issuer: any | null, jobId: string, verifiedPaymentIntentId: string | null) {
   if (!invoice.stripeInvoiceId) throw new Error('Paid Stripe invoice PDF is not available for this payment.');
-  const remote = await stripeGet(`/invoices/${encodeURIComponent(invoice.stripeInvoiceId)}?expand[]=account_tax_ids&expand[]=payment_intent`);
-  if (remote.status !== 'paid' || remote.currency !== 'cad' || amountCents(remote.amount_paid) !== expectedAmount) {
+  const remote = await stripeGet(`/invoices/${encodeURIComponent(invoice.stripeInvoiceId)}?expand[]=account_tax_ids`);
+  if (remote.id !== invoice.stripeInvoiceId || remote.status !== 'paid' || remote.currency !== 'cad' || amountCents(remote.amount_paid) !== expectedAmount) {
     throw new Error('Stripe invoice unavailable: status or amount does not match the recorded payment.');
   }
-  const remoteIntentId = idOf(remote.payment_intent);
-  if (!remoteIntentId || !verifiedPaymentIntentId || remoteIntentId !== verifiedPaymentIntentId
-    || remote.metadata?.invoiceId !== invoice.id || remote.metadata?.jobId !== jobId) {
+  if (!verifiedPaymentIntentId || remote.metadata?.invoiceId !== invoice.id || remote.metadata?.jobId !== jobId) {
     throw new Error('Stripe invoice unavailable: invoice metadata or payment intent does not match this job and payment.');
+  }
+  const remoteIntentId = idOf(remote.payment_intent);
+  if (remoteIntentId) {
+    if (remoteIntentId !== verifiedPaymentIntentId) {
+      throw new Error('Stripe invoice unavailable: invoice payment intent does not match the verified payment.');
+    }
+  } else {
+    // Stripe's newer Invoice API moved payment_intent into InvoicePayments.
+    // Query paid allocations for this exact invoice; never infer payment
+    // ownership from the invoice's customer or amount alone.
+    const payments = await stripeGet(`/invoice_payments?invoice=${encodeURIComponent(invoice.stripeInvoiceId)}&status=paid&limit=100`);
+    const matches = Array.isArray(payments.data) && payments.data.some((payment: any) =>
+      idOf(payment.invoice) === invoice.stripeInvoiceId && payment.status === 'paid'
+      && payment.currency === 'cad' && amountCents(payment.amount_paid) === expectedAmount
+      && payment.payment?.type === 'payment_intent'
+      && idOf(payment.payment.payment_intent) === verifiedPaymentIntentId);
+    if (!matches) {
+      throw new Error('Stripe invoice unavailable: no paid invoice allocation matches the verified payment intent and amount.');
+    }
   }
   if (issuer && remote.account_name && remote.account_name !== issuer.legalName) {
     throw new Error('Stripe invoice unavailable: seller name does not match the Locksmith issuer.');
@@ -142,7 +167,7 @@ async function paidStripeInvoice(invoice: any, expectedAmount: number, issuer: a
       throw new Error('Stripe invoice unavailable: its HST registration does not match Locksmith.');
     }
   }
-  return stripeUrl(remote.invoice_pdf, ['invoice.stripe.com', 'pay.stripe.com']);
+  return remote;
 }
 
 async function handleGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -168,7 +193,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ id: s
     const query = new URL(request.url).searchParams;
     const kind = query.get('kind') || 'receipt';
     if (kind !== 'receipt' && kind !== 'invoice') return NextResponse.json({ success: false, error: 'kind must be receipt or invoice' }, { status: 400, headers: { 'Cache-Control': 'private, no-store' } });
-    const charge = await resolveCharge(invoice, job.id);
+    const { charge, paidInvoice } = await resolveCharge(invoice, job.id);
     if (kind === 'receipt') {
       const destination = stripeUrl(charge.receipt_url, ['pay.stripe.com']);
       if (!destination) return NextResponse.json({ success: false, error: 'Stripe hosted receipt is unavailable.' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
@@ -176,7 +201,8 @@ async function handleGET(request: Request, { params }: { params: Promise<{ id: s
     }
     const expected = amountCents(Number(invoice.totalAmountCollected || invoice.grandTotal) * 100);
     if (expected === null) throw new Error('Stripe invoice unavailable: recorded invoice amount is invalid.');
-    const destination = await paidStripeInvoice(invoice, expected, issuer, job.id, idOf(charge.payment_intent));
+    const remote = paidInvoice || await verifyPaidStripeInvoice(invoice, expected, issuer, job.id, idOf(charge.payment_intent));
+    const destination = stripeUrl(remote.invoice_pdf, ['invoice.stripe.com', 'pay.stripe.com']);
     if (!destination) return NextResponse.json({ success: false, error: 'Stripe paid invoice PDF is unavailable.' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
     return NextResponse.redirect(destination, { status: 302, headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {

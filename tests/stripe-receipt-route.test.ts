@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import test from 'node:test';
 
-const fixture: { invoiceKind: 'receipt' | 'invoice'; issuerReads: number; stripeReads: string[]; emptyIntentMetadata: boolean; conflictingIntentMetadata: boolean; omitSessionMetadata: boolean; conflictingSessionMetadata: boolean; omitSavedPaymentIntent: boolean; clientReferenceId: string; dualPrice: boolean; mismatchIssuerUnit: boolean } = {
-  invoiceKind: 'receipt', issuerReads: 0, stripeReads: [], emptyIntentMetadata: false, conflictingIntentMetadata: false, omitSessionMetadata: false, conflictingSessionMetadata: false, omitSavedPaymentIntent: false, clientReferenceId: 'invoice-1', dualPrice: false, mismatchIssuerUnit: false,
+const initialFixture = {
+  issuerReads: 0, stripeReads: [] as string[], emptyIntentMetadata: false, conflictingIntentMetadata: false,
+  omitSessionMetadata: false, conflictingSessionMetadata: false, omitSavedPaymentIntent: false,
+  omitSavedCharge: false, omitStripeInvoice: false, expiredSession: false, modernInvoice: false,
+  invoicePaymentMismatch: false, invoiceMetadataMismatch: false,
+  clientReferenceId: 'invoice-1', dualPrice: false, mismatchIssuerUnit: false,
 };
+const fixture = { ...initialFixture };
 Object.assign(globalThis, { __stripeReceiptFixture: fixture });
 
 const hooks = registerHooks({
@@ -31,9 +36,9 @@ const hooks = registerHooks({
           return { id: 'job-1', status: 'COMPLETED', invoice: {
             id: 'invoice-1', paymentStatus: 'PAID', taxCollected: true, paymentProvider: 'STRIPE', paymentMethod: 'CREDIT_CARD',
             totalAmountCollected: 113, grandTotal: 113,
-            stripeChargeId: 'ch_legacy',
+            stripeChargeId: fixture.omitSavedCharge ? null : 'ch_legacy',
             stripePaymentIntentId: fixture.omitSavedPaymentIntent ? null : 'pi_legacy',
-            stripeSessionId: 'cs_legacy', stripeInvoiceId: 'in_legacy', pricingModel: fixture.dualPrice ? 'DUAL_PRICE_V1' : null, paidAt: null,
+            stripeSessionId: 'cs_legacy', stripeInvoiceId: fixture.omitStripeInvoice ? null : 'in_legacy', pricingModel: fixture.dualPrice ? 'DUAL_PRICE_V1' : null, paidAt: null,
           } };
         }
       `,
@@ -72,16 +77,22 @@ const hooks = registerHooks({
             },
           };
           if (path === '/checkout/sessions/cs_legacy?expand[]=payment_intent') return fixture.omitSessionMetadata ? {
-            id: 'cs_legacy', status: 'complete', payment_status: 'paid', payment_intent: 'pi_legacy', client_reference_id: fixture.clientReferenceId,
+            id: 'cs_legacy', status: fixture.expiredSession ? 'expired' : 'complete', payment_status: fixture.expiredSession ? 'unpaid' : 'paid', payment_intent: fixture.expiredSession ? null : 'pi_legacy', client_reference_id: fixture.clientReferenceId,
           } : {
-            id: 'cs_legacy', status: 'complete', payment_status: 'paid', payment_intent: 'pi_legacy',
+            id: 'cs_legacy', status: fixture.expiredSession ? 'expired' : 'complete', payment_status: fixture.expiredSession ? 'unpaid' : 'paid', payment_intent: fixture.expiredSession ? null : 'pi_legacy',
             client_reference_id: fixture.clientReferenceId,
             metadata: { invoiceId: 'invoice-1', jobId: fixture.conflictingSessionMetadata ? 'another-job' : 'job-1' },
           };
-          if (path === '/invoices/in_legacy?expand[]=account_tax_ids&expand[]=payment_intent') return {
-            id: 'in_legacy', status: 'paid', currency: 'cad', amount_paid: 11300, payment_intent: 'pi_legacy',
-            metadata: { invoiceId: 'invoice-1', jobId: 'job-1' },
+          if (path === '/invoices/in_legacy?expand[]=account_tax_ids') return {
+            id: 'in_legacy', status: 'paid', currency: 'cad', amount_paid: 11300,
+            ...(fixture.modernInvoice ? {} : { payment_intent: 'pi_legacy' }),
+            metadata: { invoiceId: 'invoice-1', jobId: fixture.invoiceMetadataMismatch ? 'another-job' : 'job-1' },
             account_tax_ids: [], invoice_pdf: 'https://invoice.stripe.com/i/acct_locksmith/in_legacy.pdf',
+          };
+          if (path === '/invoice_payments?invoice=in_legacy&status=paid&limit=100') return {
+            data: [{ id: 'inpay_legacy', invoice: 'in_legacy', status: 'paid', currency: 'cad', amount_paid: 11300,
+              payment: { type: 'payment_intent', payment_intent: fixture.invoicePaymentMismatch ? 'pi_another' : 'pi_legacy' } }],
+            has_more: false,
           };
           throw new Error('Unexpected Stripe request: ' + path);
         }
@@ -97,6 +108,7 @@ const hooks = registerHooks({
 });
 
 const { GET } = await import('../src/app/api/jobs/[id]/receipt/stripe/route.ts');
+test.beforeEach(() => Object.assign(fixture, { ...initialFixture, stripeReads: [] }));
 
 test('historical Stripe receipt remains the original Stripe document without local paidAt or current issuer configuration', async () => {
   fixture.issuerReads = 0;
@@ -127,6 +139,7 @@ test('legacy paid Checkout Session can verify its stored payment intent when opt
   fixture.omitSessionMetadata = true;
   fixture.conflictingSessionMetadata = false;
   fixture.omitSavedPaymentIntent = true;
+  fixture.omitStripeInvoice = true;
   fixture.clientReferenceId = 'job-1';
   const response = await GET(new Request('https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=receipt'), { params: Promise.resolve({ id: 'job-1' }) });
 
@@ -179,6 +192,7 @@ test('saved Checkout Session with conflicting invoice metadata is rejected', asy
   fixture.omitSessionMetadata = false;
   fixture.conflictingSessionMetadata = true;
   fixture.omitSavedPaymentIntent = true;
+  fixture.omitStripeInvoice = true;
   fixture.clientReferenceId = 'invoice-1';
   // A legacy session without metadata is accepted above. Here Stripe does
   // return metadata, but it points to a different job and must fail closed.
@@ -190,6 +204,53 @@ test('saved Checkout Session with conflicting invoice metadata is rejected', asy
   fixture.omitSavedPaymentIntent = false;
   fixture.emptyIntentMetadata = false;
   fixture.clientReferenceId = 'invoice-1';
+});
+
+test('paid invoice verifies legacy receipt and PDF when its saved Session is expired and saved charge ID is absent', async () => {
+  fixture.emptyIntentMetadata = true;
+  fixture.omitSavedCharge = true;
+  fixture.expiredSession = true;
+  fixture.modernInvoice = true;
+  for (const kind of ['receipt', 'invoice']) {
+    fixture.stripeReads = [];
+    const response = await GET(new Request(`https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=${kind}`), { params: Promise.resolve({ id: 'job-1' }) });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), kind === 'receipt'
+      ? 'https://pay.stripe.com/receipts/legacy-receipt'
+      : 'https://invoice.stripe.com/i/acct_locksmith/in_legacy.pdf');
+    assert.ok(fixture.stripeReads.includes('/invoice_payments?invoice=in_legacy&status=paid&limit=100'));
+    assert.equal(fixture.stripeReads.some(path => path.startsWith('/checkout/sessions/')), false);
+    assert.equal(fixture.stripeReads.filter(path => path.startsWith('/invoices/')).length, 1, 'reuse the verified invoice for the PDF');
+  }
+});
+
+test('modern invoice PDF verifies InvoicePayments when PaymentIntent metadata already matches', async () => {
+  fixture.modernInvoice = true;
+  const response = await GET(new Request('https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=invoice'), { params: Promise.resolve({ id: 'job-1' }) });
+  assert.equal(response.status, 302);
+  assert.ok(fixture.stripeReads.includes('/invoice_payments?invoice=in_legacy&status=paid&limit=100'));
+});
+
+test('expired Session recovery rejects a paid invoice allocated to a different PaymentIntent', async () => {
+  fixture.emptyIntentMetadata = true;
+  fixture.omitSavedCharge = true;
+  fixture.expiredSession = true;
+  fixture.modernInvoice = true;
+  fixture.invoicePaymentMismatch = true;
+  const response = await GET(new Request('https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=receipt'), { params: Promise.resolve({ id: 'job-1' }) });
+  assert.equal(response.status, 409);
+  assert.match(await response.text(), /no paid invoice allocation matches/);
+});
+
+test('expired Session recovery rejects paid invoice metadata belonging to another job', async () => {
+  fixture.emptyIntentMetadata = true;
+  fixture.omitSavedCharge = true;
+  fixture.expiredSession = true;
+  fixture.modernInvoice = true;
+  fixture.invoiceMetadataMismatch = true;
+  const response = await GET(new Request('https://portal.example.test/api/jobs/job-1/receipt/stripe?kind=receipt'), { params: Promise.resolve({ id: 'job-1' }) });
+  assert.equal(response.status, 409);
+  assert.match(await response.text(), /invoice metadata or payment intent/);
 });
 
 test('new Locksmith issuer details accept Stripe suite line and Ontario abbreviation', async () => {

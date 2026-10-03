@@ -1,0 +1,143 @@
+{
+  "verifiedAt": "2026-10-03T23:14:30.103Z",
+  "source": "Live Stripe API: invoices, paid invoice allocations, payment intents, charges, checkout sessions, events",
+  "productionSupabaseProject": "kahkbtrotjvyksiileso",
+  "jobs": [
+    {
+      "jobNumber": "000026",
+      "invoiceId": "1e3045da-2363-44c7-a4cd-a0043a50de90",
+      "jobId": "92578acf-d375-4eb4-acf1-0d62ca4c4f62",
+      "before": {
+        "grandTotal": 988,
+        "taxAmount": 0,
+        "subtotal": 950,
+        "laborTotal": 950,
+        "cardSurchargeAmount": 38
+      },
+      "verified": {
+        "stripeInvoiceId": "in_1UIs3h4FaSxN8UNorvDmIYkQ",
+        "stripeSessionId": "cs_live_b1MjVXb3U6L0u4BGJ5XguBUcmMT87r8d7i81DxBQQivEOAlO50RYtEHOen",
+        "stripeSessionStatus": "complete",
+        "sessionExpiresAt": "2026-09-24T15:11:12.000Z",
+        "stripePaymentIntentId": "pi_3UIs3e4FaSxN8UNo0BvHseY1",
+        "stripeChargeId": "ch_3UIs3e4FaSxN8UNo0FAzor94",
+        "invoicePaymentId": "inpay_1UIs3h4FaSxN8UNo7BpnkbDQ",
+        "currency": "cad",
+        "status": "paid",
+        "amountPaidCents": 98717,
+        "taxAmountCents": 11357,
+        "serviceCents": 84000,
+        "feeCents": 3360,
+        "chargeAmountCents": 98717,
+        "refundedCents": 0
+      },
+      "expiredEvent": {
+        "id": "evt_1UJEMM4FaSxN8UNoGoANYfIX",
+        "type": "checkout.session.expired",
+        "created": 1790262894,
+        "sessionId": "cs_live_b1G49UuCODs3xghfxX7lf2vGZEDuyBKlTHb59NjRIZcYGXXBfUePFfW9UD",
+        "amountTotalCents": 98800,
+        "taxCents": 0,
+        "paymentStatus": "unpaid"
+      }
+    },
+    {
+      "jobNumber": "000038",
+      "invoiceId": "7fb2dcc0-bb21-4321-ad77-c70fb5e6f93f",
+      "jobId": "51806338-bee5-4a47-9fb7-18d5e7b5d86a",
+      "before": {
+        "grandTotal": 624,
+        "taxAmount": 0,
+        "subtotal": 850,
+        "laborTotal": 850,
+        "cardSurchargeAmount": 34
+      },
+      "verified": {
+        "stripeInvoiceId": "in_1ULonc4FaSxN8UNoRn4xbsLA",
+        "stripeSessionId": "cs_live_b1UvzvEl4OjdM1wWKWPZW77FKGc7u9p3yYkzlY4dVWoFlUcON2OBd0LLR9",
+        "stripeSessionStatus": "complete",
+        "sessionExpiresAt": "2026-10-02T18:27:14.000Z",
+        "stripePaymentIntentId": "pi_3ULona4FaSxN8UNo07HE01Fz",
+        "stripeChargeId": "ch_3ULona4FaSxN8UNo0fEn3yPH",
+        "invoicePaymentId": "inpay_1ULonc4FaSxN8UNoSBBsjEaB",
+        "currency": "cad",
+        "status": "paid",
+        "amountPaidCents": 99892,
+        "taxAmountCents": 11492,
+        "serviceCents": 85000,
+        "feeCents": 3400,
+        "chargeAmountCents": 99892,
+        "refundedCents": 0
+      },
+      "expiredEvent": {
+        "id": "evt_1UMAjW4FaSxN8UNoNLaQXmEB",
+        "type": "checkout.session.expired",
+        "created": 1790963938,
+        "sessionId": "cs_live_b1zFBBGlCqWh4fwF5nhSpe0o7Vf8mAvwCsz9NXGlUzRDkExb4K6uhU0u1W",
+        "amountTotalCents": 62400,
+        "taxCents": 0,
+        "paymentStatus": "unpaid"
+      }
+    },
+    {
+      "jobNumber": "000028",
+      "invoiceId": "5437788f-ced7-457f-81f7-f723e78a89fa",
+      "jobId": "7b574e62-9f24-4498-b2b2-79aa930c4647",
+      "before": {
+        "grandTotal": 444.23,
+        "taxAmount": 51.11,
+        "subtotal": 378,
+        "laborTotal": 378,
+        "cardSurchargeAmount": 15.12
+      },
+      "verified": {
+        "stripeInvoiceId": "in_1UJ6g44FaSxN8UNo6NIr1jMX",
+        "stripeSessionId": "cs_live_b1JlgG6CrlEKVsAVteqb1MfDGPi3OoeVOVpoxd5nho8U3Tc3NDzMLtNMQY",
+        "stripeSessionStatus": "complete",
+        "sessionExpiresAt": "2026-09-25T06:58:54.000Z",
+        "stripePaymentIntentId": "pi_3UJ6fz4FaSxN8UNo0bwke4F5",
+        "stripeChargeId": "ch_3UJ6fz4FaSxN8UNo074RV9OS",
+        "invoicePaymentId": "inpay_1UJ6g44FaSxN8UNojlMS23dq",
+        "currency": "cad",
+        "status": "paid",
+        "amountPaidCents": 44423,
+        "taxAmountCents": 5111,
+        "serviceCents": 37800,
+        "feeCents": 1512,
+        "chargeAmountCents": 44423,
+        "refundedCents": 0
+      },
+      "expiredEvent": null
+    }
+  ],
+  "totals": {
+    "paidJobs": 46,
+    "beforeGross": 18804.45,
+    "afterGross": 19178.54,
+    "grossCorrection": 374.09,
+    "beforeDashboardHst": 1977.88,
+    "afterDashboardHst": 2206.37,
+    "hstCorrection": 228.49,
+    "beforeProfit": 8582.17,
+    "afterProfit": 8727.77,
+    "cash": 16748.22,
+    "beforeCard": 2056.23,
+    "afterCard": 2430.32
+  },
+  "productionVerification": {
+    "appliedAtUtc": "2026-10-03T23:18:53.827Z",
+    "paidJobs": 46,
+    "gross": 19178.54,
+    "collected": 19178.54,
+    "mismatchedPaidJobs": 0,
+    "auditCount": 2,
+    "rawStoredHst": 2132.97,
+    "dashboardHst": 2206.37,
+    "commissions": 7744.7,
+    "cogs": 499.7,
+    "unchangedOtherInvoiceFields": true,
+    "rollbackPreflight": "passed",
+    "idempotentRerun": "passed",
+    "livePortalTotals": "verified"
+  }
+}

@@ -42,8 +42,8 @@ function emailValue(value: unknown): string | null {
 }
 
 function amountFromCents(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? Math.round(value) / 100
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value / 100
     : null;
 }
 
@@ -51,13 +51,31 @@ function taxAmountFromStripeObject(object: StripeObject): number | null {
   const totalDetails = asRecord(object.total_details);
   const directTax = amountFromCents(totalDetails?.amount_tax);
   if (directTax !== null) return directTax;
+  if (totalDetails?.amount_tax !== undefined && totalDetails.amount_tax !== null) {
+    throw new Error('Invalid Stripe tax amount.');
+  }
 
-  const totalTaxes = Array.isArray(object.total_taxes) ? object.total_taxes : [];
-  const taxTotal = totalTaxes.reduce((sum, tax) => {
-    const taxRecord = asRecord(tax);
-    return sum + (typeof taxRecord?.amount === 'number' ? taxRecord.amount : 0);
-  }, 0);
-  return taxTotal > 0 ? amountFromCents(taxTotal) : null;
+  // Invoice tax fields changed across Stripe API versions. An absent field
+  // means unknown; an explicitly empty array means zero tax.
+  const totalTaxes = Array.isArray(object.total_taxes)
+    ? object.total_taxes
+    : Array.isArray(object.total_tax_amounts) ? object.total_tax_amounts : null;
+  if (totalTaxes !== null) {
+    let cents = 0;
+    for (const tax of totalTaxes) {
+      const amount = asRecord(tax)?.amount;
+      if (amountFromCents(amount) === null) throw new Error('Invalid Stripe tax amount.');
+      cents += amount as number;
+    }
+    const total = amountFromCents(cents);
+    if (total === null) throw new Error('Invalid Stripe tax total.');
+    return total;
+  }
+  const legacyTax = amountFromCents(object.tax);
+  if (legacyTax === null && object.tax !== undefined && object.tax !== null) {
+    throw new Error('Invalid Stripe tax amount.');
+  }
+  return legacyTax;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -133,10 +151,26 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     return;
   }
   if (invoiceEvent && invoice.stripeInvoiceId !== eventObjectId) {
-    if (event.type === 'invoice.paid') {
+    if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
       throw new Error('Stale Stripe invoice was paid after its invoice quote changed. Payment requires manual reconciliation.');
     }
     return;
+  }
+
+  const confirmedPayment =
+    ((event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') && object.status === 'paid') ||
+    ((event.type === 'checkout.session.async_payment_succeeded' || event.type === 'checkout.session.completed') && object.payment_status === 'paid');
+  const settled = ['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(invoice.paymentStatus);
+
+  // Expiry/failure and other lifecycle snapshots are not payment evidence.
+  // Stripe delivers events out of order, including expiry of old unpaid links
+  // after a successful payment. Freeze settled records against those events.
+  if (settled && !confirmedPayment && event.type !== 'charge.refunded') return;
+  if (confirmedPayment && !isCardPaymentMethod(invoice.paymentMethod)) return;
+  if (confirmedPayment && ['PARTIALLY_REFUNDED', 'REFUNDED'].includes(invoice.paymentStatus)) return;
+  if ((metadataValue(object, 'invoiceId') && metadataValue(object, 'invoiceId') !== invoice.id)
+    || (metadataValue(object, 'jobId') && metadataValue(object, 'jobId') !== invoice.jobId)) {
+    throw new Error('Stripe event metadata does not match the saved invoice.');
   }
 
   const now = new Date();
@@ -153,10 +187,28 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     ? new Date(object.expires_at * 1000)
     : undefined;
   const sessionStatus = stringValue(object.status);
-  const stripeTotal = amountFromCents(object.amount_total)
-    ?? amountFromCents(object.amount_paid)
-    ?? amountFromCents(object.total);
-  const stripeTaxAmount = taxAmountFromStripeObject(object);
+  // Only a confirmed payment may change accounting amounts. Invoice totals
+  // describe what was billed; amount_paid describes what was actually paid.
+  const stripeTotal = confirmedPayment
+    ? amountFromCents(checkoutEvent ? object.amount_total : object.amount_paid)
+    : null;
+  const stripeTaxAmount = confirmedPayment ? taxAmountFromStripeObject(object) : null;
+  if (confirmedPayment) {
+    if (object.currency !== 'cad' || stripeTotal === null || stripeTotal <= 0
+      || object.paid_out_of_band === true
+      || (invoiceEvent && amountFromCents(object.total) !== stripeTotal)
+      || (stripeTaxAmount !== null && stripeTaxAmount > stripeTotal)) {
+      throw new Error('Stripe payment has invalid or unsupported settlement amounts.');
+    }
+    if ((stripeInvoiceId && invoice.stripeInvoiceId && stripeInvoiceId !== invoice.stripeInvoiceId)
+      || (settled && stripePaymentIntentId && invoice.stripePaymentIntentId && stripePaymentIntentId !== invoice.stripePaymentIntentId)
+      || (settled && stripeChargeId && invoice.stripeChargeId && stripeChargeId !== invoice.stripeChargeId)) {
+      throw new Error('Stripe payment identifiers conflict with the recorded settlement.');
+    }
+    if (settled && Math.round(invoice.totalAmountCollected * 100) !== Math.round(stripeTotal * 100)) {
+      throw new Error('Stripe payment differs from the recorded collection; manual reconciliation is required.');
+    }
+  }
 
   const customer = await tx.customer.findUnique({
     where: { id: invoice.job.customerId },
@@ -183,17 +235,13 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
     ...(stripePaymentIntentId ? { stripePaymentIntentId } : {}),
     ...(stripeChargeId ? { stripeChargeId } : {}),
     ...(stripeSessionId ? { stripeSessionId } : {}),
-    ...(sessionStatus ? { stripeSessionStatus: sessionStatus } : {}),
+    ...(checkoutEvent && sessionStatus ? { stripeSessionStatus: sessionStatus } : {}),
     ...(sessionExpiresAt ? { stripeSessionExpiresAt: sessionExpiresAt, stripePaymentLinkExpiresAt: sessionExpiresAt } : {}),
     ...(customerEmail ? { customerEmailCollectedAt: invoice.customerEmailCollectedAt || now } : {}),
     ...(stripeTotal !== null ? { grandTotal: stripeTotal } : {}),
-    ...(stripeTaxAmount !== null ? { taxAmount: stripeTaxAmount } : {}),
+    ...(stripeTaxAmount !== null ? { taxAmount: stripeTaxAmount, taxCollected: stripeTaxAmount > 0 } : {}),
   };
 
-  const confirmedPayment =
-    event.type === 'invoice.paid' ||
-    event.type === 'checkout.session.async_payment_succeeded' ||
-    (event.type === 'checkout.session.completed' && object.payment_status === 'paid');
   const sessionFailed = event.type === 'checkout.session.async_payment_failed';
   const sessionExpired = event.type === 'checkout.session.expired';
   const fullRefund = event.type === 'charge.refunded'
@@ -236,7 +284,7 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
   // webhook change a cash/Interac invoice to PAID.
   if (confirmedPayment && isCardPaymentMethod(invoice.paymentMethod) && !['PARTIALLY_REFUNDED', 'REFUNDED'].includes(invoice.paymentStatus)) {
     invoiceData.paymentStatus = 'PAID';
-    invoiceData.totalAmountCollected = stripeTotal ?? invoice.grandTotal;
+    invoiceData.totalAmountCollected = stripeTotal!;
     invoiceData.paidAt = invoice.paidAt || now;
     invoiceData.paymentProvider = 'STRIPE';
     invoiceData.paymentFailedAt = null;

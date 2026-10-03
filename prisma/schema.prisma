@@ -326,6 +326,21 @@ model JobPaymentReceipt {
   @@index([invoiceId, voidedAt])
 }
 
+// Corrections to historical Stripe settlements retain full before/after rows
+// and provider evidence independently of later job removal.
+model StripeInvoiceReconciliationAudit {
+  reconciliationKey String   @id
+  invoiceId         String
+  jobNumber         String
+  reason            String
+  beforeSnapshot    Json
+  afterSnapshot     Json
+  stripeEvidence    Json
+  reconciledAt      DateTime @default(now())
+
+  @@index([invoiceId])
+}
+
 // Stripe may retry an event. A durable event ID makes webhook processing
 // idempotent across retries and across multiple application instances.
 model StripeWebhookEvent {

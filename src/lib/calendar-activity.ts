@@ -21,7 +21,7 @@ export type CalendarDayActivity<T> = {
   completedJobs: T[];
   paidJobs: T[];
   revenue: number;
-  /** Net profit after the synced Google Ads spend for this date. */
+  /** Per-partner profit after subtracting the full synced Google Ads spend for this date. */
   profit: number | null;
 };
 
@@ -76,7 +76,7 @@ export function buildCalendarActivity<T extends CalendarActivityJob>(
   for (const [key, day] of days) {
     const adSpend = adSpendByDate.get(key);
     day.profit = typeof adSpend === 'number' && Number.isFinite(adSpend)
-      ? Math.round(((day.profit || 0) - adSpend) * 100) / 100
+      ? Math.round(((day.profit || 0) / 2 - adSpend) * 100) / 100
       : null;
   }
 

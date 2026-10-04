@@ -67,9 +67,8 @@ const tx = {
   jobPaymentReceipt: {
     async findFirst({ where }: any) {
       return receiptFixture.receipts.find((receipt) => receipt.invoiceId === where.invoiceId
-        && (where.voidedAt?.not === null ? receipt.voidedAt === null
-          : where.voidedAt?.not !== undefined ? receipt.voidedAt !== null && receipt.replacementId === null
-            : receipt.voidedAt === null)) || null;
+        && (where.voidedAt === null ? receipt.voidedAt === null
+          : receipt.voidedAt !== null && receipt.replacementId === null)) || null;
     },
     async count({ where }: any) { return receiptFixture.receipts.filter((receipt) => receipt.invoiceId === where.invoiceId).length; },
     async create({ data }: any) {
@@ -149,6 +148,34 @@ test('local receipt issuance rejects payments before the Locksmith HST effective
   receiptFixture.currentJob = paidLocalJob('2026-01-01T04:59:59.999Z');
   await assert.rejects(createOrLoadJobPaymentReceipt(receiptFixture.currentJob, 'admin-1'), /not effective on the payment date/);
   assert.equal(receiptFixture.receipts.length, 0);
+});
+
+test('issuer correction replaces a voided receipt and preserves the original PDF and snapshot', async () => {
+  receiptFixture.receipts = [];
+  receiptFixture.currentJob = paidLocalJob('2026-09-30T15:00:00Z');
+  receiptFixture.issuer = { ...issuerFixture, legalName: '1001348245 ONTARIO INC.',
+    addressLine1: '27 Knollside Drive', city: 'Richmond Hill', postalCode: 'L4C4W7' };
+  const original = await createOrLoadJobPaymentReceipt(receiptFixture.currentJob, 'admin-1');
+  const originalSnapshot = structuredClone(original.snapshot) as any;
+  const originalPdf = Buffer.from(original.pdfBytes);
+  receiptFixture.issuer = issuerFixture;
+
+  // Changing the master record alone must not silently rewrite issued documents.
+  assert.equal(await createOrLoadJobPaymentReceipt(receiptFixture.currentJob, 'admin-1'), original);
+  original.voidedAt = new Date();
+  original.voidReason = 'Business requested correction of issuer name and address';
+  const replacement = await createOrLoadJobPaymentReceipt(receiptFixture.currentJob, 'dispatcher-1');
+  assert.equal(replacement.receiptNumber, 'LR-1001-02');
+  const replacementSnapshot = replacement.snapshot as any;
+  assert.equal(replacementSnapshot.issuer.legalName, 'Better Call Locksmith Inc.');
+  assert.equal(replacementSnapshot.issuer.address, '222 Spadina Avenue, Unit 114, Toronto, Ontario, M5T 3B3, Canada');
+  assert.deepEqual(replacementSnapshot.amounts, originalSnapshot.amounts);
+  assert.equal(replacementSnapshot.paidAt, originalSnapshot.paidAt);
+  assert.equal(original.replacementId, replacement.id);
+  assert.deepEqual(original.snapshot, originalSnapshot);
+  assert.deepEqual(original.pdfBytes, originalPdf);
+  assert.equal(await createOrLoadJobPaymentReceipt(receiptFixture.currentJob, 'dispatcher-1'), replacement);
+  assert.equal(receiptFixture.receipts.length, 2);
 });
 
 test.after(() => hooks.deregister());

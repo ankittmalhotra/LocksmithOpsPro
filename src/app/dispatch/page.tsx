@@ -84,6 +84,7 @@ function validateManualForm(form: Record<string, string>) {
 interface Job {
   id: string;
   jobNumber: string;
+  updatedAt: string;
   serviceType: string;
   serviceAddress: string;
   problemDescription: string;
@@ -264,6 +265,7 @@ export default function DispatchPage() {
   const [paymentLinkError, setPaymentLinkError] = useState('');
   const [paymentLinkCopyState, setPaymentLinkCopyState] = useState('');
   const [deletingManualId, setDeletingManualId] = useState<string | null>(null);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [manualForm, setManualForm] = useState<Record<string, string>>({
     jobNumber: '',
     jobDate: formatTorontoDateInput(),
@@ -771,6 +773,35 @@ export default function DispatchPage() {
       setErrorMsg(err.message);
     } finally {
       setDeletingManualId(null);
+    }
+  };
+
+  const handleRemoveDispatchedJob = async (job: Job) => {
+    const reason = window.prompt(`Why should Job #${job.jobNumber} be removed? It will be removed from current totals, and an audit copy will be kept.`);
+    if (reason === null) return;
+    if (reason.trim().length < 8) {
+      setErrorMsg('Enter a removal reason of at least 8 characters.');
+      return;
+    }
+    if (!window.confirm(`Remove Job #${job.jobNumber} for ${job.customer.name}? This removes its invoice from current operational and Books totals and cannot be undone in the app.`)) return;
+
+    setDeletingJobId(job.id);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim(), expectedUpdatedAt: job.updatedAt }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to remove job');
+      setSuccessMsg(`✅ ${data.message}`);
+      await fetchAuthAndJobs();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Unable to remove job');
+    } finally {
+      setDeletingJobId(null);
     }
   };
 
@@ -1608,7 +1639,7 @@ export default function DispatchPage() {
                         <td className="py-3 px-3 whitespace-nowrap text-slate-700">{job.invoice ? `$${Number(job.invoice.cogsAmount || 0).toFixed(2)}` : '—'}</td>
                         <td className="py-3 px-3 whitespace-nowrap text-amber-700">{job.invoice ? `$${Number(job.invoice.taxAmount || 0).toFixed(2)}` : '—'}</td>
                         <td className="py-3 px-3 whitespace-nowrap">{job.invoice ? <span className={job.invoice.taxCollected === false ? 'font-bold text-rose-700' : 'font-bold text-emerald-700'}>{job.invoice.taxCollected === false ? 'Off books' : 'On books'}</span> : '—'}</td>
-                        <td className="py-3 px-3 text-right whitespace-nowrap"><Link href={`/dispatch/jobs/${job.id}`} className="rounded-lg bg-blue-50 px-2.5 py-1.5 font-bold text-blue-700 hover:bg-blue-100">View</Link>{job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="ml-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-bold text-emerald-700 hover:bg-emerald-100" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}{job.isManual && <><button type="button" onClick={() => openEditManualJob(job)} className="ml-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 font-bold text-slate-700 hover:bg-slate-200">Edit</button><button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="ml-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">Delete</button></>}</td>
+                        <td className="py-3 px-3 text-right whitespace-nowrap"><Link href={`/dispatch/jobs/${job.id}`} className="rounded-lg bg-blue-50 px-2.5 py-1.5 font-bold text-blue-700 hover:bg-blue-100">View</Link>{job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="ml-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-bold text-emerald-700 hover:bg-emerald-100" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}{job.isManual && <><button type="button" onClick={() => openEditManualJob(job)} className="ml-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 font-bold text-slate-700 hover:bg-slate-200">Edit</button><button type="button" disabled={deletingManualId === job.id} onClick={() => handleDeleteManualJob(job)} className="ml-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">Delete</button></>}{currentUser?.role === 'ADMIN' && !job.isManual && <button type="button" disabled={deletingJobId === job.id} onClick={() => handleRemoveDispatchedJob(job)} className="ml-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">{deletingJobId === job.id ? 'Removing…' : 'Remove'}</button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1727,6 +1758,7 @@ export default function DispatchPage() {
                       >
                         View / Edit
                       </Link>
+                      {currentUser?.role === 'ADMIN' && !job.isManual && <button type="button" disabled={deletingJobId === job.id} onClick={() => handleRemoveDispatchedJob(job)} className="px-3 py-1 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-black disabled:opacity-50">{deletingJobId === job.id ? 'Removing…' : 'Remove'}</button>}
                       {job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="rounded-lg bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 hover:bg-emerald-100" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}
                       {job.status === 'COMPLETED' && job.receiptState && !['local_ready', 'stripe_ready', 'stripe_partial_refund'].includes(job.receiptState) && <span className="text-[10px] text-slate-500">{job.receiptState === 'payment_pending' ? 'Receipt unavailable: payment pending' : job.receiptState === 'off_books' ? 'Receipt unavailable: off books' : job.receiptState === 'provider_missing' ? 'Receipt unavailable: payment provider not verified' : job.receiptState === 'refunded' ? 'Receipt unavailable: refunded' : ''}</span>}
                     </div>

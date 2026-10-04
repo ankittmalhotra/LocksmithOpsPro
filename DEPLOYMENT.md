@@ -75,6 +75,7 @@ Before deploying a build that uses the additive dispatcher-edit and manual-job f
 - `prisma/job-updated-at-migration.sql` adds `Job.updatedAt` for dispatcher edit concurrency.
 - `prisma/manual-job-received-time-migration.sql` adds `Job.jobReceivedTimeSlot` for the manual-job intake window.
 - `prisma/job-payment-receipts-migration.sql` adds immutable local job receipt snapshots. Apply it before deploying the receipt endpoints.
+- `prisma/job-removal-audit-migration.sql` adds the durable audit table for the Admin dispatched-job removal flow. Apply it before deploying that flow.
 - `prisma/job-dual-pricing-migration.sql` adds nullable versioned dual-price quote and acceptance fields to invoices. Apply it before deploying the pending-card quote UI/API; legacy rows remain `NULL` and keep their prior interpretation.
 - `prisma/locksmith-business-identity-migration.sql` updates the Locksmith Books entity to Better Call Locksmith Inc. and the business-supplied Spadina address. Existing issued receipt and invoice snapshots are unchanged.
 - `prisma/locksmith-hst-registration-migration.sql` updates only the Locksmith Books entity with the business-supplied HST number and effective date. Apply it after the Locksmith Books entity exists.

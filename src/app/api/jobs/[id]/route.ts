@@ -448,5 +448,101 @@ async function handlePATCH(
   }
 }
 
+async function handleDELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    }
+    if (currentUser.role !== 'ADMIN') {
+      return NextResponse.json({ success: false, error: 'Admin access required to remove a dispatched job' }, { status: 403 });
+    }
+
+    const body = await request.json().catch(() => null);
+    const reason = typeof body?.reason === 'string' ? body.reason.trim() : '';
+    const expectedUpdatedAt = typeof body?.expectedUpdatedAt === 'string' ? new Date(body.expectedUpdatedAt) : null;
+    if (reason.length < 8 || reason.length > 500) {
+      return NextResponse.json({ success: false, error: 'Enter a removal reason between 8 and 500 characters' }, { status: 400 });
+    }
+    if (!expectedUpdatedAt || Number.isNaN(expectedUpdatedAt.getTime())) {
+      return NextResponse.json({ success: false, error: 'Reload the job before removing it' }, { status: 409 });
+    }
+
+    const { id } = await params;
+    const result = await prisma.$transaction(async (tx) => {
+      // Lock the job before reading its financial records so a concurrent
+      // closeout or receipt cannot be removed after the checks below.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Job" WHERE "id" = ${id} FOR UPDATE
+      `;
+      if (locked.length === 0) return { status: 404, error: 'Job not found' };
+
+      const job = await tx.job.findUnique({
+        where: { id },
+        include: {
+          customer: true,
+          dispatcher: { select: { id: true, name: true } },
+          technician: { select: { id: true, name: true } },
+          invoice: true,
+          items: true,
+        },
+      });
+      if (!job) return { status: 404, error: 'Job not found' };
+      if (job.isManual) return { status: 409, error: 'Use the manual job Delete action for this entry' };
+      if (job.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+        return { status: 409, error: 'Job changed. Reload and review it before removing it' };
+      }
+
+      let invoice = job.invoice;
+      if (invoice) {
+        await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${invoice.id} FOR UPDATE`;
+        invoice = await tx.invoice.findUnique({ where: { id: invoice.id } });
+        if (!invoice) return { status: 409, error: 'Invoice changed. Reload before removing this job' };
+        if (!invoice.paymentMethod || !['CASH', 'INTERAC'].includes(invoice.paymentMethod)) {
+          return { status: 409, error: 'Only cash or Interac jobs can be removed through this action' };
+        }
+        if (invoice.paymentProvider || invoice.stripeSessionId || invoice.stripePaymentUrl || invoice.stripeInvoiceId || invoice.stripePaymentIntentId || invoice.stripeChargeId) {
+          return { status: 409, error: 'This job has Stripe activity and cannot be removed' };
+        }
+        if (invoice.settlementStatus === 'SETTLED') {
+          return { status: 409, error: 'This job has a settled cash handover and cannot be removed' };
+        }
+        const receipt = await tx.jobPaymentReceipt.findFirst({
+          where: { invoiceId: invoice.id },
+          select: { receiptNumber: true },
+        });
+        if (receipt) {
+          return { status: 409, error: `Receipt ${receipt.receiptNumber} has been issued for this job and it cannot be removed` };
+        }
+      }
+
+      // Keep a complete, durable record of the deleted operational entry.
+      await tx.jobRemovalAudit.create({
+        data: {
+          jobId: job.id,
+          jobNumber: job.jobNumber,
+          removedById: currentUser.id,
+          reason,
+          snapshot: JSON.parse(JSON.stringify({ job: { ...job, invoice } })),
+        },
+      });
+      await tx.job.delete({ where: { id: job.id } });
+      return { status: 200, jobNumber: job.jobNumber };
+    });
+
+    if ('error' in result) {
+      return NextResponse.json({ success: false, error: result.error }, { status: result.status });
+    }
+    return NextResponse.json({ success: true, message: `Job #${result.jobNumber} removed. An audit copy was saved.` });
+  } catch (err) {
+    logCaughtRequestError(request, '/api/jobs/[id]', err);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to remove job') }, { status: 500 });
+  }
+}
+
 export const GET = withRequestLogging('/api/jobs/[id]', handleGET);
 export const PATCH = withRequestLogging('/api/jobs/[id]', handlePATCH);
+export const DELETE = withRequestLogging('/api/jobs/[id]', handleDELETE);

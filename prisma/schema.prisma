@@ -246,6 +246,17 @@ model JobItem {
   isPart      Boolean @default(true)
 }
 
+// Preserves the complete operational record when an Admin removes a job.
+// There is deliberately no foreign key to Job: the audit survives deletion.
+model JobRemovalAudit {
+  jobId       String   @id
+  jobNumber   String
+  removedById String?
+  reason      String
+  snapshot    Json
+  removedAt   DateTime @default(now())
+}
+
 model Invoice {
   id    String @id @default(uuid())
   jobId String @unique

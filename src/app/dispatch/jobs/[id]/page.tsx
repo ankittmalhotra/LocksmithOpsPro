@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { buildSmsDraft } from '@/lib/sms-draft';
@@ -42,6 +43,9 @@ interface Job {
     grandTotal: number;
     paymentMethod?: PaymentMethod | null;
     paymentStatus: string;
+    paymentProvider?: string | null;
+    stripeInvoiceId?: string | null;
+    taxCollected?: boolean;
     stripeSessionStatus?: string | null;
     stripeSessionExpiresAt?: string | null;
     stripePaymentUrl?: string | null;
@@ -160,7 +164,10 @@ function formFromJob(job: Job): EditForm {
 
 export default function DispatcherJobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [technicians, setTechnicians] = useState<Array<{ id: string; name: string; phone: string; commissionRate?: number }>>([]);
   const [form, setForm] = useState<EditForm | null>(null);
   const [loading, setLoading] = useState(true);
@@ -189,12 +196,15 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
     try {
       setLoading(true);
       setErrorMsg('');
-      const [jobRes, techRes] = await Promise.all([
+      const [jobRes, techRes, authRes] = await Promise.all([
         fetch(`/api/jobs/${id}`, { cache: 'no-store' }),
         fetch('/api/auth/users?role=TECHNICIAN&activeOnly=true', { cache: 'no-store' }),
+        fetch('/api/auth/me', { cache: 'no-store' }),
       ]);
       const jobData = await jobRes.json();
       const techData = await techRes.json();
+      const authData = await authRes.json();
+      setIsAdmin(authRes.ok && authData.success && authData.user?.role === 'ADMIN');
       if (!jobRes.ok || !jobData.success || !jobData.job) throw new Error(jobData.error || 'Unable to load job');
       setJob(jobData.job);
       setForm(formFromJob(jobData.job));
@@ -407,6 +417,32 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  const removeJob = async () => {
+    if (!job) return;
+    const reason = window.prompt(`Why should Job #${job.jobNumber} be removed? It will be removed from current totals, and an audit copy will be kept.`);
+    if (reason === null) return;
+    if (reason.trim().length < 8) {
+      setErrorMsg('Enter a removal reason of at least 8 characters.');
+      return;
+    }
+    if (!window.confirm(`Remove Job #${job.jobNumber} for ${job.customer.name}? This cannot be undone in the app.`)) return;
+    setRemoving(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim(), expectedUpdatedAt: job.updatedAt }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to remove job');
+      router.replace('/dispatch');
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Unable to remove job');
+      setRemoving(false);
+    }
+  };
+
   if (loading) return <main className="max-w-5xl mx-auto w-full p-5 text-sm text-slate-500">Loading job…</main>;
   if (!job || !form) return <main className="max-w-5xl mx-auto w-full p-5"><p className="text-sm text-rose-700">{errorMsg || 'Job unavailable.'}</p><Link href="/dispatch" className="text-sm text-blue-700 underline">Back to dispatch</Link></main>;
 
@@ -434,7 +470,10 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
           <p className="text-xs text-slate-500">Dispatcher job editor • {job.status.replaceAll('_', ' ')}</p>
           {job.status === 'COMPLETED' && <Link href={`/dispatch/jobs/${job.id}/receipt`} className="mt-2 inline-flex rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700" aria-label={`Open receipt preview for job ${job.jobNumber}`}>Receipt</Link>}
         </div>
-        <span className={`px-3 py-1 rounded-lg text-xs font-black border ${isOpen ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-700 border-slate-300'}`}>{isOpen ? 'OPEN' : 'CLOSED'}</span>
+        <div className="flex items-center gap-2">
+          {isAdmin && !job.isManual && <button type="button" disabled={removing} onClick={removeJob} className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-700 hover:bg-rose-100 disabled:opacity-50">{removing ? 'Removing…' : 'Remove job'}</button>}
+          <span className={`px-3 py-1 rounded-lg text-xs font-black border ${isOpen ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-700 border-slate-300'}`}>{isOpen ? 'OPEN' : 'CLOSED'}</span>
+        </div>
       </div>
 
       {errorMsg && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">{errorMsg}</div>}

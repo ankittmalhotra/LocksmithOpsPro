@@ -263,7 +263,7 @@ export default function RingCentralCallAnalytics({
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Calls received · {activeRangeLabel}</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-blue-700">{summary.received}</div>
-              <p className="mt-auto pt-1 text-[11px] text-slate-500">30+ sec answered calls; repeat callers counted once per day</p>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">30+ sec answered calls and missed calls successfully called back; repeat callers counted once per day</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted · {activeRangeLabel}</div>
@@ -367,12 +367,12 @@ export default function RingCentralCallAnalytics({
                   </button>
                 ))}
               </div>
-              <p className="mb-4 text-[11px] text-slate-500">Received calls match the card and graph. Missed calls, voicemail and calls under 30 seconds are shown separately and do not increase that total. Known callers count once per Toronto day; unknown numbers count by call session.</p>
+              <p className="mb-4 text-[11px] text-slate-500">Received calls match the card and graph. Missed calls that were successfully called back are included; uncalled missed calls, voicemail and calls under 30 seconds are shown separately. Known callers count once per Toronto day; unknown numbers count by call session.</p>
               {visibleDetails.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">{detailsView === 'received' ? 'No qualifying calls received for this period.' : detailsView === 'missed' ? 'No missed calls, voicemail or short calls for this period.' : 'No inbound call activity for this period.'}</div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="min-w-[1240px] w-full border-collapse text-left text-xs">
+                  <table className="min-w-[1000px] w-full border-collapse text-left text-xs">
                     <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500">
                       <tr>
                         <th className="whitespace-nowrap px-4 py-3">Date &amp; time</th>
@@ -382,8 +382,6 @@ export default function RingCentralCallAnalytics({
                         <th className="whitespace-nowrap px-4 py-3">Lead status</th>
                         <th className="whitespace-nowrap px-4 py-3">Result</th>
                         <th className="whitespace-nowrap px-4 py-3">Voicemail transcript</th>
-                        <th className="whitespace-nowrap px-4 py-3">Direction / type</th>
-                        <th className="whitespace-nowrap px-4 py-3">Session</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -428,11 +426,6 @@ export default function RingCentralCallAnalytics({
                             ) : (
                               <span className="text-slate-400">—</span>
                             )}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-slate-600">{displayValue(call.direction)} · {displayValue(call.type)}</td>
-                          <td className="px-4 py-3 text-[11px] text-slate-500">
-                            <div>{call.telephonySessionId || call.sessionId || '—'}</div>
-                            {call.transport && <div className="mt-0.5">Transport: {call.transport}</div>}
                           </td>
                         </tr>
                       ))}

@@ -1040,7 +1040,7 @@ export default function DispatchPage() {
         </div>
       )}
 
-      {canManageManualJobs && <RingCentralCallAnalytics canManageConnection={currentUser?.role === 'ADMIN'} />}
+      {canManageManualJobs && <RingCentralCallAnalytics canManageConnection={currentUser?.role === 'ADMIN'} refreshOnLoad />}
 
       {canManageManualJobs && (
         <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />

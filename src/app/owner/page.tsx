@@ -121,7 +121,7 @@ export default function AdminDashboardPage() {
   const [settling, setSettling] = useState(false);
 
   useEffect(() => {
-    fetchAuthAndAnalytics();
+    fetchAuthAndAnalytics(googleAdsRange, revenuePeriod, true);
   }, []);
 
   useEffect(() => {
@@ -206,15 +206,37 @@ export default function AdminDashboardPage() {
   const fetchAuthAndAnalytics = async (
     selectedGoogleAdsRange: GoogleAdsRoiRange = googleAdsRange,
     selectedRevenuePeriod: RevenuePeriod = revenuePeriod,
+    syncGoogleAdsOnLoad = false,
   ) => {
     void fetchPeriodComparison();
     const requestId = ++analyticsRequestId.current;
+    let googleAdsSyncError = '';
     try {
       setLoading(true);
       const authRes = await fetch('/api/auth/me', { cache: 'no-store' });
       const authData = await authRes.json();
       if (requestId === analyticsRequestId.current && authData.success && authData.user) {
         setCurrentUser(authData.user);
+      }
+
+      // Refresh spend on the initial Admin dashboard load so both analytics
+      // panels reflect the latest external data without a manual sync click.
+      if (syncGoogleAdsOnLoad && authData.success && authData.user?.role === 'ADMIN') {
+        setGoogleAdsSyncing(true);
+        try {
+          const syncRes = await fetch(`/api/owner/google-ads/sync?range=${selectedGoogleAdsRange}`, { method: 'POST', cache: 'no-store' });
+          const syncData = await syncRes.json();
+          if (!syncRes.ok || !syncData.success) {
+            if (syncData.code === 'GOOGLE_ADS_REAUTH_REQUIRED') setGoogleAdsReconnectRequired(true);
+            googleAdsSyncError = syncData.error || 'Failed to sync Google Ads';
+          } else {
+            setGoogleAdsReconnectRequired(false);
+          }
+        } catch (syncError: any) {
+          googleAdsSyncError = syncError.message || 'Failed to sync Google Ads';
+        } finally {
+          setGoogleAdsSyncing(false);
+        }
       }
 
       const params = new URLSearchParams({
@@ -225,7 +247,7 @@ export default function AdminDashboardPage() {
       const data = await res.json();
       if (requestId !== analyticsRequestId.current) return;
       if (data.success) {
-        setErrorMsg('');
+        setErrorMsg(googleAdsSyncError);
         setAnalytics(data);
         setAnalyticsRefreshVersion((version) => version + 1);
       } else {
@@ -726,7 +748,7 @@ export default function AdminDashboardPage() {
               <span>📣</span> Google Ads ROI
             </h2>
             <p className="mt-0.5 text-xs text-slate-600">
-              {googleAdsRangeLabel} · {googleAds.dateFrom ? `${googleAds.dateFrom}${googleAds.dateTo && googleAds.dateTo !== googleAds.dateFrom ? ` to ${googleAds.dateTo}` : ''}` : 'Toronto calendar period'} · Google Ads is queried only on request.
+              {googleAdsRangeLabel} · {googleAds.dateFrom ? `${googleAds.dateFrom}${googleAds.dateTo && googleAds.dateTo !== googleAds.dateFrom ? ` to ${googleAds.dateTo}` : ''}` : 'Toronto calendar period'} · Google Ads syncs when this dashboard loads.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -787,8 +809,8 @@ export default function AdminDashboardPage() {
           <div className="mt-4 rounded-xl border border-slate-200 bg-white/80 p-3 text-xs font-semibold text-slate-600">
             {googleAds.status === 'partially_synced'
               ? `Google Ads data is only partially synced for ${googleAdsRangeLabel.toLowerCase()} (${googleAds.syncedDays || 0} of ${googleAds.expectedDays || 0} days).`
-              : `No Google Ads spend has been synced for ${googleAdsRangeLabel.toLowerCase()} yet.`}{' '}
-            Click <strong>{`Sync ${googleAdsRangeLabel.toLowerCase()}`}</strong> to pull it from Google.
+              : `No Google Ads spend is available for ${googleAdsRangeLabel.toLowerCase()} yet.`}{' '}
+            Use <strong>{`Sync ${googleAdsRangeLabel.toLowerCase()}`}</strong> to retry the Google Ads sync.
           </div>
         ) : (
           <>

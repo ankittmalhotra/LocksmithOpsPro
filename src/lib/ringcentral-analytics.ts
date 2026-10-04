@@ -136,7 +136,9 @@ function buildCallDetails(records: ReturnType<typeof cachedRowToCallRecord>[], c
       sessionId: primary.sessionId || null,
       telephonySessionId: primary.telephonySessionId || null,
       activityKind,
-      countsAsReceived: realCalls.length > 0,
+      // A missed inbound lead that was successfully called back is still a
+      // received lead for the daily total and conversion-rate denominator.
+      countsAsReceived: realCalls.length > 0 || Boolean(callback),
       missedOpportunity: realCalls.length === 0 && Boolean(missedActivity) && !callback,
       callbackTime: callback?.startTime || null,
       voicemailTranscript: voicemail?.voicemailTranscript || null,

@@ -59,8 +59,8 @@ node prisma/seed.js
 Before deploying the cache-backed RingCentral analytics, also apply
 `prisma/ringcentral-call-cache-migration.sql` once against the production
 database. The normal analytics GET endpoint reads only cached rows from these
-tables. RingCentral is contacted only when an Admin or Dispatcher clicks
-**Refresh calls**, which invokes the authenticated refresh POST endpoint.
+tables. The Admin and Dispatch dashboards invoke the authenticated refresh
+POST endpoint when they load, and users can also click **Refresh calls**.
 
 The migration stores detailed call-log fields plus the original JSON payload,
 supports multiple configured destination numbers, and records the last
@@ -108,7 +108,7 @@ Configure the Stripe webhook to deliver `charge.refunded` so fully refunded Stri
 
 ### Google Ads ROI setup
 
-The Admin dashboard pulls Google Ads spend when an Admin clicks **Sync today**, **Sync yesterday**, **Sync last week**, **Sync this biweekly period**, **Sync previous biweekly period**, or **Sync all time**. Spend is cached in `GoogleAdsDailyMetric`, so opening the dashboard never calls Google Ads automatically. The ROI widget supports these Toronto calendar periods: Today, Yesterday, the trailing seven days, the current anchored 14-day partner billing period, the previous anchored 14-day partner billing period, and All time beginning September 7, 2026, when the company started. It compares spend with net profit, not revenue. Net profit uses the existing accounting definition: paid gross invoices minus HST, technician commissions, and parts cost. The default **ROI for partner** view splits that profit equally between the two partners before calculating ROI; **ROI for company** uses the full company profit.
+The Admin dashboard pulls Google Ads spend for the selected period when the Admin dashboard loads and when an Admin clicks **Sync today**, **Sync yesterday**, **Sync last week**, **Sync this biweekly period**, **Sync previous biweekly period**, or **Sync all time**. Spend is cached in `GoogleAdsDailyMetric`. The ROI widget supports these Toronto calendar periods: Today, Yesterday, the trailing seven days, the current anchored 14-day partner billing period, the previous anchored 14-day partner billing period, and All time beginning September 7, 2026, when the company started. It compares spend with net profit, not revenue. Net profit uses the existing accounting definition: paid gross invoices minus HST, technician commissions, and parts cost. The default **ROI for partner** view splits that profit equally between the two partners before calculating ROI; **ROI for company** uses the full company profit.
 
 Google Ads does not use a single API key for this integration. Google requires an OAuth 2.0 client and a Google Ads developer token. The account customer ID is also required. See Google’s official [authorization and HTTP headers guide](https://developers.google.com/google-ads/api/rest/auth).
 

@@ -1207,9 +1207,21 @@ export default function BooksPage() {
             </div>
             <div className='grid gap-3 border-b border-slate-100 p-5 sm:grid-cols-2 lg:grid-cols-4'>
               <div className='rounded-xl bg-blue-50 p-4'>
-                <p className='text-xs font-black uppercase tracking-wide text-blue-800'>Recipient to identify</p>
+                <p className='text-xs font-black uppercase tracking-wide text-blue-800'>
+                  {personalExpenses.some((expense) => !expense.personalPayeeName)
+                    ? 'Recipient to identify'
+                    : personalExpenses.some((expense) => !expense.paidAt)
+                      ? 'Actual payment date to confirm'
+                      : 'Needs confirmation'}
+                </p>
                 <p className='mt-1 text-xl font-black text-slate-950'>{formatMoney(reimbursements.summary.unassignedCents / 100)}</p>
-                <p className='mt-1 text-xs text-slate-500'>Legacy personal-card expenses awaiting cardholder and/or date confirmation</p>
+                <p className='mt-1 text-xs text-slate-500'>
+                  {personalExpenses.some((expense) => !expense.personalPayeeName)
+                    ? 'Some personal expenses still need a recipient or actual payment date.'
+                    : personalExpenses.some((expense) => !expense.paidAt)
+                      ? `${personalExpenses.filter((expense) => !expense.paidAt).length} expense${personalExpenses.filter((expense) => !expense.paidAt).length === 1 ? '' : 's'} still need the actual card debit date.`
+                      : 'All personal expense recipients and payment dates are confirmed.'}
+                </p>
               </div>
               <div className='rounded-xl bg-blue-50 p-4'>
                 <p className='text-xs font-black uppercase tracking-wide text-blue-800'>Confirmed as owed</p>

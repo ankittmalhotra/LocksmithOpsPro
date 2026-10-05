@@ -33,7 +33,7 @@ type CallAnalytics = {
     transport: string | null;
     sessionId: string | null;
     telephonySessionId: string | null;
-    activityKind: 'answered' | 'missed' | 'voicemail';
+    activityKind: 'answered' | 'missed' | 'voicemail' | 'short';
     countsAsReceived: boolean;
     missedOpportunity: boolean;
     callbackTime: string | null;
@@ -404,6 +404,8 @@ export default function RingCentralCallAnalytics({
                               <span className="inline-flex rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Called back</span>
                             ) : call.activityKind === 'answered' ? (
                               <span className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700">Answered</span>
+                            ) : call.activityKind === 'short' ? (
+                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">Brief call (not a valid lead)</span>
                             ) : (
                               <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">{call.activityKind}</span>
                             )}

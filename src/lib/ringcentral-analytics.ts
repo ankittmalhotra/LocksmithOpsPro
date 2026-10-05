@@ -6,6 +6,7 @@ import {
   isCallForTarget,
   isQualifyingRingCentralInboundCall,
   isRingCentralMissedInboundCall,
+  isRingCentralShortInboundCall,
   isRingCentralVoicemail,
   ringCentralDateKey,
   ringCentralTorontoRange,
@@ -59,7 +60,7 @@ export type RingCentralCallAnalytics = {
     transport: string | null;
     sessionId: string | null;
     telephonySessionId: string | null;
-    activityKind: 'answered' | 'missed' | 'voicemail';
+    activityKind: 'answered' | 'missed' | 'voicemail' | 'short';
     countsAsReceived: boolean;
     missedOpportunity: boolean;
     callbackTime: string | null;
@@ -116,7 +117,13 @@ function buildCallDetails(records: ReturnType<typeof cachedRowToCallRecord>[], c
         .sort((left, right) => new Date(left.startTime || 0).getTime() - new Date(right.startTime || 0).getTime())[0]
       : undefined;
     const voicemail = voicemailRecords.find((record) => record.voicemailTranscript || record.voicemailTranscriptionStatus) || voicemailRecords[0];
-    const activityKind: 'answered' | 'missed' | 'voicemail' = realCalls.length > 0 ? 'answered' : voicemailRecords.length > 0 ? 'voicemail' : 'missed';
+    const activityKind: 'answered' | 'missed' | 'voicemail' | 'short' = realCalls.length > 0
+      ? 'answered'
+      : voicemailRecords.length > 0
+        ? 'voicemail'
+        : missedRecords.length > 0
+          ? 'missed'
+          : ordered.some(isRingCentralShortInboundCall) ? 'short' : 'missed';
 
     return {
       id: primary.id || null,

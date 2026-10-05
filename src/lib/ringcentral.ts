@@ -681,7 +681,16 @@ export function isRingCentralVoicemail(record: RingCentralCallRecord) {
 export function isRingCentralMissedInboundCall(record: RingCentralCallRecord) {
   if (record.direction?.toLowerCase() !== 'inbound' || isRingCentralVoicemail(record)) return false;
   const result = `${record.result || ''} ${record.reason || ''}`.toLowerCase();
-  return /missed|no[ -]?answer|busy|failed|cancelled/.test(result) || (getCallDurationSeconds(record) !== null && (getCallDurationSeconds(record) || 0) < MIN_REAL_CALL_DURATION_SECONDS);
+  return /missed|no[ -]?answer|busy|failed|cancelled/.test(result);
+}
+
+export function isRingCentralShortInboundCall(record: RingCentralCallRecord) {
+  const duration = getCallDurationSeconds(record);
+  return record.direction?.toLowerCase() === 'inbound'
+    && !isRingCentralVoicemail(record)
+    && !isRingCentralMissedInboundCall(record)
+    && duration !== null
+    && duration < MIN_REAL_CALL_DURATION_SECONDS;
 }
 
 function normalizeCallerPhone(value?: string) {
@@ -692,9 +701,11 @@ function normalizeCallerPhone(value?: string) {
 export function isQualifyingRingCentralInboundCall(record: RingCentralCallRecord) {
   // Unknown durations remain eligible for older cached payloads. Explicitly
   // missed calls and voicemails never count, even if ringing lasted 30+ seconds.
+  const duration = getCallDurationSeconds(record);
   return record.direction?.toLowerCase() === 'inbound'
     && !isRingCentralVoicemail(record)
-    && !isRingCentralMissedInboundCall(record);
+    && !isRingCentralMissedInboundCall(record)
+    && (duration === null || duration >= MIN_REAL_CALL_DURATION_SECONDS);
 }
 
 export function groupRingCentralInboundCalls(records: RingCentralCallRecord[], targetPhoneNumber?: string | string[]) {

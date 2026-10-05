@@ -101,7 +101,11 @@ try {
     }
     const bounds = ringCentralTorontoRange(range);
     const records = fixture.records.filter(row => new Date(row.startTime!) >= new Date(bounds.dateFrom) && new Date(row.startTime!) <= new Date(bounds.dateTo));
-    assert.equal(uniqueInboundCalls(records, fixture.targets).length, received.length, 'Both consumers must use the same qualification/grouping');
+    assert.equal(
+      uniqueInboundCalls(records, fixture.targets).length,
+      received.filter(row => !row.callbackTime).length,
+      'Directly answered calls must use the same qualification and grouping',
+    );
     return data;
   };
 
@@ -137,6 +141,7 @@ try {
     call('short-number-a', '123'),
     call('short-number-b', '123'),
     call('short', '4165551001', { duration: 29 }),
+    call('accepted-short-17s', '4165551012', { result: 'Accepted', duration: 17 }),
     call('boundary', '4165551002', { duration: 30 }),
     call('milliseconds-short', '4165551003', { duration: undefined, durationMs: 29999 }),
     call('milliseconds-boundary', '4165551004', { duration: undefined, durationMs: 30000 }),
@@ -151,7 +156,12 @@ try {
   ];
   data = await checkCounts('today');
   assert.equal(data.summary!.received, 8);
-  assert.equal(data.callDetails!.filter(row => !row.countsAsReceived).length, 5);
+  assert.equal(data.callDetails!.filter(row => !row.countsAsReceived).length, 6);
+  assert.equal(data.callDetails!.find(row => row.id === 'accepted-short-17s')!.activityKind, 'short');
+  assert.equal(data.callDetails!.find(row => row.id === 'accepted-short-17s')!.missedOpportunity, false);
+  fixture.uiStateIndex = 0;
+  fixture.uiStates = [data, 'today', false, true, 'missed', null];
+  assert.match(renderToStaticMarkup(Widget({})), /Brief call \(not a valid lead\)/);
   assert.equal(data.callDetails!.find(row => row.id === 'unknown-voicemail')!.voicemailTranscript, 'Need help with my lock.');
   assert.equal(data.callDetails!.find(row => row.id === 'unknown-voicemail')!.missedOpportunity, true);
   assert.equal(data.callDetails!.find(row => row.id === 'missed-long')!.countsAsReceived, false);
@@ -174,9 +184,9 @@ try {
   ];
   fixture.jobs = [{ createdAt: new Date(time(4000)) }, { createdAt: new Date(time(4000, true)) }];
   data = await checkCounts('today');
-  assert.equal(data.summary!.received, 2);
+  assert.equal(data.summary!.received, 3);
   assert.equal(data.summary!.converted, 1, 'All jobs count without phone matching');
-  assert.equal(data.summary!.conversionRate, 50);
+  assert.equal(data.summary!.conversionRate, 33.3);
   assert.equal(data.callDetails!.find(row => row.id === 'missed')!.callbackTime, time(3700));
   assert.equal(data.callDetails!.find(row => row.id === 'missed')!.missedOpportunity, false);
   assert.equal(data.callDetails!.find(row => row.id === 'unknown-missed')!.callbackTime, null);
@@ -189,16 +199,17 @@ try {
     fixture.uiStateIndex = 0;
     fixture.uiStates = [data, 'today', false, true, view, null];
     const html = renderToStaticMarkup(Widget({}));
-    assert.match(html, /2 calls received · 2 other call activities · Toronto time/);
+    assert.match(html, /3 calls received · 1 other call activities · Toronto time/);
     const rowCount = (html.match(/<tr class=/g) || []).length;
-    assert.equal(rowCount, view === 'all' ? 4 : 2);
+    assert.equal(rowCount, view === 'all' ? 4 : view === 'received' ? 3 : 1);
     if (view === 'received') {
       assert.match(html, /Unknown number/);
+      assert.match(html, /Called back/);
       assert.doesNotMatch(html, /Not included in received total/);
     } else if (view === 'missed') {
       assert.match(html, /Not included in received total/);
       assert.match(html, /Missed opportunity/);
-      assert.match(html, /Called back/);
+      assert.doesNotMatch(html, /Called back/);
     }
   }
   console.log('ringcentral-analytics tests passed');

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { findJobByIdOrNumber, toTechnicianJobPayload } from '@/lib/job-helper';
 import { getCurrentUser } from '@/lib/auth';
+import { isJobCallMatchPhoneStale, rawCallerPhone } from '@/lib/job-call-matching';
 import {
   buildTechnicianUpdateDraft,
   normalizeNanpPhone,
@@ -106,7 +107,59 @@ async function handleGET(
       return NextResponse.json({ success: true, job: toTechnicianJobPayload(job) });
     }
 
-    return NextResponse.json({ success: true, job: { ...job, receiptState: getJobReceiptState(job) } });
+    const callMatches = await prisma.jobCallMatch.findMany({
+      where: { jobId: job.id },
+      orderBy: [{ reviewedAt: 'desc' }, { createdAt: 'desc' }],
+      include: {
+        call: {
+          select: {
+            id: true,
+            startTime: true,
+            callerPhoneNumber: true,
+            callerName: true,
+            direction: true,
+            type: true,
+            result: true,
+            reason: true,
+            durationSeconds: true,
+            durationMs: true,
+            isVoicemail: true,
+            voicemailMessageId: true,
+            rawPayload: true,
+          },
+        },
+        reviewedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    const callMatchesWithPhoneState = callMatches.map((match) => {
+      const rawPayload = match.call.rawPayload && typeof match.call.rawPayload === 'object' && !Array.isArray(match.call.rawPayload)
+        ? match.call.rawPayload
+        : undefined;
+      const phoneMatchData = {
+        ...match.call,
+        callerPhoneNumber: match.call.callerPhoneNumber,
+        destinationPhoneNumber: null,
+        rawPayload,
+      };
+      return {
+        ...match,
+        stalePhone: isJobCallMatchPhoneStale(job.customer.phone, phoneMatchData, match.candidatePhoneCanonical),
+        call: {
+          id: match.call.id,
+          startTime: match.call.startTime,
+          callerPhoneNumber: rawCallerPhone(phoneMatchData),
+          callerName: match.call.callerName,
+          result: match.call.result,
+          durationSeconds: match.call.durationSeconds,
+        },
+      };
+    });
+
+    return NextResponse.json({
+      success: true,
+      job: { ...job, callMatches: callMatchesWithPhoneState, receiptState: getJobReceiptState(job) },
+    });
   } catch (err: any) {
     logCaughtRequestError(request, '/api/jobs/[id]', err);
     return NextResponse.json({ success: false, error: getApiErrorMessage(err, 'Unable to load job') }, { status: 500 });
@@ -488,6 +541,12 @@ async function handleDELETE(
           technician: { select: { id: true, name: true } },
           invoice: true,
           items: true,
+          callMatches: {
+            include: {
+              call: { select: { startTime: true, callerPhoneNumber: true, result: true, durationSeconds: true } },
+              reviewedBy: { select: { id: true, name: true } },
+            },
+          },
         },
       });
       if (!job) return { status: 404, error: 'Job not found' };

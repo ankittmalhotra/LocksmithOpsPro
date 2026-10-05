@@ -39,6 +39,25 @@ interface Job {
   technicianId?: string | null;
   technician?: { id: string; name: string; phone: string; commissionRate?: number } | null;
   customer: { id: string; name: string; phone: string; extension?: string | null };
+  callMatches?: Array<{
+    id: string;
+    status: 'SUGGESTED' | 'CONFIRMED' | 'REJECTED';
+    method: string;
+    role: 'ORIGINATING_INBOUND' | 'FOLLOW_UP';
+    rationale?: string | null;
+    stalePhone?: boolean;
+    reviewedAt?: string | null;
+    reviewedBy?: { id: string; name: string } | null;
+    reviewedByName?: string | null;
+    reviewedByRole?: string | null;
+    call: {
+      startTime?: string | null;
+      callerPhoneNumber?: string | null;
+      callerName?: string | null;
+      result?: string | null;
+      durationSeconds?: number | null;
+    };
+  }>;
   invoice?: {
     grandTotal: number;
     paymentMethod?: PaymentMethod | null;
@@ -137,6 +156,22 @@ function toLocalDateTime(value?: string | null): string {
   if (Number.isNaN(date.getTime())) return '';
   const pad = (number: number) => String(number).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatTorontoDateTime(value?: string | null, fallback = 'Time unavailable') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleString('en-CA', {
+    timeZone: 'America/Toronto',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 function formFromJob(job: Job): EditForm {
@@ -284,7 +319,7 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Unable to save job');
-      setJob(data.job);
+      setJob({ ...data.job, callMatches: job.callMatches || [] });
       setForm(formFromJob(data.job));
       setSmsDraft(data.smsDraft || null);
       setSmsWarnings(Array.isArray(data.smsDraftWarnings) ? data.smsDraftWarnings : []);
@@ -404,7 +439,7 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Unable to close job');
-      setJob(data.job);
+      setJob({ ...data.job, callMatches: job.callMatches || [] });
       setForm(formFromJob(data.job));
       setSmsDraft(data.dispatcherNotification || null);
       setSmsWarnings(Array.isArray(data.dispatcherNotificationWarnings) ? data.dispatcherNotificationWarnings : []);
@@ -478,6 +513,44 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
 
       {errorMsg && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">{errorMsg}</div>}
       {successMsg && <div role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800">{successMsg}</div>}
+
+      <section aria-labelledby="job-call-history-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h2 id="job-call-history-title" className="font-black text-slate-900">Call link history</h2>
+            <p className="mt-1 text-xs text-slate-500">Confirmed call times come directly from RingCentral and are shown in Toronto time.</p>
+          </div>
+          {isAdmin && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600">Admin review</span>}
+        </div>
+        {job.callMatches?.length ? (
+          <ul className="mt-3 space-y-3">
+            {job.callMatches.map((match) => {
+              const callTimeLabel = match.status === 'REJECTED'
+                ? 'Rejected candidate'
+                : match.status === 'SUGGESTED'
+                  ? 'Candidate call'
+                  : match.role === 'ORIGINATING_INBOUND' ? 'Call received' : 'Follow-up call';
+              const reviewerName = match.reviewedBy?.name || match.reviewedByName || 'former user';
+              return (
+                <li key={match.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${match.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' : match.status === 'REJECTED' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'}`}>{match.status.toLowerCase()}</span>
+                  <span className="text-xs font-bold text-slate-700">{match.role === 'ORIGINATING_INBOUND' ? 'Originating inbound call' : 'Follow-up call'}</span>
+                </div>
+                <p className="mt-2 text-sm font-bold text-slate-900">{callTimeLabel} · {formatTorontoDateTime(match.call.startTime, 'Call time unavailable')}</p>
+                <p className="mt-1 text-xs text-slate-600">{match.call.callerName || match.call.callerPhoneNumber || 'Caller unavailable'}{match.call.result ? ` · ${match.call.result}` : ''}{typeof match.call.durationSeconds === 'number' ? ` · ${match.call.durationSeconds}s` : ''}</p>
+                {match.stalePhone && <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900">Customer phone no longer matches this call. Review this link before relying on it.</p>}
+                <p className="mt-1 text-[11px] text-slate-500">Match method: {match.method.replaceAll('_', ' ').toLowerCase()}</p>
+                {match.rationale && <p className="mt-1 text-xs text-slate-600">Reason: {match.rationale}</p>}
+                {match.reviewedAt && <p className="mt-1 text-[11px] text-slate-500">Reviewed by {reviewerName}{match.reviewedByRole ? ` (${match.reviewedByRole.toLowerCase()})` : ''} · {formatTorontoDateTime(match.reviewedAt, 'Review time unavailable')}</p>}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">No call links have been recorded for this job.</p>
+        )}
+      </section>
 
       <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">

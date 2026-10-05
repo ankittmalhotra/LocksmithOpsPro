@@ -7,15 +7,16 @@ import {
   listRingCentralOutboundCalls,
   listRingCentralVoicemails,
   ringCentralTorontoRange,
-  ringCentralTorontoWeekToDateRange,
   RingCentralCallRecord,
   RingCentralTokenData,
 } from '@/lib/ringcentral';
 import { normalizeRingCentralPhone, sourceKeyForRecord } from '@/lib/ringcentral-call-cache-utils';
+import { appendRingCentralCoverageInterval, coverageIntervalsFromSyncMetadata, ringCentralCompleteDemandWindow } from '@/lib/ringcentral-demand';
+import { parseTorontoDateOnly } from '@/lib/timezone';
 
 const SYNC_SOURCE_KEY = 'account-call-log';
 const LEASE_MINUTES = 5;
-const INITIAL_SYNC_MARKER = 'monday-to-today-v1';
+const INITIAL_SYNC_MARKER = 'four-complete-weeks-v2';
 const VOICEMAIL_TRANSCRIPTION_RECHECK_DAYS = 7;
 
 export type CachedTargetNumber = {
@@ -246,16 +247,19 @@ export async function refreshRingCentralCallCache() {
     const latestCachedCallStartTime = await readLatestCachedCallStartTime();
     const initialSyncRequired = !state.lastSuccessAt || !completedInitialSync(state);
     const todayRange = ringCentralTorontoRange('today');
-    const initialRange = ringCentralTorontoWeekToDateRange();
+    const demandWindow = ringCentralCompleteDemandWindow(new Date());
+    const bootstrapStart = parseTorontoDateOnly(demandWindow.startDate)!;
+    const bootstrapEnd = parseTorontoDateOnly(demandWindow.endDateExclusive)!;
+    const bootstrapRange = { dateFrom: bootstrapStart.toISOString(), dateTo: new Date().toISOString() };
     const range = initialSyncRequired
-      ? initialRange
+      ? bootstrapRange
       : latestCachedCallStartTime
         ? {
             dateFrom: new Date(latestCachedCallStartTime.getTime() - 1000).toISOString(),
             dateTo: todayRange.dateTo,
           }
-        : initialRange;
-    const syncMode = initialSyncRequired ? 'monday-to-today' : 'after-last-call';
+        : bootstrapRange;
+    const syncMode = initialSyncRequired ? 'four-complete-weeks-bootstrap' : 'after-last-call';
     const voicemailDateFrom = initialSyncRequired || !latestCachedCallStartTime
       ? range.dateFrom
       : new Date(Math.min(
@@ -286,6 +290,11 @@ export async function refreshRingCentralCallCache() {
       upserted += batch.length;
     }
 
+    // Record the exact successful fetch range, including the live tail through
+    // now. The heatmap still evaluates only its four complete weeks.
+    const coverageDateTo = new Date(Math.min(Date.now(), new Date(range.dateTo).getTime()));
+    const priorCoverage = initialSyncRequired ? [] : coverageIntervalsFromSyncMetadata(state.rawPayload);
+
     await prisma.ringCentralCallSyncState.update({
       where: { sourceKey: SYNC_SOURCE_KEY },
       data: {
@@ -306,6 +315,11 @@ export async function refreshRingCentralCallCache() {
           voicemailFetched: voicemailResult.records.length,
           initialSyncMarker: INITIAL_SYNC_MARKER,
           latestCachedCallStartTime: latestCachedCallStartTime?.toISOString() || null,
+          coverageIntervals: appendRingCentralCoverageInterval(
+            priorCoverage,
+            range.dateFrom,
+            coverageDateTo,
+          ),
         }),
       },
     });

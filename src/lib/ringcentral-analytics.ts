@@ -14,6 +14,10 @@ import {
   setRingCentralTokenCookie,
 } from '@/lib/ringcentral';
 import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
+import { parseTorontoDateOnly } from '@/lib/timezone';
+import { prisma } from '@/lib/prisma';
+import { isInboundCallForTrackedTarget, type MatchCall } from '@/lib/job-call-matching';
+import { buildRingCentralDemandHeatmap, buildRingCentralJobCreationHeatmap, coverageIntervalsFromSyncMetadata, ringCentralCompleteDemandWindow } from '@/lib/ringcentral-demand';
 import {
   cachedRowToCallRecord,
   getCachedTargetNumbers,
@@ -43,6 +47,16 @@ export type RingCentralCallAnalytics = {
     converted: number;
     conversionRate: number;
   }>;
+  demandHeatmap?: ReturnType<typeof buildRingCentralDemandHeatmap>;
+  jobCreationHeatmap?: ReturnType<typeof buildRingCentralJobCreationHeatmap>;
+  demandSummary?: {
+    rawInboundSessions: number;
+    callerDayLeads: number;
+    confirmedOriginatingLinks: number;
+    suggestedOriginatingLinks: number;
+    jobsCreated: number;
+    note: string;
+  };
   callDetails?: Array<{
     id: string | null;
     date: string;
@@ -162,10 +176,19 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
 }> {
   const status = await getRingCentralConnectionStatus();
   const range = ringCentralTorontoRange(selectedRange);
-  const [targetNumbers, cachedRows, callbackRows, syncState] = await Promise.all([
+  const demandWindow = ringCentralCompleteDemandWindow();
+  const demandFrom = parseTorontoDateOnly(demandWindow.startDate)!;
+  const demandTo = parseTorontoDateOnly(demandWindow.endDateExclusive)!;
+  const now = new Date();
+  const [targetNumbers, cachedRows, callbackRows, demandRows, demandJobs, syncState] = await Promise.all([
     getCachedTargetNumbers(),
     readCachedRingCentralCalls(new Date(range.dateFrom), new Date(range.dateTo)),
     readCachedRingCentralCalls(new Date(range.dateFrom), new Date()),
+    readCachedRingCentralCalls(demandFrom, now),
+    findJobsWithDetails({
+      where: { createdAt: { gte: demandFrom, lt: demandTo } },
+      orderBy: { createdAt: 'asc' },
+    }),
     readRingCentralSyncState(),
   ]);
   const targetPhoneNumbers = targetNumbers.map((target) => target.phoneNumber);
@@ -174,6 +197,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     : {};
   const cachedRecords = cachedRows.map(cachedRowToCallRecord);
   const callbackRecords = callbackRows.map(cachedRowToCallRecord);
+  const demandRecords = demandRows.map(cachedRowToCallRecord);
   const jobs = await findJobsWithDetails({
     where: {
       createdAt: {
@@ -185,6 +209,62 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
   });
 
   const callDetails = buildCallDetails(cachedRecords, callbackRecords, targetPhoneNumbers);
+  const demandCallDetails = buildCallDetails(demandRecords, demandRecords, targetPhoneNumbers);
+  const demandHeatmap = buildRingCentralDemandHeatmap(
+    demandCallDetails.map((call) => ({ time: call.time, countsAsReceived: call.countsAsReceived })),
+    coverageIntervalsFromSyncMetadata(syncState?.rawPayload),
+    syncState?.lastSuccessAt || null,
+  );
+  const jobCreationHeatmap = buildRingCentralJobCreationHeatmap(
+    demandJobs.map((job) => ({ createdAt: job.createdAt, isManual: job.isManual })),
+    now,
+  );
+  const demandLinkRows = await prisma.jobCallMatch.findMany({
+    where: {
+      role: 'ORIGINATING_INBOUND',
+      status: { in: ['CONFIRMED', 'SUGGESTED'] },
+      call: { startTime: { gte: demandFrom, lt: demandTo } },
+    },
+    select: {
+      status: true,
+      call: {
+        select: {
+          direction: true, result: true, reason: true, type: true, durationSeconds: true, durationMs: true,
+          startTime: true, isVoicemail: true, voicemailMessageId: true, callerPhoneNumber: true,
+          destinationPhoneNumber: true,
+        },
+      },
+    },
+  });
+  const inWindow = (time: string | null | undefined) => {
+    const value = time ? new Date(time).getTime() : Number.NaN;
+    return Number.isFinite(value) && value >= demandFrom.getTime() && value < demandTo.getTime();
+  };
+  const inboundSessions = new Set<string>();
+  for (const record of demandRecords) {
+    if (!inWindow(record.startTime) || record.direction?.toLowerCase() !== 'inbound') continue;
+    const matchCall: MatchCall = {
+      id: record.id || '', direction: record.direction || null, result: record.result || null, reason: record.reason || null,
+      type: record.type || null, durationSeconds: getCallDurationSeconds(record), durationMs: null,
+      startTime: record.startTime || null, isVoicemail: Boolean(record.isVoicemail), voicemailMessageId: record.voicemailMessageId || null,
+      callerPhoneNumber: record.from?.phoneNumber || null, destinationPhoneNumber: record.to?.phoneNumber || null,
+    };
+    if (!isInboundCallForTrackedTarget(matchCall, targetPhoneNumbers)) continue;
+    inboundSessions.add(record.telephonySessionId || record.sessionId || record.id || `${record.from?.phoneNumber || 'unknown'}:${record.startTime || ''}`);
+  }
+  const targetNumbersForMatch = targetPhoneNumbers;
+  const confirmedOriginatingLinks = demandLinkRows.filter((row) => row.status === 'CONFIRMED' && isInboundCallForTrackedTarget({
+    id: '', direction: row.call.direction, result: row.call.result, reason: row.call.reason, type: row.call.type,
+    durationSeconds: row.call.durationSeconds, durationMs: row.call.durationMs, startTime: row.call.startTime,
+    isVoicemail: row.call.isVoicemail, voicemailMessageId: row.call.voicemailMessageId,
+    callerPhoneNumber: row.call.callerPhoneNumber, destinationPhoneNumber: row.call.destinationPhoneNumber,
+  }, targetNumbersForMatch)).length;
+  const suggestedOriginatingLinks = demandLinkRows.filter((row) => row.status === 'SUGGESTED' && isInboundCallForTrackedTarget({
+    id: '', direction: row.call.direction, result: row.call.result, reason: row.call.reason, type: row.call.type,
+    durationSeconds: row.call.durationSeconds, durationMs: row.call.durationMs, startTime: row.call.startTime,
+    isVoicemail: row.call.isVoicemail, voicemailMessageId: row.call.voicemailMessageId,
+    callerPhoneNumber: row.call.callerPhoneNumber, destinationPhoneNumber: row.call.destinationPhoneNumber,
+  }, targetNumbersForMatch)).length;
   // The card, graph and popup must all count the same daily lead rows.
   const receivedCalls = callDetails.filter((call) => call.countsAsReceived);
   const missedOpportunities = callDetails.filter((call) => call.missedOpportunity).length;
@@ -240,6 +320,16 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
       rangeLabel: rangeLabels[selectedRange],
       summary: { ...summary, conversionRate: percent(summary.converted, summary.received), missedOpportunities },
       daily,
+      demandHeatmap,
+      jobCreationHeatmap,
+      demandSummary: {
+        rawInboundSessions: inboundSessions.size,
+        callerDayLeads: demandHeatmap.totalLeads,
+        confirmedOriginatingLinks,
+        suggestedOriginatingLinks,
+        jobsCreated: jobCreationHeatmap.totalLeads,
+        note: 'Separate activity counts for the same four complete Toronto weeks. Suggestions are unreviewed; confirmed links are human-selected. These counts do not attribute jobs to calls.',
+      },
       callDetails,
       totalCalls: receivedCalls.length,
       totalConvertedCalls,

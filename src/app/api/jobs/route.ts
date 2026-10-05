@@ -13,6 +13,9 @@ import { findJobsWithDetails, toTechnicianJobPayload } from '@/lib/job-helper';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { getJobReceiptState } from '@/lib/job-receipt';
+import { canonicalizePhone, isInboundCallForTrackedTarget, qualifiesAsOriginatingCall } from '@/lib/job-call-matching';
+import { callFields } from '@/lib/job-call-match-service';
+import { getCachedTargetNumbers } from '@/lib/ringcentral-call-cache';
 
 async function handleGET(request: Request) {
   try {
@@ -103,6 +106,7 @@ async function handlePOST(request: Request) {
       isScheduled = false,
       scheduledFor,
       intakeMessage,
+      originatingRingCentralCallId,
     } = body;
 
     if (intakeMessage !== undefined && (typeof intakeMessage !== 'string' || intakeMessage.length > 10_000)) {
@@ -117,6 +121,10 @@ async function handlePOST(request: Request) {
         { success: false, error: 'Missing required customer or job information' },
         { status: 400 }
       );
+    }
+    if (originatingRingCentralCallId !== undefined && originatingRingCentralCallId !== null
+      && (typeof originatingRingCentralCallId !== 'string' || !originatingRingCentralCallId.trim())) {
+      return NextResponse.json({ success: false, error: 'originatingRingCentralCallId must be a call ID string.' }, { status: 400 });
     }
 
     if (typeof isScheduled !== 'boolean') {
@@ -161,57 +169,108 @@ async function handlePOST(request: Request) {
       }
     }
 
-    // 1. Find or create customer
-    let customer = await prisma.customer.findFirst({
-      where: { phone: customerPhone },
-    });
+    const normalizedCustomerPhone = canonicalizePhone(customerPhone);
+    // A call link is best effort; its validation or a concurrent claim must
+    // never roll back an otherwise valid job save.
+    const { job, customer } = await prisma.$transaction(async (tx) => {
+      let customer = await tx.customer.findFirst({ where: { phone: customerPhone } });
+      if (!customer) {
+        customer = await tx.customer.create({
+          data: { name: customerName, phone: customerPhone, extension: customerExtension || null, address: serviceAddress },
+        });
+      }
 
-    if (!customer) {
-      customer = await prisma.customer.create({
+      const existingJobNumbers = await tx.job.findMany({ select: { jobNumber: true } });
+      const generatedJobNumber = nextJobNumber(existingJobNumbers.map((job) => job.jobNumber));
+      const job = await tx.job.create({
         data: {
-          name: customerName,
-          phone: customerPhone,
-          extension: customerExtension || null,
-          address: serviceAddress,
+          jobNumber: generatedJobNumber,
+          customerId: customer.id,
+          dispatcherId: currentUser.id,
+          technicianId: technicianId || null,
+          status: 'NEW',
+          serviceType,
+          problemDescription: problemDescription || '',
+          intakeMessage: typeof intakeMessage === 'string' ? intakeMessage : null,
+          serviceAddress,
+          workerCommissionRate: assignedTechnician?.commissionRate || 0,
+          workerCommission: 0,
+          vehicleYear: vehicleYear || null,
+          vehicleMake: vehicleMake || null,
+          vehicleModel: vehicleModel || null,
+          vehicleVin: vehicleVin || null,
+          keyType: keyType || null,
+          fccId: fccId || null,
+          isScheduled: !!isScheduled,
+          scheduledFor: isScheduled ? parsedScheduledFor : null,
+        },
+        include: {
+          customer: true,
+          technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
         },
       });
+
+      return { job, customer };
+    });
+
+    let callLinkWarning: string | null = null;
+    if (originatingRingCentralCallId) {
+      try {
+        if (!normalizedCustomerPhone.ok) throw new Error('Customer phone is invalid or ambiguous.');
+        const now = new Date();
+        const [selectedCall, targetNumbers] = await Promise.all([
+          prisma.ringCentralCallLog.findFirst({
+            where: {
+              id: originatingRingCentralCallId,
+              direction: { equals: 'Inbound', mode: 'insensitive' },
+              startTime: { gte: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000), lte: now },
+            },
+            select: {
+              id: true, direction: true, result: true, reason: true, type: true, durationSeconds: true, durationMs: true,
+              startTime: true, isVoicemail: true, voicemailMessageId: true, callerPhoneNumber: true, destinationPhoneNumber: true,
+            },
+          }),
+          getCachedTargetNumbers(),
+        ]);
+        if (!selectedCall) throw new Error('The selected call is no longer available in the last 3 days.');
+        const callRecord = callFields(selectedCall);
+        const callerPhone = canonicalizePhone(callRecord.callerPhoneNumber);
+        if (!callerPhone.ok || normalizedCustomerPhone.value !== callerPhone.value) throw new Error('The selected call phone no longer matches this customer.');
+        if (!isInboundCallForTrackedTarget(callRecord, targetNumbers.map((target) => target.phoneNumber))) throw new Error('The call was not received by a configured RingCentral business number.');
+        let callbacks: ReturnType<typeof callFields>[] = [];
+        if (!qualifiesAsOriginatingCall(callRecord, [])) {
+          const rows = await prisma.ringCentralCallLog.findMany({
+            where: { direction: { equals: 'Outbound', mode: 'insensitive' }, startTime: { gt: selectedCall.startTime || new Date(0), lte: now } },
+            orderBy: { startTime: 'asc' }, take: 2000,
+            select: {
+              id: true, direction: true, result: true, reason: true, type: true, durationSeconds: true, durationMs: true,
+              startTime: true, isVoicemail: true, voicemailMessageId: true, callerPhoneNumber: true, destinationPhoneNumber: true,
+            },
+          });
+          if (rows.length === 2000) throw new Error('Callback search reached its safety limit.');
+          callbacks = rows.map(callFields);
+        }
+        if (!qualifiesAsOriginatingCall(callRecord, callbacks)) throw new Error('The selected call no longer meets inbound qualification rules.');
+        await prisma.$transaction(async (tx) => {
+          const duplicate = await tx.jobCallMatch.findFirst({
+            where: { ringCentralCallLogId: selectedCall.id, status: 'CONFIRMED', role: 'ORIGINATING_INBOUND' },
+            select: { id: true },
+          });
+          if (duplicate) throw new Error('The selected call is already linked to another job.');
+          await tx.jobCallMatch.create({ data: {
+            jobId: job.id, ringCentralCallLogId: selectedCall.id, status: 'CONFIRMED', method: 'MANUAL', role: 'ORIGINATING_INBOUND',
+            candidatePhoneCanonical: normalizedCustomerPhone.value,
+            rationale: 'Dispatcher explicitly selected this recent candidate during intake; inbound destination, qualification and exact phone were revalidated.',
+            reviewedById: currentUser.id, reviewedByName: currentUser.name, reviewedByRole: currentUser.role, reviewedAt: now,
+          } });
+        });
+      } catch (error: any) {
+        console.warn('Job saved without originating call link:', error);
+        callLinkWarning = error?.code === 'P2002'
+          ? 'Job saved. Another job linked that call at the same time, so this job was saved without a call link.'
+          : `Job saved without a call link: ${error instanceof Error ? error.message : 'call link validation failed'}`;
+      }
     }
-
-    // 2. Generate sequential Job Number
-    const existingJobNumbers = await prisma.job.findMany({
-      select: { jobNumber: true },
-    });
-    const generatedJobNumber = nextJobNumber(existingJobNumbers.map((job) => job.jobNumber));
-
-    // 3. Create the Job in NEW status awaiting technician acknowledgment
-    const job = await prisma.job.create({
-      data: {
-        jobNumber: generatedJobNumber,
-        customerId: customer.id,
-        // Dispatch ownership always comes from the authenticated session.
-        dispatcherId: currentUser.id,
-        technicianId: technicianId || null,
-        status: 'NEW',
-        serviceType,
-        problemDescription: problemDescription || '',
-        intakeMessage: typeof intakeMessage === 'string' ? intakeMessage : null,
-        serviceAddress,
-        workerCommissionRate: assignedTechnician?.commissionRate || 0,
-        workerCommission: 0,
-        vehicleYear: vehicleYear || null,
-        vehicleMake: vehicleMake || null,
-        vehicleModel: vehicleModel || null,
-        vehicleVin: vehicleVin || null,
-        keyType: keyType || null,
-        fccId: fccId || null,
-        isScheduled: !!isScheduled,
-        scheduledFor: isScheduled ? parsedScheduledFor : null,
-      },
-      include: {
-        customer: true,
-        technician: { select: { id: true, name: true, phone: true, email: true, commissionRate: true, active: true } },
-      },
-    });
 
     // 5. If assigned to a technician, prepare a device-SMS draft.  The
     // dispatcher must review and send it from the native Messages app.
@@ -269,6 +328,7 @@ async function handlePOST(request: Request) {
       job,
       smsDraft,
       smsDraftWarnings: smsDraft?.warnings || [],
+      callLinkWarning,
       // Kept for clients that still expect these response keys.  No SMS is
       // sent by the server, and customer SMS is intentionally not prepared.
       smsResult: null,

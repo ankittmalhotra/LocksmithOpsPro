@@ -16,6 +16,36 @@ type CallAnalytics = {
   summary?: { received: number; converted: number; conversionRate: number; missedOpportunities: number };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{ date: string; label: string; dateLabel: string; received: number; converted: number; conversionRate: number }>;
+  demandHeatmap?: {
+    startDate: string;
+    endDate: string;
+    weeks: Array<{ startDate: string; endDate: string; coveredDays: number; complete: boolean; leads: number | null }>;
+    weekdays: string[];
+    cells: Array<{ weekday: number; hour: number; observedLeads: number; coveredWeeks: number; weekCounts: Array<number | null>; recurring: boolean }>;
+    coverage: { coveredDays: number; totalDays: number; complete: boolean };
+    totalLeads: number;
+    minRecurringLeads: number;
+    lastSyncedAt: string | null;
+  };
+  jobCreationHeatmap?: {
+    startDate: string;
+    endDate: string;
+    weeks: Array<{ startDate: string; endDate: string; coveredDays: number; complete: boolean; leads: number | null }>;
+    weekdays: string[];
+    cells: Array<{ weekday: number; hour: number; observedLeads: number; coveredWeeks: number; weekCounts: number[]; recurring: boolean }>;
+    coverage: { coveredDays: number; totalDays: number; complete: boolean };
+    totalLeads: number;
+    minRecurringLeads: number;
+    manualExcluded: number;
+  };
+  demandSummary?: {
+    rawInboundSessions: number;
+    callerDayLeads: number;
+    confirmedOriginatingLinks: number;
+    suggestedOriginatingLinks: number;
+    jobsCreated: number;
+    note: string;
+  };
   callDetails?: Array<{
     id: string | null;
     date: string;
@@ -84,6 +114,23 @@ function displayValue(value: string | null) {
   return value?.trim() || '—';
 }
 
+function shortDate(value: string) {
+  const date = new Date(`${value}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function hourLabel(hour: number) {
+  return new Date(Date.UTC(2020, 0, 1, hour)).toLocaleTimeString('en-CA', { hour: 'numeric', hour12: true, timeZone: 'UTC' });
+}
+
+function demandCellColor(count: number, covered: boolean) {
+  if (!covered) return 'bg-slate-100 text-slate-400';
+  if (count === 0) return 'bg-white text-slate-500';
+  if (count <= 1) return 'bg-blue-100 text-blue-900';
+  if (count <= 3) return 'bg-blue-300 text-blue-950';
+  return 'bg-blue-600 text-white';
+}
+
 const rangeOptions = [
   { value: 'today', label: 'Today' },
   { value: 'yesterday', label: 'Yesterday' },
@@ -105,6 +152,10 @@ export default function RingCentralCallAnalytics({
   const [showDetails, setShowDetails] = useState(false);
   const [detailsView, setDetailsView] = useState<'received' | 'missed' | 'all'>('received');
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [activeDemandCell, setActiveDemandCell] = useState<string | null>(null);
+  const [demandMetric, setDemandMetric] = useState<'calls' | 'jobs'>('calls');
+  const [demandView, setDemandView] = useState<'day-hour' | 'day' | 'hour'>('day-hour');
+  const [activeDemandBucket, setActiveDemandBucket] = useState<string | null>(null);
 
   const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {
     try {
@@ -175,6 +226,32 @@ export default function RingCentralCallAnalytics({
   const receivedDetails = allDetails.filter((call) => call.countsAsReceived);
   const missedDetails = allDetails.filter((call) => !call.countsAsReceived);
   const visibleDetails = detailsView === 'received' ? receivedDetails : detailsView === 'missed' ? missedDetails : allDetails;
+  const demand = analytics?.demandHeatmap;
+  const plot = demandMetric === 'calls' ? demand : analytics?.jobCreationHeatmap;
+  const selectedDemandCell = plot?.cells.find((cell) => `${cell.weekday}:${cell.hour}` === activeDemandCell) || null;
+  const aggregateDemandBucket = (axis: 'day' | 'hour', index: number) => {
+    if (!plot) return null;
+    const cells = plot.cells.filter((cell) => axis === 'day' ? cell.weekday === index : cell.hour === index);
+    const weekCounts = plot.weeks.map((_, weekIndex) => {
+      if (!cells.length || cells.some((cell) => cell.weekCounts[weekIndex] === null)) return null;
+      return cells.reduce((sum, cell) => sum + (cell.weekCounts[weekIndex] || 0), 0);
+    });
+    const verified = demandMetric === 'jobs'
+      || (cells.length > 0 && cells.every((cell) => cell.coveredWeeks === 4) && weekCounts.every((count) => count !== null));
+    const observedLeads = verified ? weekCounts.reduce<number>((sum, count) => sum + (count || 0), 0) : 0;
+    const activeWeeks = weekCounts.filter((count): count is number => count !== null && count > 0).length;
+    const recurring = verified
+      && (demandMetric === 'jobs' || plot.coverage.coveredDays >= 24)
+      && observedLeads >= plot.minRecurringLeads
+      && activeWeeks >= 3;
+    return { observedLeads, verified, recurring, weekCounts };
+  };
+  const selectedDemandBucket = (() => {
+    if (!activeDemandBucket || demandView === 'day-hour') return null;
+    const [axis, rawIndex] = activeDemandBucket.split(':');
+    const index = Number(rawIndex);
+    return (axis === 'day' || axis === 'hour') ? aggregateDemandBucket(axis, index) : null;
+  })();
 
   return (
     <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-sm" aria-labelledby="call-analytics-title">
@@ -324,6 +401,103 @@ export default function RingCentralCallAnalytics({
               </div>
             )}
           </div>
+
+          <section className="mt-4 rounded-xl border border-slate-100 bg-white p-4" aria-labelledby="demand-heatmap-title">
+            {analytics?.demandSummary && <div className="mb-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" aria-label="Separate four-week activity counts">
+                {[
+                  ['Raw inbound sessions', analytics.demandSummary.rawInboundSessions],
+                  ['Caller-day leads', analytics.demandSummary.callerDayLeads],
+                  ['Confirmed call links', analytics.demandSummary.confirmedOriginatingLinks],
+                  ['Suggested call links', analytics.demandSummary.suggestedOriginatingLinks],
+                  ['Jobs created', analytics.demandSummary.jobsCreated],
+                ].map(([label, count]) => <div key={label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="text-[10px] font-semibold text-slate-600">{label}</div>
+                  <div className="text-lg font-black text-slate-900">{count}</div>
+                </div>)}
+              </div>
+              <p className="mt-2 text-[10px] text-slate-500">{analytics.demandSummary.note} Counts use the four complete Toronto weeks shown below; incomplete RingCentral coverage is called out in the chart.</p>
+            </div>}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 id="demand-heatmap-title" className="text-sm font-black text-slate-900">Four-week activity by Toronto day and hour</h3>
+                <div className="mt-2 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Choose activity for four-week chart">
+                  <button type="button" onClick={() => { setDemandMetric('calls'); setActiveDemandCell(null); }} aria-pressed={demandMetric === 'calls'} className={`rounded-md px-3 py-1.5 text-[11px] font-bold ${demandMetric === 'calls' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>Caller-day leads</button>
+                  <button type="button" onClick={() => { setDemandMetric('jobs'); setActiveDemandCell(null); }} aria-pressed={demandMetric === 'jobs'} className={`rounded-md px-3 py-1.5 text-[11px] font-bold ${demandMetric === 'jobs' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>Jobs created</button>
+                </div>
+                <div className="mt-2 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Choose heatmap view">
+                  <button type="button" onClick={() => { setDemandView('day'); setActiveDemandBucket(null); setActiveDemandCell(null); }} aria-pressed={demandView === 'day'} className={`rounded-md px-3 py-1.5 text-[11px] font-bold ${demandView === 'day' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>Day</button>
+                  <button type="button" onClick={() => { setDemandView('day-hour'); setActiveDemandBucket(null); }} aria-pressed={demandView === 'day-hour'} className={`rounded-md px-3 py-1.5 text-[11px] font-bold ${demandView === 'day-hour' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>Day &amp; Hour</button>
+                  <button type="button" onClick={() => { setDemandView('hour'); setActiveDemandBucket(null); setActiveDemandCell(null); }} aria-pressed={demandView === 'hour'} className={`rounded-md px-3 py-1.5 text-[11px] font-bold ${demandView === 'hour' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>Hour</button>
+                </div>
+                {demandMetric === 'calls'
+                  ? <p className="mt-1 text-[11px] text-slate-600">Known callers count once per Toronto calendar day; unknown callers count by call session. Includes answered calls of 30+ seconds and missed calls called back successfully.</p>
+                  : <p className="mt-1 text-[11px] text-slate-600">Counts job record creation time, not call arrival or conversion. Manual historical jobs are excluded because their entry time is often recorded at midnight.</p>}
+                {plot && <p className="mt-1 text-[11px] font-semibold text-slate-500">{shortDate(plot.startDate)}–{shortDate(plot.endDate)}{demandMetric === 'calls' ? ` · ${plot.coverage.coveredDays}/${plot.coverage.totalDays} days verified · ${demand?.lastSyncedAt ? `last synced ${new Date(demand.lastSyncedAt).toLocaleString()}` : 'no successful sync recorded'}` : ` · ${plot.totalLeads} jobs created · ${analytics?.jobCreationHeatmap?.manualExcluded || 0} manual historical jobs excluded`}</p>}
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-600" aria-label={`${demandMetric === 'calls' ? 'Call lead' : 'Job creation'} heatmap legend`}>
+                <span><i className="mr-1 inline-block h-3 w-3 rounded-sm border border-slate-200 bg-white" />0 {demandMetric === 'calls' ? 'leads' : 'jobs'}</span>
+                <span><i className="mr-1 inline-block h-3 w-3 rounded-sm bg-blue-100" />1 {demandMetric === 'calls' ? 'lead' : 'job'}</span>
+                <span><i className="mr-1 inline-block h-3 w-3 rounded-sm bg-blue-300" />2–3 {demandMetric === 'calls' ? 'leads' : 'jobs'}</span>
+                <span><i className="mr-1 inline-block h-3 w-3 rounded-sm bg-blue-600" />4+ {demandMetric === 'calls' ? 'leads' : 'jobs'}</span>
+                {demandMetric === 'calls' && <span><i className="mr-1 inline-block h-3 w-3 rounded-sm bg-slate-100" />Unverified</span>}
+              </div>
+            </div>
+            {!plot || (demandMetric === 'calls' && plot.coverage.coveredDays === 0) ? (
+              <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">{demandMetric === 'calls' ? 'No verified RingCentral coverage for these four complete weeks yet. Unverified periods are not counted as zero demand.' : 'Job creation activity is not available for this period.'}</div>
+            ) : (
+              <>
+                {demandMetric === 'calls' && !plot.coverage.complete && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-900">Only {plot.coverage.coveredDays} of 28 days have verified sync coverage. Unverified day/hour cells show a dash and are excluded from observed totals.</p>}
+                {demandView === 'day' && <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7" aria-label="Observed totals by Toronto weekday">
+                  {plot.weekdays.map((weekday, index) => {
+                    const bucket = aggregateDemandBucket('day', index)!;
+                    const key = `day:${index}`;
+                    const weeks = bucket.weekCounts.map((count, week) => `${shortDate(plot.weeks[week].startDate)}: ${count === null ? 'unverified' : count}`).join('; ');
+                    const label = `${weekday}: ${bucket.verified ? bucket.observedLeads : 'unverified'} ${demandMetric === 'calls' ? 'caller-day leads' : 'jobs created'}. Weekly totals: ${weeks}`;
+                    return <button key={weekday} type="button" onClick={() => setActiveDemandBucket(key)} onFocus={() => setActiveDemandBucket(key)} aria-label={label} title={label} className={`relative rounded-lg p-3 text-left outline-none focus:ring-2 focus:ring-blue-700 ${demandCellColor(bucket.observedLeads, bucket.verified)} ${activeDemandBucket === key ? 'ring-2 ring-blue-700' : ''}`}><span className="block text-[10px] font-bold">{weekday}</span><span className="mt-1 block text-lg font-black">{bucket.verified ? bucket.observedLeads : '—'}</span>{bucket.recurring && <span className="absolute right-2 top-1 text-xs text-amber-700" aria-hidden="true">★</span>}</button>;
+                  })}
+                </div>}
+                {demandView === 'hour' && <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-6 lg:grid-cols-8" aria-label="Observed totals by Toronto hour">
+                  {Array.from({ length: 24 }, (_, hour) => {
+                    const bucket = aggregateDemandBucket('hour', hour)!;
+                    const key = `hour:${hour}`;
+                    const weeks = bucket.weekCounts.map((count, week) => `${shortDate(plot.weeks[week].startDate)}: ${count === null ? 'unverified' : count}`).join('; ');
+                    const label = `${hourLabel(hour)}–${hourLabel((hour + 1) % 24)}: ${bucket.verified ? bucket.observedLeads : 'unverified'} ${demandMetric === 'calls' ? 'caller-day leads' : 'jobs created'}. Weekly totals: ${weeks}`;
+                    return <button key={hour} type="button" onClick={() => setActiveDemandBucket(key)} onFocus={() => setActiveDemandBucket(key)} aria-label={label} title={label} className={`relative rounded-lg p-2 text-left outline-none focus:ring-2 focus:ring-blue-700 ${demandCellColor(bucket.observedLeads, bucket.verified)} ${activeDemandBucket === key ? 'ring-2 ring-blue-700' : ''}`}><span className="block text-[9px] font-bold">{hourLabel(hour)}</span><span className="mt-1 block text-base font-black">{bucket.verified ? bucket.observedLeads : '—'}</span>{bucket.recurring && <span className="absolute right-1 top-0 text-[10px] text-amber-700" aria-hidden="true">★</span>}</button>;
+                  })}
+                </div>}
+                {demandView === 'day-hour' && <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="min-w-[920px] w-full border-collapse text-center text-[10px]" aria-label={`${demandMetric === 'calls' ? 'Qualified caller-day leads' : 'Jobs created'} by Toronto weekday and hour for the last four complete weeks`}>
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr><th scope="col" className="sticky left-0 z-10 min-w-20 bg-slate-50 px-2 py-2 text-left">Toronto time</th>{Array.from({ length: 24 }, (_, hour) => <th key={hour} scope="col" className="min-w-8 px-0.5 py-2 font-bold">{hourLabel(hour)}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {plot.weekdays.map((weekday, weekdayIndex) => (
+                        <tr key={weekday} className="border-t border-slate-100">
+                          <th scope="row" className="sticky left-0 z-10 bg-white px-2 py-1.5 text-left font-bold text-slate-700">{weekday}</th>
+                          {Array.from({ length: 24 }, (_, hour) => {
+                            const cell = plot.cells.find((item) => item.weekday === weekdayIndex && item.hour === hour)!;
+                            const verified = demandMetric === 'jobs' || cell.coveredWeeks > 0;
+                            const key = `${weekdayIndex}:${hour}`;
+                            const weekValues = cell.weekCounts.map((count, week) => `${shortDate(plot.weeks[week].startDate)}: ${count === null ? 'unverified' : `${count} ${demandMetric === 'calls' ? 'leads' : 'jobs created'}`}`).join('; ');
+                            const metricLabel = demandMetric === 'calls' ? 'leads' : 'jobs created';
+                            const accessibleLabel = `${weekday}, ${hourLabel(hour)}–${hourLabel((hour + 1) % 24)}: ${verified ? `${cell.observedLeads} observed ${metricLabel}${demandMetric === 'calls' ? ` across ${cell.coveredWeeks} of 4 covered weeks` : ''}` : 'no verified coverage'}${cell.recurring ? ', recurring demand' : ''}. Weekly counts: ${weekValues}`;
+                            return <td key={hour} className="p-0.5"><button type="button" onFocus={() => setActiveDemandCell(key)} onClick={() => setActiveDemandCell(key)} aria-label={accessibleLabel} title={accessibleLabel} className={`relative h-7 w-full rounded-sm font-bold outline-none transition focus:z-10 focus:ring-2 focus:ring-blue-700 ${demandCellColor(cell.observedLeads, verified)} ${activeDemandCell === key ? 'ring-2 ring-blue-700' : ''}`}>{verified ? cell.observedLeads : '—'}{cell.recurring && <span aria-hidden="true" className="absolute -right-0.5 -top-1 text-[8px] text-amber-700">★</span>}</button></td>;
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>}
+                {selectedDemandCell && <p className="mt-2 text-[11px] text-slate-700" aria-live="polite"><strong>{plot.weekdays[selectedDemandCell.weekday]} · {hourLabel(selectedDemandCell.hour)}–{hourLabel((selectedDemandCell.hour + 1) % 24)}:</strong> {selectedDemandCell.weekCounts.map((count, week) => `${shortDate(plot.weeks[week].startDate)} ${count === null ? 'unverified' : `${count} ${demandMetric === 'calls' ? 'leads' : 'jobs created'}`}`).join(' · ')}{selectedDemandCell.recurring ? ' · recurring demand' : ''}</p>}
+                {selectedDemandBucket && activeDemandBucket && <p className="mt-2 text-[11px] text-slate-700" aria-live="polite"><strong>{activeDemandBucket.startsWith('day:') ? plot.weekdays[Number(activeDemandBucket.split(':')[1])] : `${hourLabel(Number(activeDemandBucket.split(':')[1]))} hour`}:</strong> {selectedDemandBucket.weekCounts.map((count, week) => `${shortDate(plot.weeks[week].startDate)} ${count === null ? 'unverified' : `${count} ${demandMetric === 'calls' ? 'leads' : 'jobs created'}`}`).join(' · ')}</p>}
+                <div className="mt-3 flex flex-wrap gap-2" aria-label="Weekly call demand totals">
+                  {plot.weeks.map((week) => <div key={week.startDate} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[10px] text-slate-700"><span className="font-bold">{shortDate(week.startDate)}–{shortDate(week.endDate)}</span><span className="ml-2">{week.complete ? `${week.leads} ${demandMetric === 'calls' ? 'leads' : 'jobs created'}` : `Partial · ${week.coveredDays}/7 days · total unavailable`}</span></div>)}
+                </div>
+                <p className="mt-2 text-[10px] text-slate-500">★ Recurring means at least {plot.minRecurringLeads} observed {demandMetric === 'calls' ? 'caller-day leads' : 'jobs created'} in a cell with activity in at least 3 of 4 weeks. This is a four-week operational pattern, not seasonality.</p>
+              </>
+            )}
+          </section>
         </>
       )}
 
@@ -386,7 +560,7 @@ export default function RingCentralCallAnalytics({
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                       {visibleDetails.map((call, index) => (
-                        <tr key={`${call.date}:${call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`}`} className={`align-top transition ${call.missedOpportunity ? 'bg-rose-50/80 hover:bg-rose-100/80' : 'hover:bg-blue-50/40'}`}>
+                        <tr data-call-detail-row="true" key={`${call.date}:${call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`}`} className={`align-top transition ${call.missedOpportunity ? 'bg-rose-50/80 hover:bg-rose-100/80' : 'hover:bg-blue-50/40'}`}>
                           <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{formatCallTime(call.time, true)}</td>
                           <td className="px-4 py-3">
                             <div className="font-bold text-slate-900">{formatPhoneNumber(call.callerNumber)}</div>

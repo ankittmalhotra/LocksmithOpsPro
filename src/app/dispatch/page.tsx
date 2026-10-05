@@ -158,6 +158,14 @@ interface PaymentLinkPrompt {
   customerPhone: string;
 }
 
+interface IntakeCallCandidate {
+  callId: string;
+  callTime: string;
+  torontoTime: string;
+  durationSeconds: number | null;
+  result: string | null;
+}
+
 function getPaymentLinkUrl(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const value = payload as Record<string, unknown>;
@@ -210,6 +218,10 @@ export default function DispatchPage() {
   // Intake Form State
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [intakeCallCandidates, setIntakeCallCandidates] = useState<IntakeCallCandidate[]>([]);
+  const [selectedIntakeCallId, setSelectedIntakeCallId] = useState('');
+  const [intakeCallSearchMessage, setIntakeCallSearchMessage] = useState('');
+  const [intakeCallSearchLoading, setIntakeCallSearchLoading] = useState(false);
   const [customerExtension, setCustomerExtension] = useState('');
   const [serviceAddress, setServiceAddress] = useState('');
   const [serviceType, setServiceType] = useState('Commercial Lock Change');
@@ -319,6 +331,38 @@ export default function DispatchPage() {
   }, []);
 
   useEffect(() => {
+    if (!showAddJob || jobEntryMode === 'COMPLETED') return;
+    if (phoneDigitCount(customerPhone) < 7) {
+      setIntakeCallCandidates([]);
+      setIntakeCallSearchMessage('Enter the full customer phone to check recent calls.');
+      setIntakeCallSearchLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setIntakeCallSearchLoading(true);
+      setIntakeCallSearchMessage('Searching cached calls from the last 3 days…');
+      try {
+        const response = await fetch(`/api/jobs/call-candidates?phone=${encodeURIComponent(customerPhone)}`, { cache: 'no-store', signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Call search failed');
+        setIntakeCallCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+        setIntakeCallSearchMessage(data.message || data.syncNote || (data.searchComplete === false ? 'Call search is incomplete. You can continue without a call link.' : ''));
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setIntakeCallCandidates([]);
+        setIntakeCallSearchMessage('Call data is unavailable. Continue creating the job without a call link.');
+      } finally {
+        if (!controller.signal.aborted) setIntakeCallSearchLoading(false);
+      }
+    }, 350);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [customerPhone, showAddJob, jobEntryMode]);
+
+  useEffect(() => {
     if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'DISPATCHER') return;
     void fetchPeriodComparison();
     return () => { comparisonRequestId.current += 1; };
@@ -388,6 +432,7 @@ export default function DispatchPage() {
         body: JSON.stringify({
           customerName,
           customerPhone,
+          ...(selectedIntakeCallId ? { originatingRingCentralCallId: selectedIntakeCallId } : {}),
           customerExtension,
           serviceAddress,
           serviceType,
@@ -410,15 +455,19 @@ export default function DispatchPage() {
         throw new Error(data.error || 'Failed to dispatch job');
       }
 
-      setSuccessMsg(jobEntryMode === 'ASSIGNED'
+      const baseSuccessMsg = jobEntryMode === 'ASSIGNED'
         ? `✅ Job #${data.job.jobNumber} created and assigned. Technician SMS draft is ready for review.`
-        : `✅ Job #${data.job.jobNumber} added to the unassigned queue.`);
+        : `✅ Job #${data.job.jobNumber} added to the unassigned queue.`;
+      setSuccessMsg(data.callLinkWarning ? `${baseSuccessMsg} ${data.callLinkWarning}` : baseSuccessMsg);
       setSmsDraft(data.smsDraft || null);
       setSmsWarnings(Array.isArray(data.smsDraftWarnings) ? data.smsDraftWarnings : []);
       setSmsAutoOpen(false);
       // Reset form
       setCustomerName('');
       setCustomerPhone('');
+      setIntakeCallCandidates([]);
+      setSelectedIntakeCallId('');
+      setIntakeCallSearchMessage('');
       setCustomerExtension('');
       setServiceAddress('');
       setProblemDescription('');
@@ -1324,10 +1373,32 @@ export default function DispatchPage() {
                   title="Enter a phone number containing at least 7 digits."
                   placeholder="(647) 951-0901"
                   value={customerPhone}
-                  onChange={(e) => setCustomerPhone(sanitizePhoneInput(e.target.value))}
+                  onChange={(e) => {
+                    setCustomerPhone(sanitizePhoneInput(e.target.value));
+                    setSelectedIntakeCallId('');
+                    setIntakeCallCandidates([]);
+                    setIntakeCallSearchMessage('Updating recent call search…');
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-900"
                 />
                 <p className="mt-1 text-[10px] text-slate-500">Use at least 7 digits; letters are removed automatically.</p>
+                <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-2.5" aria-live="polite">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-blue-900">Recent RingCentral calls</p>
+                    {intakeCallSearchLoading && <p className="mt-1 text-xs text-slate-600">Searching…</p>}
+                    {!intakeCallSearchLoading && intakeCallSearchMessage && <p className="mt-1 text-xs text-slate-700">{intakeCallSearchMessage}</p>}
+                    {intakeCallCandidates.length > 0 && (
+                      <div className="mt-2 space-y-1.5">
+                        <p className="text-[10px] text-slate-600">Select the call for this job, or leave unselected to continue without a call link.</p>
+                        {intakeCallCandidates.map((candidate) => (
+                          <label key={candidate.callId} className={`flex cursor-pointer items-start gap-2 rounded-md border p-2 text-xs ${selectedIntakeCallId === candidate.callId ? 'border-blue-500 bg-white' : 'border-blue-100 bg-white/70'}`}>
+                            <input type="radio" name="intake-originating-call" value={candidate.callId} checked={selectedIntakeCallId === candidate.callId} onChange={() => setSelectedIntakeCallId(candidate.callId)} className="mt-0.5" />
+                            <span><strong>{candidate.torontoTime}</strong> Toronto time · {candidate.durationSeconds ?? 'duration unknown'}s · {candidate.result || 'answered inbound call'}</span>
+                          </label>
+                        ))}
+                        {selectedIntakeCallId && <button type="button" onClick={() => setSelectedIntakeCallId('')} className="text-[10px] font-bold text-blue-800 underline">Continue without call link</button>}
+                      </div>
+                    )}
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">

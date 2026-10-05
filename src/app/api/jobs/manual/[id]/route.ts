@@ -401,9 +401,34 @@ async function handleDELETE(
       return NextResponse.json({ success: false, error: 'Manual job entry not found' }, { status: 404 });
     }
 
-    if (job.invoice) {
-      const invoiceId = job.invoice.id;
-      await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Job" WHERE "id" = ${job.id} FOR UPDATE
+      `;
+      if (locked.length === 0) throw new ManualJobConflictError('Manual job changed or was removed. Reload and try again.');
+      const freshJob = await tx.job.findUnique({
+        where: { id: job.id },
+        include: {
+          customer: true,
+          dispatcher: { select: { id: true, name: true } },
+          technician: { select: { id: true, name: true } },
+          invoice: true,
+          items: true,
+          callMatches: {
+            include: {
+              call: { select: { startTime: true, callerPhoneNumber: true, callerName: true, result: true, durationSeconds: true } },
+              reviewedBy: { select: { id: true, name: true, role: true } },
+            },
+          },
+        },
+      });
+      if (!freshJob || !freshJob.isManual) throw new ManualJobConflictError('Manual job changed. Reload and try again.');
+      if (freshJob.updatedAt.getTime() !== job.updatedAt.getTime()) {
+        throw new ManualJobConflictError('Manual job changed. Reload and review it before deleting.');
+      }
+
+      if (freshJob.invoice) {
+        const invoiceId = freshJob.invoice.id;
         await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${invoiceId} FOR UPDATE`;
         const freshInvoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
         if (!freshInvoice) throw new ManualJobConflictError('Manual job invoice changed. Reload and try again.');
@@ -412,11 +437,19 @@ async function handleDELETE(
         }
         const issuedReceipt = await tx.jobPaymentReceipt.findFirst({ where: { invoiceId }, select: { receiptNumber: true } });
         if (issuedReceipt) throw new ManualJobConflictError(`Manual job has receipt history beginning with ${issuedReceipt.receiptNumber} and cannot be deleted.`);
-        await tx.job.delete({ where: { id: job.id } });
+      }
+
+      await tx.jobRemovalAudit.create({
+        data: {
+          jobId: freshJob.id,
+          jobNumber: freshJob.jobNumber,
+          removedById: currentUser.id,
+          reason: 'Manual job removed from the Dispatch Desk',
+          snapshot: JSON.parse(JSON.stringify({ job: freshJob })),
+        },
       });
-    } else {
-      await prisma.job.delete({ where: { id: job.id } });
-    }
+      await tx.job.delete({ where: { id: freshJob.id } });
+    });
     return NextResponse.json({
       success: true,
       message: `Manual Job #${job.jobNumber} deleted successfully.`,

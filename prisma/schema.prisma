@@ -109,6 +109,24 @@ enum JobStatus {
   CANCELLED
 }
 
+enum JobCallMatchStatus {
+  SUGGESTED
+  CONFIRMED
+  REJECTED
+}
+
+enum JobCallMatchMethod {
+  MANUAL
+  PHONE_TIME_RULE
+  ADMIN_IMPORT
+  AI_SUGGESTION
+}
+
+enum JobCallMatchRole {
+  ORIGINATING_INBOUND
+  FOLLOW_UP
+}
+
 enum PaymentMethod {
   CASH
   INTERAC
@@ -157,6 +175,7 @@ model User {
   accountingReimbursementsVoided AccountingReimbursementPayment[] @relation("AccountingReimbursementVoidedBy")
   accountingReimbursementsMapped AccountingReimbursementPayment[] @relation("AccountingReimbursementMappedBy")
   accountingAuditEvents        AccountingAuditEvent[]
+  jobCallMatchesReviewed       JobCallMatch[]               @relation("JobCallMatchReviewedBy")
 }
 
 model Customer {
@@ -233,6 +252,35 @@ model Job {
 
   items   JobItem[]
   invoice Invoice?
+  callMatches JobCallMatch[]
+}
+
+// Auditable association between operational jobs and RingCentral call records.
+// Multiple follow-up calls can belong to a job; SQL enforces one confirmed
+// originating inbound call per job.
+model JobCallMatch {
+  id                   String                 @id @default(uuid())
+  jobId                String
+  job                  Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  ringCentralCallLogId String
+  call                 RingCentralCallLog     @relation(fields: [ringCentralCallLogId], references: [id], onDelete: Restrict)
+  status               JobCallMatchStatus     @default(SUGGESTED)
+  method               JobCallMatchMethod
+  role                 JobCallMatchRole       @default(ORIGINATING_INBOUND)
+  candidatePhoneCanonical String?
+  rationale            String?
+  reviewedById         String?
+  reviewedBy           User?                  @relation("JobCallMatchReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedByName        String?
+  reviewedByRole        Role?
+  reviewedAt           DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  @@unique([jobId, ringCentralCallLogId], map: "job_call_match_job_call_key")
+  @@index([jobId, status], map: "job_call_match_job_status_idx")
+  @@index([ringCentralCallLogId, status], map: "job_call_match_call_status_idx")
+  @@index([reviewedById, reviewedAt], map: "job_call_match_reviewer_time_idx")
 }
 
 model JobItem {
@@ -454,6 +502,8 @@ model RingCentralCallLog {
   syncedAt   DateTime @default(now())
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  jobMatches JobCallMatch[]
 
   @@index([startTime], map: "rc_call_start_time_idx")
   @@index([destinationPhoneNumberNormalized, startTime], map: "rc_call_destination_start_idx")

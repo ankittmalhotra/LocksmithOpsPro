@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
+import { assertRingCentralPaginationComplete, MAX_RINGCENTRAL_PAGES } from './ringcentral-pagination.ts';
 
 const RINGCENTRAL_TOKEN_COOKIE = 'lockops_ringcentral_tokens';
 const RINGCENTRAL_STATE_COOKIE = 'lockops_ringcentral_oauth_state';
@@ -384,7 +385,7 @@ async function listRingCentralCalls(dateFrom: string, dateTo: string, direction?
   let totalPages: number | null = 1;
   let nextPageUri: string | null = null;
 
-  while ((nextPageUri || totalPages === null || page <= totalPages) && page <= 100) {
+  while ((nextPageUri || totalPages === null || page <= totalPages) && page <= MAX_RINGCENTRAL_PAGES) {
     const params = new URLSearchParams({
       dateFrom,
       dateTo,
@@ -412,6 +413,7 @@ async function listRingCentralCalls(dateFrom: string, dateTo: string, direction?
     page += 1;
     if (!nextPageUri && totalPages === null) break;
   }
+  assertRingCentralPaginationComplete(page, nextPageUri, totalPages, 'call log');
 
   return { records, ...session };
 }
@@ -505,7 +507,7 @@ export async function listRingCentralVoicemails(dateFrom: string, dateTo: string
   let totalPages: number | null = 1;
   let nextPageUri: string | null = null;
 
-  while ((nextPageUri || totalPages === null || page <= totalPages) && page <= 100) {
+  while ((nextPageUri || totalPages === null || page <= totalPages) && page <= MAX_RINGCENTRAL_PAGES) {
     const params = new URLSearchParams({
       dateFrom,
       dateTo,
@@ -530,6 +532,7 @@ export async function listRingCentralVoicemails(dateFrom: string, dateTo: string
     page += 1;
     if (!nextPageUri && totalPages === null) break;
   }
+  assertRingCentralPaginationComplete(page, nextPageUri, totalPages, 'voicemail');
 
   const records: RingCentralCallRecord[] = [];
   for (const message of messages.filter((candidate) => voicemailMatchesTarget(candidate, targetPhoneNumbers))) {

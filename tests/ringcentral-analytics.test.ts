@@ -20,6 +20,12 @@ const hooks = registerHooks({
     if (specifier === '@/lib/ringcentral') {
       return { url: new URL('../src/lib/ringcentral.ts', import.meta.url).href, shortCircuit: true };
     }
+    if (specifier === '@/lib/timezone') {
+      return { url: new URL('../src/lib/timezone.ts', import.meta.url).href, shortCircuit: true };
+    }
+    if (specifier === '@/lib/ringcentral-demand') {
+      return { url: new URL('../src/lib/ringcentral-demand.ts', import.meta.url).href, shortCircuit: true };
+    }
     if (['@/lib/prisma', 'next/headers', '@/lib/job-helper', '@/lib/ringcentral-call-cache'].includes(specifier)
       || (specifier === 'react' && context.parentURL?.endsWith('/RingCentralCallAnalytics.tsx'))) {
       return { url: `analytics-test:${specifier}`, shortCircuit: true };
@@ -32,7 +38,9 @@ const hooks = registerHooks({
       'analytics-test:next/headers': 'export async function cookies() { return { get() { return undefined; } }; }',
       'analytics-test:@/lib/job-helper': `
         export async function findJobsWithDetails({where}) {
-          return globalThis.__ringCentralAnalyticsFixture.jobs.filter(job => job.createdAt >= where.createdAt.gte && job.createdAt <= where.createdAt.lte);
+          return globalThis.__ringCentralAnalyticsFixture.jobs.filter(job => job.createdAt >= where.createdAt.gte
+            && (where.createdAt.lte ? job.createdAt <= where.createdAt.lte : true)
+            && (where.createdAt.lt ? job.createdAt < where.createdAt.lt : true));
         }
       `,
       'analytics-test:@/lib/ringcentral-call-cache': `
@@ -200,7 +208,7 @@ try {
     fixture.uiStates = [data, 'today', false, true, view, null];
     const html = renderToStaticMarkup(Widget({}));
     assert.match(html, /3 calls received · 1 other call activities · Toronto time/);
-    const rowCount = (html.match(/<tr class=/g) || []).length;
+    const rowCount = (html.match(/data-call-detail-row="true"/g) || []).length;
     assert.equal(rowCount, view === 'all' ? 4 : view === 'received' ? 3 : 1);
     if (view === 'received') {
       assert.match(html, /Unknown number/);

@@ -6,8 +6,8 @@ import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manu
 import { calculateDualPriceManualCardQuote, DEFAULT_CARD_PRICE_DIFFERENCE_RATE, MAX_CARD_PRICE_DIFFERENCE_RATE, roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
-import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
 import PeriodComparisonWidget, { type PeriodComparisonMode, type PeriodComparisons } from '@/components/PeriodComparisonWidget';
+import RingCentralRefreshOnLoad from '@/components/RingCentralRefreshOnLoad';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { buildSmsDraft } from '@/lib/sms-draft';
 import { parseDispatchPaste } from '@/lib/dispatch-paste-parser';
@@ -1005,6 +1005,7 @@ export default function DispatchPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
+      {canManageManualJobs && <RingCentralRefreshOnLoad />}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
@@ -1119,8 +1120,6 @@ export default function DispatchPage() {
           </div>
         </div>
       )}
-
-      {canManageManualJobs && <RingCentralCallAnalytics canManageConnection={currentUser?.role === 'ADMIN'} refreshOnLoad />}
 
       {canManageManualJobs && (
         <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />

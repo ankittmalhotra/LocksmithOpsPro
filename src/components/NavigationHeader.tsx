@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, LayoutDashboard, LogOut, MapPinned, Menu, Settings2, Wrench, X } from 'lucide-react';
+import { CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, ClipboardList, LayoutDashboard, LogOut, MapPinned, Menu, Settings2, Wrench, X } from 'lucide-react';
 import type { AppRole } from '@/lib/session';
 
 interface UserSession {
@@ -20,7 +20,7 @@ const publicMarketingPaths = new Set([
   '/automotive-locksmith-software', '/commercial-locksmith-software', '/locksmith-job-costing',
 ]);
 
-const iconMap = { dispatch: ClipboardList, calendar: CalendarDays, map: MapPinned, owner: LayoutDashboard, books: Settings2, tech: Wrench };
+const iconMap = { dispatch: ClipboardList, calendar: CalendarDays, map: MapPinned, analytics: ChartNoAxesCombined, owner: LayoutDashboard, books: Settings2, tech: Wrench };
 
 export default function NavigationHeader() {
   const router = useRouter();
@@ -92,6 +92,7 @@ export default function NavigationHeader() {
         { label: 'Dispatch desk', href: '/dispatch', icon: iconMap.dispatch },
         { label: 'Calendar', href: '/dispatch/calendar', icon: iconMap.calendar },
         { label: 'Live map', href: '/dispatch/map', icon: iconMap.map },
+        { label: 'Call Analytics', href: '/dispatch/call-analytics', icon: iconMap.analytics },
         ...(isAdmin ? [{ label: 'Admin hub', href: '/owner', icon: iconMap.owner }] : []),
         { label: 'Books', href: '/books', icon: iconMap.books },
         ...(isAdmin ? [{ label: 'Technician view', href: '/tech', icon: iconMap.tech }] : []),

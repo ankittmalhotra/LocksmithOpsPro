@@ -7,7 +7,12 @@ export type DemandCall = {
   countsAsReceived: boolean;
 };
 
-export type DemandJob = { createdAt: Date | string; isManual: boolean };
+export type DemandJob = {
+  completedAt: Date | string | null;
+  isManual: boolean;
+  jobReceivedTimeSlot?: string | null;
+  linkedCallTime?: Date | string | null;
+};
 
 export type RingCentralDemandCell = {
   weekday: number;
@@ -175,24 +180,27 @@ export function buildRingCentralDemandHeatmap(
   };
 }
 
-export function buildRingCentralJobCreationHeatmap(jobs: DemandJob[], now = new Date()) {
+export function buildRingCentralJobCompletionHeatmap(jobs: DemandJob[], now = new Date()) {
   const window = ringCentralCompleteDemandWindow(now);
   const dates = window.dates;
   const countsByWeekdayHour = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => Array<number>(4).fill(0)));
   const weekCounts = Array<number>(4).fill(0);
-  let manualExcluded = 0;
+  let unknownTimeCount = 0;
   for (const job of jobs) {
-    const createdAt = new Date(job.createdAt);
-    if (!Number.isFinite(createdAt.getTime())) continue;
-    const key = dateKey(createdAt);
+    if (!job.completedAt) continue;
+    const completedAt = new Date(job.completedAt);
+    if (!Number.isFinite(completedAt.getTime())) continue;
+    const key = dateKey(completedAt);
     const dateIndex = dates.indexOf(key);
     if (dateIndex < 0) continue;
-    if (job.isManual) {
-      manualExcluded += 1;
+    const weekday = weekdayIndexes[weekdayFormatter.format(completedAt)];
+    const linkedCall = job.isManual && job.linkedCallTime ? new Date(job.linkedCallTime) : null;
+    const slotStart = job.isManual && !linkedCall ? manualReceivedSlotStartHour(job.jobReceivedTimeSlot) : null;
+    if (job.isManual && !linkedCall && slotStart === null) {
+      unknownTimeCount += 1;
       continue;
     }
-    const weekday = weekdayIndexes[weekdayFormatter.format(createdAt)];
-    const hour = localHour(createdAt);
+    const hour = linkedCall ? localHour(linkedCall) : slotStart ?? localHour(completedAt);
     if (weekday === undefined || hour < 0 || hour > 23) continue;
     const week = Math.floor(dateIndex / 7);
     countsByWeekdayHour[weekday][hour][week] += 1;
@@ -230,8 +238,17 @@ export function buildRingCentralJobCreationHeatmap(jobs: DemandJob[], now = new 
     coverage: { coveredDays: 28, totalDays: 28, complete: true },
     totalLeads: weekCounts.reduce((total, value) => total + value, 0),
     minRecurringLeads: RINGCENTRAL_DEMAND_MIN_RECURRING_LEADS,
-    manualExcluded,
+    unknownTimeCount,
   };
+}
+
+function manualReceivedSlotStartHour(value?: string | null) {
+  const match = value?.match(/^(\d{1,2}):\d{2} (AM|PM) - /i);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  if (hour < 1 || hour > 12) return null;
+  const normalizedHour = hour % 12 + (match[2].toUpperCase() === 'PM' ? 12 : 0);
+  return normalizedHour;
 }
 
 export function ringCentralCompleteDemandWindow(now = new Date()) {

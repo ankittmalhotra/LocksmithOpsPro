@@ -16,8 +16,7 @@ import {
 import type { RingCentralAnalyticsRange } from '@/lib/ringcentral';
 import { parseTorontoDateOnly } from '@/lib/timezone';
 import { prisma } from '@/lib/prisma';
-import { isInboundCallForTrackedTarget, type MatchCall } from '@/lib/job-call-matching';
-import { buildRingCentralDemandHeatmap, buildRingCentralJobCreationHeatmap, coverageIntervalsFromSyncMetadata, ringCentralCompleteDemandWindow } from '@/lib/ringcentral-demand';
+import { buildRingCentralDemandHeatmap, buildRingCentralJobCompletionHeatmap, coverageIntervalsFromSyncMetadata, ringCentralCompleteDemandWindow } from '@/lib/ringcentral-demand';
 import {
   cachedRowToCallRecord,
   getCachedTargetNumbers,
@@ -48,15 +47,7 @@ export type RingCentralCallAnalytics = {
     conversionRate: number;
   }>;
   demandHeatmap?: ReturnType<typeof buildRingCentralDemandHeatmap>;
-  jobCreationHeatmap?: ReturnType<typeof buildRingCentralJobCreationHeatmap>;
-  demandSummary?: {
-    rawInboundSessions: number;
-    callerDayLeads: number;
-    confirmedOriginatingLinks: number;
-    suggestedOriginatingLinks: number;
-    jobsCreated: number;
-    note: string;
-  };
+  jobCompletionHeatmap?: ReturnType<typeof buildRingCentralJobCompletionHeatmap>;
   callDetails?: Array<{
     id: string | null;
     date: string;
@@ -186,8 +177,8 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     readCachedRingCentralCalls(new Date(range.dateFrom), new Date()),
     readCachedRingCentralCalls(demandFrom, now),
     findJobsWithDetails({
-      where: { createdAt: { gte: demandFrom, lt: demandTo } },
-      orderBy: { createdAt: 'asc' },
+      where: { status: 'COMPLETED', completedAt: { gte: demandFrom, lt: demandTo } },
+      orderBy: { completedAt: 'asc' },
     }),
     readRingCentralSyncState(),
   ]);
@@ -215,56 +206,22 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
     coverageIntervalsFromSyncMetadata(syncState?.rawPayload),
     syncState?.lastSuccessAt || null,
   );
-  const jobCreationHeatmap = buildRingCentralJobCreationHeatmap(
-    demandJobs.map((job) => ({ createdAt: job.createdAt, isManual: job.isManual })),
+  const jobCompletionHeatmap = buildRingCentralJobCompletionHeatmap(
+    await (async () => {
+      const linkedJobs = demandJobs.length ? await prisma.jobCallMatch.findMany({
+        where: { jobId: { in: demandJobs.map((job) => job.id) }, status: 'CONFIRMED', role: 'ORIGINATING_INBOUND' },
+        select: { jobId: true, call: { select: { startTime: true } } },
+      }) : [];
+      const callTimeByJobId = new Map(linkedJobs.map((match) => [match.jobId, match.call.startTime]));
+      return demandJobs.map((job) => ({
+        completedAt: job.completedAt,
+        isManual: job.isManual,
+        jobReceivedTimeSlot: job.jobReceivedTimeSlot,
+        linkedCallTime: callTimeByJobId.get(job.id),
+      }));
+    })(),
     now,
   );
-  const demandLinkRows = await prisma.jobCallMatch.findMany({
-    where: {
-      role: 'ORIGINATING_INBOUND',
-      status: { in: ['CONFIRMED', 'SUGGESTED'] },
-      call: { startTime: { gte: demandFrom, lt: demandTo } },
-    },
-    select: {
-      status: true,
-      call: {
-        select: {
-          direction: true, result: true, reason: true, type: true, durationSeconds: true, durationMs: true,
-          startTime: true, isVoicemail: true, voicemailMessageId: true, callerPhoneNumber: true,
-          destinationPhoneNumber: true,
-        },
-      },
-    },
-  });
-  const inWindow = (time: string | null | undefined) => {
-    const value = time ? new Date(time).getTime() : Number.NaN;
-    return Number.isFinite(value) && value >= demandFrom.getTime() && value < demandTo.getTime();
-  };
-  const inboundSessions = new Set<string>();
-  for (const record of demandRecords) {
-    if (!inWindow(record.startTime) || record.direction?.toLowerCase() !== 'inbound') continue;
-    const matchCall: MatchCall = {
-      id: record.id || '', direction: record.direction || null, result: record.result || null, reason: record.reason || null,
-      type: record.type || null, durationSeconds: getCallDurationSeconds(record), durationMs: null,
-      startTime: record.startTime || null, isVoicemail: Boolean(record.isVoicemail), voicemailMessageId: record.voicemailMessageId || null,
-      callerPhoneNumber: record.from?.phoneNumber || null, destinationPhoneNumber: record.to?.phoneNumber || null,
-    };
-    if (!isInboundCallForTrackedTarget(matchCall, targetPhoneNumbers)) continue;
-    inboundSessions.add(record.telephonySessionId || record.sessionId || record.id || `${record.from?.phoneNumber || 'unknown'}:${record.startTime || ''}`);
-  }
-  const targetNumbersForMatch = targetPhoneNumbers;
-  const confirmedOriginatingLinks = demandLinkRows.filter((row) => row.status === 'CONFIRMED' && isInboundCallForTrackedTarget({
-    id: '', direction: row.call.direction, result: row.call.result, reason: row.call.reason, type: row.call.type,
-    durationSeconds: row.call.durationSeconds, durationMs: row.call.durationMs, startTime: row.call.startTime,
-    isVoicemail: row.call.isVoicemail, voicemailMessageId: row.call.voicemailMessageId,
-    callerPhoneNumber: row.call.callerPhoneNumber, destinationPhoneNumber: row.call.destinationPhoneNumber,
-  }, targetNumbersForMatch)).length;
-  const suggestedOriginatingLinks = demandLinkRows.filter((row) => row.status === 'SUGGESTED' && isInboundCallForTrackedTarget({
-    id: '', direction: row.call.direction, result: row.call.result, reason: row.call.reason, type: row.call.type,
-    durationSeconds: row.call.durationSeconds, durationMs: row.call.durationMs, startTime: row.call.startTime,
-    isVoicemail: row.call.isVoicemail, voicemailMessageId: row.call.voicemailMessageId,
-    callerPhoneNumber: row.call.callerPhoneNumber, destinationPhoneNumber: row.call.destinationPhoneNumber,
-  }, targetNumbersForMatch)).length;
   // The card, graph and popup must all count the same daily lead rows.
   const receivedCalls = callDetails.filter((call) => call.countsAsReceived);
   const missedOpportunities = callDetails.filter((call) => call.missedOpportunity).length;
@@ -321,15 +278,7 @@ export async function buildRingCentralCachedAnalytics(selectedRange: RingCentral
       summary: { ...summary, conversionRate: percent(summary.converted, summary.received), missedOpportunities },
       daily,
       demandHeatmap,
-      jobCreationHeatmap,
-      demandSummary: {
-        rawInboundSessions: inboundSessions.size,
-        callerDayLeads: demandHeatmap.totalLeads,
-        confirmedOriginatingLinks,
-        suggestedOriginatingLinks,
-        jobsCreated: jobCreationHeatmap.totalLeads,
-        note: 'Separate activity counts for the same four complete Toronto weeks. Suggestions are unreviewed; confirmed links are human-selected. These counts do not attribute jobs to calls.',
-      },
+      jobCompletionHeatmap,
       callDetails,
       totalCalls: receivedCalls.length,
       totalConvertedCalls,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendRingCentralCoverageInterval, buildRingCentralDemandHeatmap, buildRingCentralJobCreationHeatmap } from '../src/lib/ringcentral-demand.ts';
+import { appendRingCentralCoverageInterval, buildRingCentralDemandHeatmap, buildRingCentralJobCompletionHeatmap } from '../src/lib/ringcentral-demand.ts';
 import { parseTorontoDateOnly, parseTorontoDateTime } from '../src/lib/timezone.ts';
 
 const now = new Date('2026-10-05T16:00:00.000Z'); // Monday in Toronto.
@@ -74,15 +74,21 @@ const dstResult = buildRingCentralDemandHeatmap([dstCall], coverage, now, now);
 assert.deepEqual(dstResult.cells.find((item) => item.weekday === 0 && item.hour === 9)!.weekCounts, [0, 0, 1, 0],
   'Toronto-local hour remains correct after the DST offset change');
 
-const jobs = buildRingCentralJobCreationHeatmap([
-  { createdAt: callAt('2026-09-07', '09:00').time, isManual: false },
-  { createdAt: callAt('2026-09-13', '09:00').time, isManual: false },
-  { createdAt: callAt('2026-09-07', '00:00').time, isManual: true },
+const jobs = buildRingCentralJobCompletionHeatmap([
+  { completedAt: callAt('2026-09-07', '09:00').time, isManual: false },
+  { completedAt: callAt('2026-09-13', '09:00').time, isManual: false },
+  { completedAt: callAt('2026-09-07', '00:00').time, isManual: true, jobReceivedTimeSlot: '04:00 PM - 06:00 PM' },
+  { completedAt: callAt('2026-09-07', '00:00').time, isManual: true, jobReceivedTimeSlot: null },
+  { completedAt: callAt('2026-09-14', '00:00').time, isManual: true, jobReceivedTimeSlot: '08:00 AM - 10:00 AM', linkedCallTime: callAt('2026-09-14', '18:00').time },
 ], now);
-assert.equal(jobs.totalLeads, 2);
-assert.equal(jobs.manualExcluded, 1, 'Historical manual timestamps stay out of hourly job activity');
+assert.equal(jobs.totalLeads, 4);
+assert.equal(jobs.unknownTimeCount, 1, 'Manual jobs without a recorded intake window stay out of hourly job activity');
 assert.deepEqual(jobs.cells.find((item) => item.weekday === 0 && item.hour === 9)!.weekCounts, [1, 0, 0, 0]);
 assert.deepEqual(jobs.cells.find((item) => item.weekday === 6 && item.hour === 9)!.weekCounts, [1, 0, 0, 0]);
+assert.deepEqual(jobs.cells.find((item) => item.weekday === 0 && item.hour === 16)!.weekCounts, [1, 0, 0, 0],
+  'Manual completed jobs use their recorded Toronto received-time window');
+assert.deepEqual(jobs.cells.find((item) => item.weekday === 0 && item.hour === 18)!.weekCounts, [0, 1, 0, 0],
+  'An exact linked RingCentral call time takes precedence over the approximate received-time window');
 
 const merged = appendRingCentralCoverageInterval([
   { from: '2026-09-07T04:00:00.000Z', to: '2026-09-10T04:00:00.000Z' },

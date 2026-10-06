@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import RingCentralCallAnalytics from '@/components/RingCentralCallAnalytics';
-import AdminJobCallMatchReview from '@/components/AdminJobCallMatchReview';
 import AdminAIInsights from '@/components/AdminAIInsights';
 import PeriodComparisonWidget, { type PeriodComparisonMode, type PeriodComparisons } from '@/components/PeriodComparisonWidget';
 import { formatTorontoDateInput } from '@/lib/timezone';
@@ -740,9 +738,7 @@ export default function AdminDashboardPage() {
         </div>
       </section>
 
-      <RingCentralCallAnalytics canManageConnection refreshOnLoad />
       <AdminAIInsights />
-      <AdminJobCallMatchReview />
 
       {/* Standalone Google Ads ROI panel; kept admin-only and separate from existing widgets. */}
       <section className="mb-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-5 shadow-sm" aria-labelledby="google-ads-roi-title">

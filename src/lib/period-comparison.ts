@@ -1,6 +1,6 @@
 import { getPartnerBillingPeriod } from './accounting.ts';
-import { getRevenueActivityDate } from './revenue-period';
-import { formatTorontoDateInput } from './timezone';
+import { calculatePaidGrossRevenueInRange, getCompletedActivityDateKey } from './operations-reporting.ts';
+import { formatTorontoDateInput } from './timezone.ts';
 
 export const PERIOD_COMPARISON_MODES = ['week', 'biweekly'] as const;
 export type PeriodComparisonMode = (typeof PERIOD_COMPARISON_MODES)[number];
@@ -93,24 +93,23 @@ export function aggregatePeriodComparison(
   jobs: readonly PeriodComparisonJob[],
   ranges: { current: DateKeyRange; previous: DateKeyRange },
 ): PeriodComparison {
-  const current: PeriodComparisonWindow = { ...ranges.current, revenue: 0, completedJobs: 0 };
-  const previous: PeriodComparisonWindow = { ...ranges.previous, revenue: 0, completedJobs: 0 };
+  const current: PeriodComparisonWindow = {
+    ...ranges.current,
+    revenue: calculatePaidGrossRevenueInRange(jobs, ranges.current),
+    completedJobs: 0,
+  };
+  const previous: PeriodComparisonWindow = {
+    ...ranges.previous,
+    revenue: calculatePaidGrossRevenueInRange(jobs, ranges.previous),
+    completedJobs: 0,
+  };
 
   for (const job of jobs) {
-    const completedDate = job.completedAt ? formatTorontoDateInput(job.completedAt) : '';
+    const completedDate = getCompletedActivityDateKey(job) || '';
     if (job.status === 'COMPLETED' && completedDate) {
       if (dateKeyInRange(completedDate, ranges.current)) current.completedJobs += 1;
       if (dateKeyInRange(completedDate, ranges.previous)) previous.completedJobs += 1;
     }
-
-    if (job.invoice?.paymentStatus !== 'PAID') continue;
-    const activityDate = getRevenueActivityDate(job);
-    const paymentDate = activityDate ? formatTorontoDateInput(activityDate) : '';
-    const amount = typeof job.invoice.grandTotal === 'number' && Number.isFinite(job.invoice.grandTotal)
-      ? job.invoice.grandTotal
-      : 0;
-    if (dateKeyInRange(paymentDate, ranges.current)) current.revenue += amount;
-    if (dateKeyInRange(paymentDate, ranges.previous)) previous.revenue += amount;
   }
 
   const revenueChange = current.revenue - previous.revenue;

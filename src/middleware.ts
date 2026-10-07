@@ -13,13 +13,15 @@ export function middleware(request: NextRequest) {
   }
 
   // Paths that require role protection
-  const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner') || pathname.startsWith('/google-ads');
+  const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner') || pathname.startsWith('/google-ads')
+    || pathname.startsWith('/admin') || pathname.startsWith('/api/admin') || pathname === '/api/dashboard/google-ads-summary';
   const isBooksRoute = pathname.startsWith('/books') || pathname.startsWith('/api/books');
   const isJobApi = pathname.startsWith('/api/jobs');
   const isDispatchRoute = pathname.startsWith('/dispatch') || pathname.startsWith('/dashboard');
+  const isDashboardApi = pathname.startsWith('/api/dashboard');
   const isTechRoute = pathname.startsWith('/tech');
 
-  if (!isAdminRoute && !isBooksRoute && !isDispatchRoute && !isTechRoute && !isJobApi) {
+  if (!isAdminRoute && !isBooksRoute && !isDispatchRoute && !isTechRoute && !isJobApi && !isDashboardApi) {
     return NextResponse.next();
   }
 
@@ -55,6 +57,15 @@ export function middleware(request: NextRequest) {
       logFailedRequest(request, pathname, 403, requestId, 'Forbidden: Books access required');
       return addRequestId(response, requestId);
     }
+    if (isDashboardApi && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
+      const requestId = getRequestId(request);
+      const response = NextResponse.json(
+        { success: false, error: 'Forbidden: Dashboard access required' },
+        { status: 403 },
+      );
+      logFailedRequest(request, pathname, 403, requestId, 'Forbidden: Dashboard access required');
+      return addRequestId(response, requestId);
+    }
     return NextResponse.next();
   }
 
@@ -78,6 +89,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL(getRoleDestination(user.role), request.url));
   }
 
+  if (isDashboardApi && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
+    return NextResponse.redirect(new URL(getRoleDestination(user.role), request.url));
+  }
+
   if (isTechRoute && user.role !== 'ADMIN' && user.role !== 'TECHNICIAN') {
     return NextResponse.redirect(new URL(getRoleDestination(user.role), request.url));
   }
@@ -88,6 +103,9 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/dashboard/:path*',
+    '/api/dashboard/:path*',
+    '/admin/:path*',
+    '/api/admin/:path*',
     '/owner/:path*',
     '/google-ads/:path*',
     '/books/:path*',

@@ -87,6 +87,7 @@ function isMissingSettlementTableError(error: unknown): boolean {
 type JobReadArgs = {
   where?: Prisma.JobWhereInput;
   orderBy?: Prisma.JobOrderByWithRelationInput | Prisma.JobOrderByWithRelationInput[];
+  take?: number;
 };
 
 /**

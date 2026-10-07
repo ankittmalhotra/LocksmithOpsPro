@@ -17,6 +17,7 @@ import {
   Menu,
   Plus,
   Settings2,
+  UsersRound,
   Wrench,
   X,
   type LucideIcon,
@@ -211,7 +212,9 @@ export default function NavigationHeader() {
       {isAdmin && <div className="shrink-0 px-3 pt-5">
         <p className="px-3 pb-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Admin tools</p>
         <nav aria-label="Admin tools" className="space-y-1">
-          <Link href="/owner" title={collapsed ? 'Team and Admin tools' : undefined} aria-current={pathname.startsWith('/owner') ? 'page' : undefined} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold transition ${focusRing} ${pathname.startsWith('/owner') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><Settings2 size={17} /><span className={collapsed ? 'md:hidden' : ''}>Team and Admin tools</span></Link>
+          <Link href="/admin/team" title={collapsed ? 'Team management' : undefined} aria-current={pathname.startsWith('/admin/team') ? 'page' : undefined} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold transition ${focusRing} ${pathname.startsWith('/admin/team') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><UsersRound size={17} /><span className={collapsed ? 'md:hidden' : ''}>Team management</span></Link>
+          <Link href="/admin/cash-ledger" title={collapsed ? 'Cash settlement ledger' : undefined} aria-current={pathname.startsWith('/admin/cash-ledger') ? 'page' : undefined} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold transition ${focusRing} ${pathname.startsWith('/admin/cash-ledger') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><CircleDollarSign size={17} /><span className={collapsed ? 'md:hidden' : ''}>Cash settlement ledger</span></Link>
+          <Link href="/owner" title={collapsed ? 'Legacy Admin analytics' : undefined} aria-current={pathname.startsWith('/owner') ? 'page' : undefined} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold transition ${focusRing} ${pathname.startsWith('/owner') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><Settings2 size={17} /><span className={collapsed ? 'md:hidden' : ''}>Legacy Admin analytics</span></Link>
           <Link href="/tech" title={collapsed ? 'Technician view' : undefined} aria-current={pathname.startsWith('/tech') ? 'page' : undefined} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold transition ${focusRing} ${pathname.startsWith('/tech') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}><Wrench size={17} /><span className={collapsed ? 'md:hidden' : ''}>Technician view</span></Link>
         </nav>
       </div>}

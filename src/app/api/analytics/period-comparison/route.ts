@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { findJobsWithDetails } from '@/lib/job-helper';
+import { prisma } from '@/lib/prisma';
 import { normalizeManualJobInvoice } from '@/lib/manual-job';
+import { OPERATIONS_FINANCIAL_SELECT } from '@/lib/operations-reporting';
 import {
   aggregatePeriodComparison,
   getPeriodComparisonRanges,
@@ -55,7 +56,7 @@ async function handleGET(request: Request) {
     // Restrict reads to records relevant to one of the four windows. Revenue
     // follows paidAt → completedAt → createdAt, so retain the null-date
     // branches required by that fallback while keeping the same date bounds.
-    const jobs = (await findJobsWithDetails({
+    const jobs = (await prisma.job.findMany({
       where: {
         OR: ranges.flatMap((range) => {
           const dateTimeBounds = getTorontoDateTimeBounds(range);
@@ -74,6 +75,7 @@ async function handleGET(request: Request) {
           ];
         }),
       },
+      select: OPERATIONS_FINANCIAL_SELECT,
     })).map(normalizeManualJobInvoice) as PeriodComparisonJob[];
 
     return NextResponse.json({

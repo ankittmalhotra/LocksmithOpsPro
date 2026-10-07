@@ -1,5 +1,8 @@
 'use client';
 
+import Link from 'next/link';
+import { buildOperationsReportHref } from '@/lib/operations-reporting';
+
 export type PeriodComparisonMode = 'week' | 'biweekly';
 export type PeriodComparisonWindow = { start: string; end: string; revenue: number; completedJobs: number };
 export type PeriodComparisonMetric = { current: number; previous: number; change: number; changePercent: number | null };
@@ -33,7 +36,7 @@ export default function PeriodComparisonWidget({
   error: string;
 }) {
   const rangeLabel = (window: PeriodComparisonWindow) => `${formatComparisonDate(window.start)} – ${formatComparisonDate(window.end)}`;
-  const metricCard = (title: string, metric: PeriodComparisonMetric, format: (value: number) => string, formatChange: (value: number) => string) => (
+  const metricCard = (title: string, metric: PeriodComparisonMetric, format: (value: number) => string, formatChange: (value: number) => string, basis: 'paid-invoices' | 'completed-jobs') => (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <div className="text-xs font-bold uppercase tracking-wider text-slate-500">{title}</div>
       <div className="mt-2 grid grid-cols-2 gap-3">
@@ -43,6 +46,7 @@ export default function PeriodComparisonWidget({
       <div className={`mt-3 text-xs font-bold ${metric.change > 0 ? 'text-emerald-700' : metric.change < 0 ? 'text-rose-700' : 'text-slate-500'}`}>
         {formatChange(metric.change)} ({metric.changePercent === null ? 'N/A (previous was 0)' : `${metric.changePercent > 0 ? '+' : ''}${metric.changePercent}%`}) vs previous
       </div>
+      <Link href={buildOperationsReportHref({ basis, period: 'custom', dateFrom: comparison?.current.start, dateTo: comparison?.current.end })} className="mt-3 inline-flex text-xs font-bold text-blue-700 hover:underline">View current period details ↗</Link>
     </div>
   );
 
@@ -69,8 +73,8 @@ export default function PeriodComparisonWidget({
             <span>Previous: <strong className="text-slate-700">{rangeLabel(comparison.previous)}</strong></span>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {metricCard('Paid gross revenue', comparison.revenue, (value) => `$${value.toFixed(2)}`, formatCurrencyChange)}
-            {metricCard('Completed jobs', comparison.completedJobs, (value) => `${value}`, (value) => `${value > 0 ? '+' : ''}${value}`)}
+            {metricCard('Paid gross revenue', comparison.revenue, (value) => `$${value.toFixed(2)}`, formatCurrencyChange, 'paid-invoices')}
+            {metricCard('Completed jobs', comparison.completedJobs, (value) => `${value}`, (value) => `${value > 0 ? '+' : ''}${value}`, 'completed-jobs')}
           </div>
         </> : <div className="py-6 text-center text-sm text-slate-500">No comparison data available.</div>}
     </section>

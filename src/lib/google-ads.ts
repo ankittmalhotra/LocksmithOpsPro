@@ -164,8 +164,12 @@ export function getYesterdayDateKey(now = new Date(), timeZone = GOOGLE_ADS_TIME
   return todayUtc.toISOString().slice(0, 10);
 }
 
-export function getGoogleAdsDateKeys(range: GoogleAdsRoiRange = 'today', now = new Date()): string[] {
-  const todayKey = getDateKeyInTimeZone(now);
+export function getGoogleAdsDateKeys(
+  range: GoogleAdsRoiRange = 'today',
+  now = new Date(),
+  timeZone = GOOGLE_ADS_TIME_ZONE,
+): string[] {
+  const todayKey = getDateKeyInTimeZone(now, timeZone);
   const todayUtc = dateKeyToUtcDate(todayKey);
   const endUtc = range === 'yesterday'
     ? new Date(todayUtc.getTime() - 86400000)

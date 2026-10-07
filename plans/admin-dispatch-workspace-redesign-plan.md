@@ -359,6 +359,8 @@ Each phase is a reviewable slice. Read its source references first; reuse the do
 
 **Documentation references:** D09–D11, D20, `src/app/api/books/reimbursements/[id]/route.ts`, `src/app/api/books/reimbursements/mapping/route.ts`, and the invoice/period handlers.
 
+**Incremental delivery boundary:** The first route split ships a current-biweekly, read-only Overview; a paginated/searchable stored-expense list; a separate IT-only four-period read-only Google Ads cache summary; a bounded Reimbursements attention summary; and focused Billing (12 latest periods and issued invoices) and Reports destinations. These focused reads never materialize a partner-billing snapshot. Clear entry points remain for the existing controlled expense, repayment, mapping, receipt, invoice, and document workflows. The 2,664-line legacy client remains available as an explicitly labeled advanced-workflow compatibility route while those forms are extracted physically one task at a time. It is not treated as a new default page, and its unbounded historical list reads or snapshot materialization are not used by the new Overview, Expenses, Reimbursements, or Billing routes.
+
 **Verification checklist**
 
 - Expense entry with manual receipt and reviewed OCR suggestions works in both authorized entities.

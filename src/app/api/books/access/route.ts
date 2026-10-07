@@ -23,6 +23,10 @@ async function handleGET(request: Request) {
           mapAccounts: access.canMapAccounting && (user.role === 'ADMIN' || user.role === 'ACCOUNTANT'),
           issueInvoices: user.role === 'ADMIN' && access.canIssueInvoices,
           markPayments: user.role === 'ADMIN' && access.canMarkPayments,
+          isAdmin: user.role === 'ADMIN',
+          // The operations report is based on Locksmith job data. Keep its
+          // entry point aligned with the route's server-side role gate.
+          viewOperationalReport: user.role === 'ADMIN' || user.role === 'DISPATCHER',
         },
       });
     }

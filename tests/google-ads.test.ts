@@ -1,13 +1,27 @@
 import assert from 'node:assert/strict';
-import {
+import { registerHooks } from 'node:module';
+
+// google-ads.ts uses '@/' aliases and the credential store needs a database;
+// map the revenue helper to its source and stub the store for pure-function tests.
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === '@/lib/revenue-period') return { url: new URL('../src/lib/revenue-period.ts', import.meta.url).href, shortCircuit: true };
+    if (specifier === '@/lib/google-ads-credential-store') return { url: 'google-ads-test:credential-store', shortCircuit: true };
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url === 'google-ads-test:credential-store') return { format: 'module', shortCircuit: true, source: 'export async function getStoredGoogleAdsRefreshToken() { return null; }' };
+    return nextLoad(url, context);
+  },
+});
+const {
   calculateGoogleAdsRoi,
   dateKeyToUtcDate,
   fetchGoogleAdsDailyMetrics,
   getDateKeyInTimeZone,
   getGoogleAdsDateKeys,
   getYesterdayDateKey,
-} from '../src/lib/google-ads.ts';
-
+} = await import('../src/lib/google-ads.ts');
 const roi = calculateGoogleAdsRoi(250, 100);
 assert.equal(roi.adSpend, 100);
 assert.equal(roi.netReturn, 150);

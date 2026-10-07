@@ -82,6 +82,8 @@ const ADS_RANGES = [
   ['current-biweekly', 'This biweekly period'], ['previous-biweekly', 'Previous biweekly period'], ['all-time', 'All time'],
 ] as const;
 
+type BooksAttention = { available: boolean; missingReceipts?: number; needsDetailsCount?: number; toRepayCents?: number };
+
 function currency(value: number | null | undefined, code = 'CAD') {
   if (value === null || value === undefined) return '—';
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency: code, maximumFractionDigits: 2 }).format(value);
@@ -129,6 +131,8 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
   const [callActivity, setCallActivity] = useState<CallActivitySummary | null>(null);
   const [callActivityLoading, setCallActivityLoading] = useState(true);
   const [callActivityError, setCallActivityError] = useState('');
+  const [booksAttention, setBooksAttention] = useState<BooksAttention | null>(null);
+  const [booksAttentionError, setBooksAttentionError] = useState('');
 
   useEffect(() => { setPeriod(initialPeriod); }, [initialPeriod]);
 
@@ -173,6 +177,19 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
       })
       .catch((error) => { if (!controller.signal.aborted) setCallActivityError(error instanceof Error ? error.message : 'Unable to load Call Activity'); })
       .finally(() => { if (!controller.signal.aborted) setCallActivityLoading(false); });
+    return () => controller.abort();
+  }, [refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setBooksAttentionError('');
+    fetch('/api/dashboard/books-attention', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load Books attention');
+        if (!controller.signal.aborted) setBooksAttention(data as BooksAttention);
+      })
+      .catch((error) => { if (!controller.signal.aborted) setBooksAttentionError(error instanceof Error ? error.message : 'Unable to load Books attention'); });
     return () => controller.abort();
   }, [refresh]);
 
@@ -288,6 +305,20 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
       {callActivityError ? <p role="status" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Call Activity is unavailable: {callActivityError} The rest of the Dashboard is available.</p>
         : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><div className="rounded-xl bg-blue-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wide text-blue-800">Qualifying leads</div><div className="mt-1 text-2xl font-black text-blue-950">{callActivityLoading ? '…' : callActivity?.coverage?.available && !callActivity.dataWindow?.truncated ? callActivity.summary?.received ?? 0 : 'Unavailable'}</div></div><div className="rounded-xl bg-rose-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wide text-rose-800">Unresolved missed inbound sessions</div><div className="mt-1 text-2xl font-black text-rose-950">{callActivityLoading ? '…' : callActivity?.coverage?.available && !callActivity.dataWindow?.truncated ? callActivity.summary?.missedOpportunities ?? 0 : 'Unavailable'}</div></div><div className="col-span-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 sm:col-span-1">{callActivityLoading ? 'Checking cache coverage…' : callActivity?.dataWindow?.truncated ? `Source data reached the ${callActivity.dataWindow.rowLimit.toLocaleString()}-row safety limit; counts are unavailable.` : callActivity?.coverage?.available ? `Cache coverage ${callActivity.coverage.coveredDays}/${callActivity.coverage.totalDays} dates · last successful sync ${when(callActivity.coverage.lastSyncedAt)}` : 'No verified RingCentral coverage for today yet. This is unavailable, not zero demand.'}{callActivity?.coverage?.lastError ? ` · Latest sync issue: ${callActivity.coverage.lastError}` : ''}</div></div>}
     </section>
+
+    {booksAttentionError ? <p role="status" className="my-6 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Books attention is unavailable right now. The rest of the Dashboard is available.</p>
+      : booksAttention?.available && (() => {
+        const items = [
+          { key: 'receipts', count: booksAttention.missingReceipts || 0, text: `${booksAttention.missingReceipts} expense${booksAttention.missingReceipts === 1 ? '' : 's'} missing a receipt`, href: '/books/expenses?entityCode=LOCKSMITH&receipt=missing' },
+          { key: 'details', count: booksAttention.needsDetailsCount || 0, text: `${booksAttention.needsDetailsCount} personal expense${booksAttention.needsDetailsCount === 1 ? '' : 's'} need payer or payment date`, href: '/books/reimbursements?entityCode=LOCKSMITH' },
+          { key: 'repay', count: booksAttention.toRepayCents || 0, text: `${currency((booksAttention.toRepayCents || 0) / 100)} to repay`, href: '/books/reimbursements?entityCode=LOCKSMITH' },
+        ].filter((item) => item.count > 0);
+        return <section aria-labelledby="dashboard-books-attention" className="my-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="mb-2 flex items-center justify-between gap-2"><h2 id="dashboard-books-attention" className="text-base font-black text-slate-900">Books needs attention</h2><Link href="/books?entityCode=LOCKSMITH" className="text-xs font-bold text-blue-700 hover:underline">Open Books ↗</Link></div>
+          {items.length === 0 ? <p className="text-sm text-emerald-700">All caught up.</p>
+            : <ul className="divide-y divide-slate-100">{items.map((item) => <li key={item.key}><Link href={item.href} className="flex items-center justify-between gap-3 py-2 text-sm font-semibold text-slate-800 hover:text-blue-700"><span>{item.text}</span><span aria-hidden="true" className="text-slate-400">→</span></Link></li>)}</ul>}
+        </section>;
+      })()}
 
     <section aria-labelledby="recent-activity-heading" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

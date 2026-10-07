@@ -139,6 +139,27 @@ export function getMissingGoogleAdsConfigVariables(): string[] {
   ].filter((name) => !getEnv(name));
 }
 
+/**
+ * Account currency/time zone come from explicit configuration and are only
+ * trusted once GOOGLE_ADS_METADATA_VERIFIED=true. Unverified accounts never
+ * fall back to CAD/Toronto defaults.
+ */
+export function getGoogleAdsAccountMetadata() {
+  const currencyCode = process.env.GOOGLE_ADS_CURRENCY_CODE?.trim().toUpperCase() || '';
+  const timeZone = process.env.GOOGLE_ADS_TIME_ZONE?.trim() || '';
+  let validTimeZone = false;
+  try {
+    if (timeZone) new Intl.DateTimeFormat('en-CA', { timeZone });
+    validTimeZone = Boolean(timeZone);
+  } catch {
+    validTimeZone = false;
+  }
+  const verified = process.env.GOOGLE_ADS_METADATA_VERIFIED?.trim().toLowerCase() === 'true'
+    && /^[A-Z]{3}$/.test(currencyCode)
+    && validTimeZone;
+  return { verified, currencyCode: verified ? currencyCode : null, timeZone: verified ? timeZone : null };
+}
+
 export function getDateKeyInTimeZone(date: Date, timeZone = GOOGLE_ADS_TIME_ZONE): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     day: '2-digit',

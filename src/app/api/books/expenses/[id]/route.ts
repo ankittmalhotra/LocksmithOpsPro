@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getAccountingEntityAccess } from '@/lib/accounting-auth';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
@@ -24,6 +25,11 @@ async function readExpenseBody(request: Request): Promise<{ body: Record<string,
 }
 function receiptStatus(value: unknown) { return value === 'ATTACHED' || value === 'MISSING' || value === 'NOT_REQUIRED' ? value : null; }
 
+class ExpenseVoidError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) { super(message); this.status = status; }
+}
+
 async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   let uploadedReceiptKey: string | null = null;
   try {
@@ -36,6 +42,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     const existing = await prisma.accountingExpense.findFirst({ where: { id, entityId: access.entity.id } });
     if (!existing) return NextResponse.json({ success: false, error: 'Expense not found' }, { status: 404 });
+    if (existing.voidedAt) return NextResponse.json({ success: false, error: 'Removed expenses cannot be edited' }, { status: 409 });
 
     const fundingSource = body.fundingSource === undefined ? existing.fundingSource : body.fundingSource;
     if (fundingSource !== 'BUSINESS' && fundingSource !== 'PERSONAL') return NextResponse.json({ success: false, error: 'Invalid fundingSource' }, { status: 400 });
@@ -145,3 +152,53 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ id:
 }
 
 export const PATCH = withRequestLogging('/api/books/expenses/[id]', handlePATCH);
+
+async function handleDELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const url = new URL(request.url);
+    const code = isBooksEntityCode(url.searchParams.get('entityCode')) ? url.searchParams.get('entityCode') : null;
+    if (!isBooksEntityCode(code)) return NextResponse.json({ success: false, error: 'entityCode must be IT_MARKETING or LOCKSMITH' }, { status: 400 });
+    const access = await getAccountingEntityAccess(code);
+    if (!access?.canManageExpenses) return NextResponse.json({ success: false, error: 'Forbidden: Expense management required' }, { status: 403 });
+    let body: Record<string, unknown> = {};
+    try { body = await request.json(); } catch { /* The required void reason is validated below. */ }
+    const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 1000) : '';
+    if (reason.length < 3) return NextResponse.json({ success: false, error: 'Enter a reason of at least 3 characters to remove this expense' }, { status: 400 });
+    const { id } = await params;
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.accountingExpense.findFirst({
+        where: { id, entityId: access.entity.id },
+        select: { id: true, vendorName: true, totalAmount: true, voidedAt: true },
+      });
+      if (!existing) throw new ExpenseVoidError('Expense not found', 404);
+      if (existing.voidedAt) throw new ExpenseVoidError('Expense is already removed from the active ledger', 409);
+
+      // A live reimbursement allocation is a posted settlement against this
+      // liability. Keep that expense in the ledger until the payment is safely
+      // reversed; historical allocations to already-voided payments do not block.
+      const activeAllocations = await tx.accountingReimbursementAllocation.count({
+        where: { entityId: access.entity.id, expenseId: id, payment: { voidedAt: null } },
+      });
+      if (activeAllocations > 0) throw new ExpenseVoidError('This expense has an active reimbursement allocation. Reverse the reimbursement before removing the expense.', 409);
+
+      const voidedAt = new Date();
+      await tx.accountingExpense.update({ where: { id }, data: { voidedAt, updatedById: access.user.id } });
+      await tx.accountingAuditEvent.create({ data: {
+        entityId: access.entity.id,
+        actorId: access.user.id,
+        action: 'VOIDED',
+        resourceType: 'AccountingExpense',
+        resourceId: id,
+        metadata: { vendorName: existing.vendorName, totalAmount: Number(existing.totalAmount), reason },
+      } });
+      return { id, voidedAt };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return NextResponse.json({ success: true, expense: result });
+  } catch (error) {
+    if (error instanceof ExpenseVoidError) return NextResponse.json({ success: false, error: error.message }, { status: error.status });
+    logCaughtRequestError(request, '/api/books/expenses/[id]', error);
+    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to remove expense') }, { status: 400 });
+  }
+}
+
+export const DELETE = withRequestLogging('/api/books/expenses/[id]', handleDELETE);

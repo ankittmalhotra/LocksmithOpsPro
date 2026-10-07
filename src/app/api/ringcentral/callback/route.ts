@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const state = url.searchParams.get('state');
   const cookieStore = await cookies();
   const expectedState = cookieStore.get(getRingCentralStateCookieName())?.value;
-  const ownerUrl = new URL('/owner', url.origin);
+  const ownerUrl = new URL('/dispatch/call-analytics', url.origin);
 
   if (error || !code || !state || !expectedState || state !== expectedState) {
     ownerUrl.searchParams.set('ringcentral', 'error');

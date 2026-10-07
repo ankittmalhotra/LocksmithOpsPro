@@ -25,6 +25,9 @@ const hooks = registerHooks({
     if (specifier === '@/lib/timezone') {
       return { url: new URL('../src/lib/timezone.ts', import.meta.url).href, shortCircuit: true };
     }
+    if (specifier === '@/lib/ringcentral-analytics-client') {
+      return { url: new URL('../src/lib/ringcentral-analytics-client.ts', import.meta.url).href, shortCircuit: true };
+    }
     if (specifier === '@/lib/ringcentral-demand') {
       return { url: new URL('../src/lib/ringcentral-demand.ts', import.meta.url).href, shortCircuit: true };
     }

@@ -41,13 +41,14 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 - Stripe online payments use hosted Checkout Sessions and webhook-confirmed invoice status. Customer email is collected by Stripe during payment because dispatchers do not need to know it upfront.
 - The technician sends completion details to the dispatcher, including payment method and amount received.
 
-### 4. Admin Executive Hub & Cash Handover Settlements (`/owner`)
-- **Executive KPIs**: Total Gross Revenue, Cash vs Card vs Interac splits, Ontario HST (13%) collected for CRA tax filing, and Net Company Profit.
-- **RingCentral call analytics**: Admin and Dispatcher inbound call counts for the receiving number, including Today, Yesterday, and Last week filters, Toronto-local widgets, a received-vs-converted graph, and conversion rate. Call records are cached in the production PostgreSQL database through Prisma; dashboard reads do not call RingCentral. The first cache refresh backfills from Monday 00:00 Toronto time through today, and later refreshes continue from the newest cached call with a one-second overlap for safe upserts. Calls exclude known calls shorter than 30 seconds and count each caller once per Toronto calendar day. The converted count is every LockOps job logged in the selected Toronto period, regardless of whether its phone number matched an inbound call. More details also include missed calls, voicemail metadata, available RingCentral voicemail transcripts, outbound callback detection, and red missed-opportunity flags.
-- **Contractor Cash-in-Hand Ledger**:
-  - Tracks live cash physically held by each contractor (`Cash Collected - Commission Earned - Settled = Net Owed`).
-  - **1-Click "Settle Cash Handover"**: Admin records physical cash envelopes received from contractors with complete audit notes.
-- **1-Click CSV Export**: Download accountant-ready reports for QuickBooks.
+### 4. Shared Workspace: Dashboard, Reports, Admin Tools
+Admin and Dispatcher use one workspace with the same menu order: **Dashboard, Call Analytics, Books, Live Map, Calendar, Google Ads** (Google Ads is Admin-only). **New job** and **Jobs** stay available in the sidebar.
+- **Dashboard (`/dashboard`)**: current-biweekly financials (paid revenue, HST, COGS, commissions, contribution), Last 7 Days, period comparison, Call Activity, a compact *Books needs attention* list (Locksmith entity: missing receipts, personal expenses needing payer/date, amount to repay), and the latest 10 jobs. Admin also sees a cached Google Ads business comparison. Provider outages only affect their own card.
+- **Operations report (`/books/reports/operations`)**: complete filtered report and CSV export that reconcile with the Dashboard.
+- **Google Ads (`/google-ads`, Admin)**: cached account spend, clicks, impressions, CTR, CPC, daily trend, prior-period comparison, sync status, connect/reconnect. Jobs are not attributed to campaigns, so there is no attributed ROI. `/owner` now redirects to `/dashboard` (or to `/google-ads` after an OAuth return).
+- **Team (`/admin/team`) and Cash settlement (`/admin/cash-ledger`)**: Admin-only staff management and contractor cash-handover settlement (`Cash Collected - Commission Earned - Settled = Net Owed`).
+- **RingCentral call analytics (`/dispatch/call-analytics`)**: Overview, Activity, Demand Patterns and Linked Jobs sections for Admin and Dispatcher, read from the Prisma call cache (pages never call RingCentral directly). The legacy ratio is labelled *Jobs logged* (every job logged in the period, whether or not linked to a call) and can exceed 100%; *linked conversion* counts only inbound sessions with a confirmed originating job link.
+- **Books (`/books`)**: Overview, Expenses, Reimbursements, Billing, Reports. Each task route loads only its own data.
 
 ### 5. Role-Based Access Control (RBAC)
 - Authenticated roles: `ADMIN`, `DISPATCHER`, `TECHNICIAN`.

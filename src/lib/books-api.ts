@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { formatTorontoDateInput } from '@/lib/timezone';
 import { findJobsWithDetails } from '@/lib/job-helper';
 import { normalizeManualJobInvoice } from '@/lib/manual-job';
+import { prisma } from '@/lib/prisma';
 import {
   PARTNER_BILLING_ANCHOR,
   PARTNER_BILLING_PERIOD_DAYS,
@@ -80,8 +81,16 @@ export function periodDates(periodStart: string, periodEnd?: string) {
  * Read-only operational snapshot. This intentionally lives outside the Books
  * Prisma models so an issued period remains immutable if jobs are edited.
  */
-export async function calculateOperationalPeriodSnapshot(periodStart: string, periodEnd: string) {
-  const rawJobs = await findJobsWithDetails({ orderBy: { createdAt: 'asc' } });
+export async function calculateOperationalPeriodSnapshot(
+  periodStart: string,
+  periodEnd: string,
+  client: Pick<typeof prisma, 'job'> = prisma,
+) {
+  const rawJobs = await findJobsWithDetails({ orderBy: { createdAt: 'asc' } }, client);
+  return calculateOperationalPeriodSnapshotFromJobs(periodStart, periodEnd, rawJobs);
+}
+
+export function calculateOperationalPeriodSnapshotFromJobs(periodStart: string, periodEnd: string, rawJobs: Awaited<ReturnType<typeof findJobsWithDetails>>) {
   const jobs = rawJobs.map(normalizeManualJobInvoice);
   const contributions: Array<Record<string, unknown>> = [];
   let revenueCents = 0;

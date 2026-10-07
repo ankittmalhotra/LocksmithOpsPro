@@ -12,6 +12,8 @@ import { sendEmail } from '@/lib/resend';
 import { buildBooksInvoiceEmail, invoiceRecipientEmail } from '@/lib/accounting-invoice-email';
 import { buildAccountingInvoicePdf } from '@/lib/accounting-invoice-pdf';
 
+class BillingSnapshotChangedError extends Error {}
+
 function mapInvoice(invoice: any, redactIssuer = false) {
   const { issuerEntity, issuerSnapshot, ...safeInvoice } = invoice;
   const billingPeriod = invoice.billingPeriod ? (() => {
@@ -110,6 +112,22 @@ async function handlePOST(request: Request) {
     const totalCents = serviceCents + hstCents;
     const dueAt = body.dueDate ? new Date(`${parseDateOnly(body.dueDate, 'dueDate')}T00:00:00.000Z`) : undefined;
     const result = await prisma.$transaction(async (tx) => {
+      if (period) {
+        // Keep the shared serialization order used by auto-refresh and period
+        // creation: issuer first, then the target period.
+        await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "AccountingEntity" WHERE "id" = ${issuer.entity.id} FOR UPDATE`;
+        await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "PartnerBillingPeriod" WHERE "id" = ${period.id} FOR UPDATE`;
+        const currentPeriod = await tx.partnerBillingPeriod.findUnique({
+          where: { id: period.id },
+          include: { invoice: { select: { id: true } } },
+        });
+        if (!currentPeriod || currentPeriod.invoice || currentPeriod.status === 'INVOICED') {
+          throw new BillingSnapshotChangedError('This billing snapshot was already issued. Reload the Billing page.');
+        }
+        if (decimalToCents(currentPeriod.partnerFeeAmount) !== serviceCents) {
+          throw new BillingSnapshotChangedError('This billing snapshot was refreshed from updated revenue. Reload the Billing page before issuing the invoice.');
+        }
+      }
       const counter = await tx.accountingEntity.update({ where: { id: issuer.entity.id }, data: { nextPartnerInvoiceNumber: { increment: 1 } }, select: { nextPartnerInvoiceNumber: true } });
       const sequence = counter.nextPartnerInvoiceNumber - 1;
       const invoice = await tx.partnerInvoice.create({
@@ -147,7 +165,7 @@ async function handlePOST(request: Request) {
     return NextResponse.json({ success: true, invoice: mapInvoice(responseInvoice), emailNotification }, { status: 201 });
   } catch (error: any) {
     logCaughtRequestError(request, '/api/books/invoices', error);
-    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to issue invoice') }, { status: error?.code === 'P2002' ? 409 : 400 });
+    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to issue invoice') }, { status: error instanceof BillingSnapshotChangedError || error?.code === 'P2002' ? 409 : 400 });
   }
 }
 

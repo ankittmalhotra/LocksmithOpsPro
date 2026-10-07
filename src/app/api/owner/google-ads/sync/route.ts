@@ -29,7 +29,11 @@ async function handlePOST(request: Request) {
       ? requestedRange as GoogleAdsRoiRange
       : 'today';
     const dates = getGoogleAdsDateKeys(range);
-    const metrics = await Promise.all(dates.map((date) => fetchGoogleAdsDailyMetrics(date)));
+    // Bounded concurrency: 'all-time' spans many days and must not fan out unboundedly.
+    const metrics: Awaited<ReturnType<typeof fetchGoogleAdsDailyMetrics>>[] = [];
+    for (let index = 0; index < dates.length; index += 5) {
+      metrics.push(...await Promise.all(dates.slice(index, index + 5).map((date) => fetchGoogleAdsDailyMetrics(date))));
+    }
     const savedMetrics = [];
 
     for (const dailyMetrics of metrics) {

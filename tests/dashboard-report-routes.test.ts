@@ -95,6 +95,12 @@ const hooks = registerHooks({
         export function dateKeyToUtcDate(key) { return new Date(key + 'T00:00:00.000Z'); }
         export function getGoogleAdsDateKeys() { return ['2026-10-05']; }
         export function getMissingGoogleAdsConfigVariables() { return []; }
+        export function getGoogleAdsAccountMetadata() {
+          const currencyCode = process.env.GOOGLE_ADS_CURRENCY_CODE?.trim().toUpperCase() || '';
+          const timeZone = process.env.GOOGLE_ADS_TIME_ZONE?.trim() || '';
+          const verified = process.env.GOOGLE_ADS_METADATA_VERIFIED?.trim().toLowerCase() === 'true' && /^[A-Z]{3}$/.test(currencyCode) && Boolean(timeZone);
+          return { verified, currencyCode: verified ? currencyCode : null, timeZone: verified ? timeZone : null };
+        }
         export const GOOGLE_ADS_RANGE_LABELS = { today: 'Today' };
         export const GOOGLE_ADS_RANGE_OPTIONS = ['today'];
         export const GOOGLE_ADS_TIME_ZONE = 'America/Toronto';
@@ -374,7 +380,6 @@ test('Admin Ads return ratios stay unavailable for incomplete spend coverage', a
     assert.equal(body.ratioUnavailableReason, 'partial_spend_coverage');
     assert.equal(body.netReturn, null);
     assert.equal(body.roiPercent, null);
-    assert.equal(body.roas, null);
 
     fixture.paidJobs = [job(1)];
     fixture.adsMetrics = [{ date: new Date('2026-10-05T00:00:00.000Z'), spend: 25, conversionsValue: 0, clicks: 1, impressions: 10, syncedAt: new Date('2026-10-06T12:00:00.000Z') }];

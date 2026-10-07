@@ -8,6 +8,7 @@ import { buildPaidInvoiceWhere, getPaidActivityDateKey, getPaidInvoiceProfit, OP
 import {
   calculateGoogleAdsRoi,
   dateKeyToUtcDate,
+  getGoogleAdsAccountMetadata,
   getGoogleAdsDateKeys,
   getMissingGoogleAdsConfigVariables,
   GOOGLE_ADS_RANGE_LABELS,
@@ -30,21 +31,11 @@ async function handleGET(request: Request) {
       : 'today';
     const missingVariables = getMissingGoogleAdsConfigVariables();
     const configured = missingVariables.length === 0;
-    const configuredCurrencyCode = process.env.GOOGLE_ADS_CURRENCY_CODE?.trim().toUpperCase() || '';
-    const configuredTimeZone = process.env.GOOGLE_ADS_TIME_ZONE?.trim() || '';
-    let validTimeZone = false;
-    try {
-      if (configuredTimeZone) new Intl.DateTimeFormat('en-CA', { timeZone: configuredTimeZone });
-      validTimeZone = Boolean(configuredTimeZone);
-    } catch {
-      validTimeZone = false;
-    }
-    const metadataVerified = process.env.GOOGLE_ADS_METADATA_VERIFIED?.trim().toLowerCase() === 'true'
-      && /^[A-Z]{3}$/.test(configuredCurrencyCode)
-      && validTimeZone;
-    const currencyCode = metadataVerified ? configuredCurrencyCode : null;
-    const timeZone = metadataVerified ? configuredTimeZone : null;
-    const dateKeys = metadataVerified ? getGoogleAdsDateKeys(range, new Date(), configuredTimeZone) : [];
+    const account = getGoogleAdsAccountMetadata();
+    const metadataVerified = account.verified;
+    const currencyCode = account.currencyCode;
+    const timeZone = account.timeZone;
+    const dateKeys = metadataVerified ? getGoogleAdsDateKeys(range, new Date(), timeZone!) : [];
     const dateFrom = dateKeys[0] ?? null;
     const dateTo = dateKeys.at(-1) ?? null;
     let storageReady = true;
@@ -120,7 +111,6 @@ async function handleGET(request: Request) {
       operatingProfitBeforeAds: profit,
       netReturn: roi.netReturn,
       roiPercent: roi.roiPercent,
-      roas: roi.roas,
       conversionsValue: metrics.length > 0 ? roundToTwo(metrics.reduce((sum, metric) => sum + metric.conversionsValue, 0)) : null,
       clicks: metrics.length > 0 ? metrics.reduce((sum, metric) => sum + metric.clicks, 0) : null,
       impressions: metrics.length > 0 ? metrics.reduce((sum, metric) => sum + metric.impressions, 0) : null,

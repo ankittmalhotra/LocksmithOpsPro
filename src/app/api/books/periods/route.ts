@@ -8,6 +8,9 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { calculatePartnerBilling, getPartnerBillingPeriod } from '@/lib/accounting';
 import { calculateOperationalPeriodSnapshot, centsToDecimal, decimalToCents, isBooksEntityCode, parseCents, periodDates, serializeDecimal } from '@/lib/books-api';
 import { formatTorontoDateInput } from '@/lib/timezone';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
+
+class ManualSnapshotConflictError extends Error {}
 
 function mapPeriod(period: any, redactIssuer = false) {
   const { issuerEntity, invoice, sourceSnapshot, ...safePeriod } = period;
@@ -40,21 +43,24 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 async function createPartnerBillingSnapshot(userId: string, periodStart: string, issuer: any, recipient: any) {
   const dates = periodDates(periodStart);
-  const snapshot = await calculateOperationalPeriodSnapshot(dates.periodStart, dates.periodEnd);
-  const prior = await prisma.partnerBillingPeriod.findFirst({
-    where: { recipientEntityId: recipient.id, periodEnd: { lt: new Date(`${dates.periodStart}T00:00:00.000Z`) } },
-    orderBy: { periodEnd: 'desc' },
-    select: { negativeCarryForward: true },
-  });
-  const calculation = calculatePartnerBilling({
-    revenueCents: snapshot.revenueCents,
-    hstDeductedCents: snapshot.hstCents,
-    cogsCents: snapshot.cogsCents,
-    technicianCommissionsCents: snapshot.commissionCents,
-    priorNegativeCarryForwardCents: decimalToCents(prior?.negativeCarryForward),
-  });
   try {
     return await prisma.$transaction(async (tx) => {
+      // Match the revenue-change refresh lock so period materialization cannot
+      // race and publish a stale snapshot or carry-forward dependency.
+      await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "AccountingEntity" WHERE "id" = ${issuer.id} FOR UPDATE`;
+      const snapshot = await calculateOperationalPeriodSnapshot(dates.periodStart, dates.periodEnd, tx);
+      const prior = await tx.partnerBillingPeriod.findFirst({
+        where: { recipientEntityId: recipient.id, periodEnd: { lt: new Date(`${dates.periodStart}T00:00:00.000Z`) } },
+        orderBy: { periodEnd: 'desc' },
+        select: { negativeCarryForward: true },
+      });
+      const calculation = calculatePartnerBilling({
+        revenueCents: snapshot.revenueCents,
+        hstDeductedCents: snapshot.hstCents,
+        cogsCents: snapshot.cogsCents,
+        technicianCommissionsCents: snapshot.commissionCents,
+        priorNegativeCarryForwardCents: decimalToCents(prior?.negativeCarryForward),
+      });
       const created = await tx.partnerBillingPeriod.create({
         data: {
           issuerEntityId: issuer.id,
@@ -223,14 +229,21 @@ async function handlePATCH(request: Request) {
       include: { invoice: true, issuerEntity: true, recipientEntity: true },
     });
     if (!period) return NextResponse.json({ success: false, error: 'Billing period not found' }, { status: 404 });
-    if (period.invoice || period.status === 'INVOICED') return NextResponse.json({ success: false, error: 'Issued snapshots cannot be edited' }, { status: 409 });
-    const prior = await prisma.partnerBillingPeriod.findFirst({ where: { recipientEntityId: period.recipientEntityId, periodEnd: { lt: period.periodStart } }, orderBy: { periodEnd: 'desc' }, select: { negativeCarryForward: true } });
-    const calculation = calculatePartnerBilling({ revenueCents, hstDeductedCents: hstCents, cogsCents, technicianCommissionsCents: commissionCents, priorNegativeCarryForwardCents: decimalToCents(prior?.negativeCarryForward) });
     const updated = await prisma.$transaction(async (tx) => {
-      const saved = await tx.partnerBillingPeriod.update({
-        where: { id: period.id },
-        data: {
-          status: calculation.negativeCarryForwardCents > 0 ? 'CARRIED_FORWARD' : 'OPEN',
+      // Every writer takes issuer then period. This prevents deadlocks with
+      // revenue refresh and invoice issuance, and keeps carry values current.
+      await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "AccountingEntity" WHERE "id" = ${period.issuerEntityId} FOR UPDATE`;
+      await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "PartnerBillingPeriod" WHERE "id" = ${period.id} FOR UPDATE`;
+      const current = await tx.partnerBillingPeriod.findFirst({
+        where: { id: period.id, issuerEntity: { code: 'IT_MARKETING' }, recipientEntity: { code: 'LOCKSMITH' } },
+        include: { invoice: true, issuerEntity: true, recipientEntity: true },
+      });
+      if (!current) throw new ManualSnapshotConflictError('Billing period not found. Reload the Billing page.');
+      if (current.invoice || current.status === 'INVOICED') throw new ManualSnapshotConflictError('Issued snapshots cannot be edited.');
+      const prior = await tx.partnerBillingPeriod.findFirst({ where: { recipientEntityId: current.recipientEntityId, periodEnd: { lt: current.periodStart } }, orderBy: { periodEnd: 'desc' }, select: { negativeCarryForward: true } });
+      const calculation = calculatePartnerBilling({ revenueCents, hstDeductedCents: hstCents, cogsCents, technicianCommissionsCents: commissionCents, priorNegativeCarryForwardCents: decimalToCents(prior?.negativeCarryForward) });
+      const manualData = {
+          status: calculation.negativeCarryForwardCents > 0 ? 'CARRIED_FORWARD' as const : 'OPEN' as const,
           revenueAmount: centsToDecimal(revenueCents),
           hstDeductedAmount: centsToDecimal(hstCents),
           cogsAmount: centsToDecimal(cogsCents),
@@ -242,18 +255,27 @@ async function handlePATCH(request: Request) {
           partnerFeeAmount: centsToDecimal(calculation.partnerFeeCents),
           hstRate: new Prisma.Decimal(0),
           hstAmount: centsToDecimal(0),
-          sourceSnapshot: { formula: 'Revenue - HST - COGS - technician commissions', periodStart: period.periodStart.toISOString().slice(0, 10), periodEnd: period.periodEnd.toISOString().slice(0, 10), manualOverride: true } as Prisma.InputJsonValue,
+          sourceSnapshot: { formula: 'Revenue - HST - COGS - technician commissions', periodStart: current.periodStart.toISOString().slice(0, 10), periodEnd: current.periodEnd.toISOString().slice(0, 10), manualOverride: true } as Prisma.InputJsonValue,
           calculationNote: 'Manually adjusted by Admin before invoice issuance.',
-        },
+      };
+      const savedCount = await tx.partnerBillingPeriod.updateMany({
+        where: { id: current.id, status: { in: ['OPEN', 'CARRIED_FORWARD'] }, invoice: null },
+        data: manualData,
+      });
+      if (savedCount.count !== 1) throw new ManualSnapshotConflictError('Billing period was issued while it was being edited. Reload the Billing page.');
+      const saved = await tx.partnerBillingPeriod.findUnique({
+        where: { id: current.id },
         include: { invoice: true, issuerEntity: true, recipientEntity: true },
       });
-      await tx.accountingAuditEvent.create({ data: { entityId: period.issuerEntityId, actorId: user.id, action: 'UPDATED', resourceType: 'PartnerBillingPeriod', resourceId: period.id, metadata: { manualOverride: true, revenueAmount: revenueCents / 100, hstDeductedAmount: hstCents / 100, cogsAmount: cogsCents / 100, technicianCommissionsAmount: commissionCents / 100 } } });
+      if (!saved) throw new ManualSnapshotConflictError('Billing period could not be reloaded after editing.');
+      await tx.accountingAuditEvent.create({ data: { entityId: current.issuerEntityId, actorId: user.id, action: 'UPDATED', resourceType: 'PartnerBillingPeriod', resourceId: current.id, metadata: { manualOverride: true, revenueAmount: revenueCents / 100, hstDeductedAmount: hstCents / 100, cogsAmount: cogsCents / 100, technicianCommissionsAmount: commissionCents / 100 } } });
+      await refreshUnissuedPartnerBillingSnapshots(tx, user.id, 'MANUAL_SNAPSHOT_EDIT', { preservePeriodId: current.id, startPeriodId: current.id });
       return saved;
     });
     return NextResponse.json({ success: true, period: mapPeriod(updated) });
   } catch (error) {
     logCaughtRequestError(request, '/api/books/periods', error);
-    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to update billing snapshot') }, { status: 400 });
+    return NextResponse.json({ success: false, error: getApiErrorMessage(error, 'Unable to update billing snapshot') }, { status: error instanceof ManualSnapshotConflictError ? 409 : 400 });
   }
 }
 

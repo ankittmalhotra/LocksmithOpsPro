@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountingEntityCode, AccountingEntitySummary } from '@/lib/accounting-types';
 import { formatTorontoDateInput } from '@/lib/timezone';
 
@@ -366,7 +366,12 @@ function EntityDetails({ entity }: { entity: Entity }) {
   );
 }
 
-export default function BooksPage() {
+export type LegacyBooksView = 'all' | 'expenses' | 'reimbursements' | 'billing';
+
+export default function BooksPage({ view = 'all', embedded = false }: { view?: LegacyBooksView; embedded?: boolean } = {}) {
+  const showExpenses = view === 'all' || view === 'expenses';
+  const showReimbursements = view === 'all' || view === 'reimbursements';
+  const showBilling = view === 'all' || view === 'billing';
   const [user, setUser] = useState<{ role: Role; name: string } | null>(null);
   const [entityCode, setEntityCode] = useState<AccountingEntityCode>('IT_MARKETING');
   const [entityCapabilities, setEntityCapabilities] = useState<EntityCapability[]>([]);
@@ -437,7 +442,10 @@ export default function BooksPage() {
   const [invoiceIssuing, setInvoiceIssuing] = useState<string | null>(null);
   const [paymentUpdating, setPaymentUpdating] = useState<string | null>(null);
   const [emailSending, setEmailSending] = useState<string | null>(null);
-  const [receiptFilter, setReceiptFilter] = useState<'ALL' | 'REVIEW'>('ALL');
+  const [receiptFilter, setReceiptFilter] = useState<'ALL' | 'REVIEW'>(
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('receipt') === 'missing' ? 'REVIEW' : 'ALL',
+  );
+  const [removingExpenseId, setRemovingExpenseId] = useState<string | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptDraftId, setReceiptDraftId] = useState<string | null>(null);
   const [receiptAiParsing, setReceiptAiParsing] = useState(false);
@@ -484,19 +492,14 @@ export default function BooksPage() {
     if (showSpinner) setLoading(true);
     setError('');
     try {
+      // Each task route loads only what it renders. In particular the periods
+      // read can materialize closed-period snapshots, so only Billing asks.
+      const skipped = { ok: true, json: async () => ({ success: true }) } as unknown as Response;
       const [expenseRes, periodsRes, invoicesRes, reimbursementRes] = await Promise.all([
-        fetch(`/api/books/expenses?entityCode=${code}`, {
-          cache: 'no-store',
-        }),
-        fetch(`/api/books/periods?entityCode=${code}`, {
-          cache: 'no-store',
-        }),
-        fetch(`/api/books/invoices?entityCode=${code}`, {
-          cache: 'no-store',
-        }),
-        fetch(`/api/books/reimbursements?entityCode=${code}`, {
-          cache: 'no-store',
-        }),
+        fetch(`/api/books/expenses?entityCode=${code}`, { cache: 'no-store' }),
+        showBilling ? fetch(`/api/books/periods?entityCode=${code}`, { cache: 'no-store' }) : Promise.resolve(skipped),
+        showBilling ? fetch(`/api/books/invoices?entityCode=${code}`, { cache: 'no-store' }) : Promise.resolve(skipped),
+        showReimbursements ? fetch(`/api/books/reimbursements?entityCode=${code}`, { cache: 'no-store' }) : Promise.resolve(skipped),
       ]);
       const [expenseData, periodsData, invoicesData, reimbursementData] = await Promise.all([expenseRes.json(), periodsRes.json(), invoicesRes.json(), reimbursementRes.json()]);
       const firstError = [expenseData, periodsData, invoicesData].find((data) => !data.success);
@@ -517,7 +520,7 @@ export default function BooksPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [showBilling, showReimbursements]);
 
   useEffect(() => {
     let cancelled = false;
@@ -638,6 +641,23 @@ export default function BooksPage() {
     });
     setExpenseFormOpen(true);
   };
+
+  const requestedEditExpenseId = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('editExpense') || '';
+  const editExpenseHandoffHandled = useRef(false);
+  useEffect(() => {
+    if (!requestedEditExpenseId || loading || editExpenseHandoffHandled.current) return;
+    editExpenseHandoffHandled.current = true;
+    if (!canManageExpenses) {
+      setError('Expense management access is required to edit this record.');
+      return;
+    }
+    const expense = state.expenses.find((item) => item.id === requestedEditExpenseId);
+    if (!expense) {
+      setError('That expense is unavailable in the selected entity.');
+      return;
+    }
+    openEditExpense(expense);
+  }, [requestedEditExpenseId, loading, canManageExpenses, state.expenses]);
 
   const parseReceipt = async (file: File) => {
     setReceiptAiParsing(true);
@@ -1083,6 +1103,27 @@ export default function BooksPage() {
     [state.currentPeriod, state.expenses, state.invoices],
   );
 
+  const removeExpense = async (expense: Expense) => {
+    const reason = window.prompt(`Why are you removing ${expense.vendorName || 'this expense'} from the active ledger? This action is audited.`)?.trim();
+    if (!reason) return;
+    setRemovingExpenseId(expense.id);
+    setError('');
+    try {
+      const response = await fetch(`/api/books/expenses/${encodeURIComponent(expense.id)}?entityCode=${entityCode}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to remove this expense');
+      await loadBooks(entityCode, false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to remove this expense');
+    } finally {
+      setRemovingExpenseId(null);
+    }
+  };
+
   const visibleExpenses = useMemo(() => (receiptFilter === 'REVIEW' ? state.expenses.filter((expense) => expense.receiptStatus === 'MISSING') : state.expenses), [receiptFilter, state.expenses]);
 
   const openInvoice = async (invoice: Invoice) => {
@@ -1111,8 +1152,9 @@ export default function BooksPage() {
     );
 
   return (
-    <main className='min-h-screen bg-slate-50 px-4 pb-16 pt-8 sm:px-6 lg:px-8'>
-      <div className='mx-auto max-w-7xl'>
+    <main className={embedded ? 'pb-8' : 'min-h-screen bg-slate-50 px-4 pb-16 pt-8 sm:px-6 lg:px-8'}>
+      <div className={embedded ? '' : 'mx-auto max-w-7xl'}>
+        {!embedded && (
         <div className='flex flex-col justify-between gap-5 sm:flex-row sm:items-end'>
           <div>
             <p className='text-xs font-black uppercase tracking-[0.2em] text-blue-700'>Books & accounting</p>
@@ -1124,8 +1166,9 @@ export default function BooksPage() {
             {refreshing ? 'Refreshing…' : '↻ Refresh'}
           </button>
         </div>
+        )}
 
-        {availableCodes.length > 1 && (
+        {!embedded && availableCodes.length > 1 && (
           <div className='mt-7 inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm' role='tablist' aria-label='Books entity'>
             {availableCodes.map((code) => (
               <button key={code} onClick={() => switchEntity(code)} role='tab' aria-selected={entityCode === code} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${entityCode === code ? 'bg-slate-950 text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}>
@@ -1151,6 +1194,7 @@ export default function BooksPage() {
           </div>
         )}
 
+        {view === 'all' && (
         <section className='mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
           <div className='rounded-2xl border border-slate-200 bg-white p-4 shadow-sm'>
             <p className='text-xs font-bold uppercase tracking-wide text-slate-500'>Expenses recorded</p>
@@ -1194,8 +1238,9 @@ export default function BooksPage() {
             <p className='mt-3 text-xs text-slate-500'>Current period share: {state.currentPeriod ? `${formatMoney(state.currentPeriod.partnerFeeAmount)} before HST · ${periodLabel(state.currentPeriod.periodStart, state.currentPeriod.periodEnd)}` : 'Not available yet'}</p>
           </div>
         </section>
+        )}
 
-        {reimbursements && (
+        {showReimbursements && reimbursements && (
           <section id='reimbursements' className='mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm'>
             <div className='flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 p-5'>
               <div>
@@ -1550,7 +1595,8 @@ export default function BooksPage() {
           </section>
         )}
 
-        <div className='mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]'>
+        <div className={`mt-8 grid gap-6 ${view === 'all' ? 'lg:grid-cols-[1.05fr_0.95fr]' : ''}`}>
+          {showExpenses && (
           <section className='rounded-2xl border border-slate-200 bg-white shadow-sm'>
             <div className='flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5'>
               <div>
@@ -1603,9 +1649,14 @@ export default function BooksPage() {
                     <div className='flex items-center justify-between gap-4 sm:justify-end'>
                       <p className='font-black text-slate-950'>{formatMoney(expense.totalAmount)}</p>
                       {canManageExpenses && !expense.systemGenerated && (
-                        <button onClick={() => openEditExpense(expense)} className='text-xs font-black text-blue-700 hover:text-blue-900'>
-                          Edit
-                        </button>
+                        <>
+                          <button onClick={() => openEditExpense(expense)} className='text-xs font-black text-blue-700 hover:text-blue-900'>
+                            Edit
+                          </button>
+                          <button onClick={() => void removeExpense(expense)} disabled={removingExpenseId === expense.id} className='text-xs font-black text-rose-700 hover:text-rose-900 disabled:opacity-50'>
+                            {removingExpenseId === expense.id ? 'Removing…' : 'Remove'}
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -1613,7 +1664,9 @@ export default function BooksPage() {
               )}
             </div>
           </section>
+          )}
 
+          {showBilling && (
           <section className='rounded-2xl border border-slate-200 bg-white shadow-sm'>
             <div className='flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5'>
               <div>
@@ -1655,8 +1708,10 @@ export default function BooksPage() {
               )}
             </div>
           </section>
+          )}
         </div>
 
+        {showBilling && (
         <section className='mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm'>
           <div className='flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5'>
             <div>
@@ -1702,10 +1757,12 @@ export default function BooksPage() {
             )}
           </div>
         </section>
+        )}
 
+        {showBilling && (
         <p className='mt-6 text-xs leading-5 text-slate-500'>
           Partner invoice description: <span className='font-bold text-slate-700'>IT Services for Locksmith - C$ xxxx.xx</span>. The amount replaces the placeholder for each period. HST is charged only after the registration number and effective date are configured.
-        </p>
+        </p>)}
       </div>
 
       {confirmingPeriod && (

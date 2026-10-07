@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
 import { calculateDualPriceManualCardQuote, DEFAULT_CARD_PRICE_DIFFERENCE_RATE, MAX_CARD_PRICE_DIFFERENCE_RATE, roundToTwo } from '@/lib/calculations';
 import SmsComposerModal from '@/components/SmsComposerModal';
@@ -201,6 +202,39 @@ function isCardPaymentMethod(paymentMethod: string | null | undefined) {
   return paymentMethod === 'CREDIT_CARD' || paymentMethod === 'DEBIT_CARD';
 }
 
+function DispatchIntakeDeepLink({ onOpen }: { onOpen: (stage: JobEntryMode) => void }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedStage = searchParams.get('newJob');
+  const legacyAddJob = searchParams.get('addJob');
+
+  useEffect(() => {
+    const stageByQuery: Record<string, JobEntryMode> = {
+      assigned: 'ASSIGNED',
+      unassigned: 'NEW',
+      completed: 'COMPLETED',
+    };
+    if (requestedStage && stageByQuery[requestedStage]) {
+      onOpen(stageByQuery[requestedStage]);
+    } else if (legacyAddJob === '1') {
+      // Preserve the original completed-job deep link used by the Admin hub.
+      onOpen('COMPLETED');
+    } else {
+      return;
+    }
+
+    // Consume the launch flags so the same intake shortcut can be used again
+    // after the dialog closes, while retaining any unrelated query context.
+    const remainingParams = new URLSearchParams(searchParams.toString());
+    remainingParams.delete('newJob');
+    remainingParams.delete('addJob');
+    const remainingQuery = remainingParams.toString();
+    router.replace(`/dispatch${remainingQuery ? `?${remainingQuery}` : ''}${window.location.hash}`, { scroll: false });
+  }, [legacyAddJob, onOpen, requestedStage, router, searchParams]);
+
+  return null;
+}
+
 export default function DispatchPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -269,6 +303,10 @@ export default function DispatchPage() {
   const [technicians, setTechnicians] = useState<any[]>([]);
   const [showAddJob, setShowAddJob] = useState(false);
   const [jobEntryMode, setJobEntryMode] = useState<JobEntryMode>('COMPLETED');
+  const openIntakeFromLink = useCallback((stage: JobEntryMode) => {
+    setJobEntryMode(stage);
+    setShowAddJob(true);
+  }, []);
   const [editingManualId, setEditingManualId] = useState<string | null>(null);
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [paymentLinkPrompt, setPaymentLinkPrompt] = useState<PaymentLinkPrompt | null>(null);
@@ -321,13 +359,6 @@ export default function DispatchPage() {
 
   useEffect(() => {
     fetchAuthAndJobs();
-  }, []);
-
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('addJob') === '1') {
-      setShowAddJob(true);
-      setJobEntryMode('COMPLETED');
-    }
   }, []);
 
   useEffect(() => {
@@ -1005,6 +1036,7 @@ export default function DispatchPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
+      <Suspense fallback={null}><DispatchIntakeDeepLink onOpen={openIntakeFromLink} /></Suspense>
       {canManageManualJobs && <RingCentralRefreshOnLoad />}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>

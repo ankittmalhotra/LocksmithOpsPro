@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { setSessionCookie } from '@/lib/auth';
 import type { AppRole } from '@/lib/session';
+import { getRoleDestination } from '@/lib/role-destination';
 import { verifyPassword } from '@/lib/password';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
@@ -46,7 +47,7 @@ async function handlePOST(request: Request) {
         return NextResponse.json({
           success: true,
           user: sessionData,
-          redirectUrl: '/dispatch',
+          redirectUrl: getRoleDestination(sessionData.role),
           message: 'Logged in as Admin',
         });
       } else {
@@ -108,12 +109,7 @@ async function handlePOST(request: Request) {
 
     await setSessionCookie(sessionData);
 
-    const redirectUrl =
-      user.role === 'ADMIN' || user.role === 'DISPATCHER'
-        ? '/dispatch'
-        : user.role === 'ACCOUNTANT'
-          ? '/books'
-          : '/tech';
+    const redirectUrl = getRoleDestination(user.role as AppRole);
 
     return NextResponse.json({
       success: true,

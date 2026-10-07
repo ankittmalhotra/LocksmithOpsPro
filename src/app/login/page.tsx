@@ -3,6 +3,20 @@
 import { useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import type { AppRole } from '@/lib/session';
+import { getRoleDestination } from '@/lib/role-destination';
+
+function getSafeLocalDestination(value: string | null | undefined): string | null {
+  if (!value?.startsWith('/') || value.startsWith('//')) return null;
+
+  try {
+    const destination = new URL(value, window.location.origin);
+    if (destination.origin !== window.location.origin) return null;
+    return `${destination.pathname}${destination.search}${destination.hash}`;
+  } catch {
+    return null;
+  }
+}
 
 function LoginFormContent() {
   const searchParams = useSearchParams();
@@ -18,15 +32,9 @@ function LoginFormContent() {
   const submittingRef = useRef(false);
 
   const handleRedirect = (role: string, targetUrl?: string) => {
-    let destination = '/tech';
     const requestedDestination = redirectPath || targetUrl;
-    if (requestedDestination?.startsWith('/') && !requestedDestination.startsWith('//')) {
-      destination = requestedDestination;
-    } else if (role === 'ADMIN' || role === 'DISPATCHER') {
-      destination = '/dispatch';
-    } else if (role === 'ACCOUNTANT') {
-      destination = '/books';
-    }
+    const destination = getSafeLocalDestination(requestedDestination)
+      || getRoleDestination(role as AppRole);
 
     // A full navigation makes the browser send the new session cookie with
     // the destination request. It also avoids leaving the login form stuck

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { deserializeSession } from '@/lib/session';
+import { getRoleDestination } from '@/lib/role-destination';
 import { addRequestId, getRequestId, logFailedRequest } from '@/lib/request-logger';
 
 export function middleware(request: NextRequest) {
@@ -12,10 +13,10 @@ export function middleware(request: NextRequest) {
   }
 
   // Paths that require role protection
-  const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner');
+  const isAdminRoute = pathname.startsWith('/owner') || pathname.startsWith('/api/owner') || pathname.startsWith('/google-ads');
   const isBooksRoute = pathname.startsWith('/books') || pathname.startsWith('/api/books');
   const isJobApi = pathname.startsWith('/api/jobs');
-  const isDispatchRoute = pathname.startsWith('/dispatch');
+  const isDispatchRoute = pathname.startsWith('/dispatch') || pathname.startsWith('/dashboard');
   const isTechRoute = pathname.startsWith('/tech');
 
   if (!isAdminRoute && !isBooksRoute && !isDispatchRoute && !isTechRoute && !isJobApi) {
@@ -60,14 +61,13 @@ export function middleware(request: NextRequest) {
   // Handle Page redirects
   if (!user) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
+    loginUrl.searchParams.set('redirect', `${pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
 
   // Role Checks for Pages
   if (isAdminRoute && user.role !== 'ADMIN') {
-    const redirectTarget = user.role === 'DISPATCHER' ? '/dispatch' : user.role === 'ACCOUNTANT' ? '/books' : '/tech';
-    return NextResponse.redirect(new URL(redirectTarget, request.url));
+    return NextResponse.redirect(new URL(getRoleDestination(user.role), request.url));
   }
 
   if (isBooksRoute && !['ADMIN', 'DISPATCHER', 'ACCOUNTANT'].includes(user.role)) {
@@ -75,11 +75,11 @@ export function middleware(request: NextRequest) {
   }
 
   if (isDispatchRoute && user.role !== 'ADMIN' && user.role !== 'DISPATCHER') {
-    return NextResponse.redirect(new URL('/tech', request.url));
+    return NextResponse.redirect(new URL(getRoleDestination(user.role), request.url));
   }
 
   if (isTechRoute && user.role !== 'ADMIN' && user.role !== 'TECHNICIAN') {
-    return NextResponse.redirect(new URL('/dispatch', request.url));
+    return NextResponse.redirect(new URL(getRoleDestination(user.role), request.url));
   }
 
   return NextResponse.next();
@@ -87,7 +87,9 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    '/dashboard/:path*',
     '/owner/:path*',
+    '/google-ads/:path*',
     '/books/:path*',
     '/dispatch/:path*',
     '/tech/:path*',

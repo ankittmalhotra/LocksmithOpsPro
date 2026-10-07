@@ -7,9 +7,9 @@ import { saveGoogleAdsRefreshToken } from '@/lib/google-ads-credential-store';
 
 export const runtime = 'nodejs';
 
-function ownerRedirect(request: Request, result: 'connected' | 'failed') {
+function googleAdsRedirect(request: Request, result: 'connected' | 'failed') {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || request.url;
-  const url = new URL('/owner', appUrl);
+  const url = new URL('/google-ads', appUrl);
   url.searchParams.set('googleAdsAuth', result);
   return NextResponse.redirect(url);
 }
@@ -33,7 +33,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const cookieState = (await cookies()).get('google_ads_oauth_state')?.value;
-  const response = clearStateCookie(ownerRedirect(request, 'failed'));
+  const response = clearStateCookie(googleAdsRedirect(request, 'failed'));
 
   try {
     if (!cookieState || !url.searchParams.get('state') || cookieState !== url.searchParams.get('state')) {
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
     if (!tokens.refresh_token) return response;
 
     await saveGoogleAdsRefreshToken(tokens.refresh_token);
-    return clearStateCookie(ownerRedirect(request, 'connected'));
+    return clearStateCookie(googleAdsRedirect(request, 'connected'));
   } catch (error) {
     console.error('Google Ads OAuth callback failed:', error);
     return response;

@@ -30,6 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AppRole } from '@/lib/session';
+import { getRoleDestination } from '@/lib/role-destination';
 import { siteUrl } from '@/lib/site';
 
 interface AuthUser {
@@ -153,13 +154,13 @@ function AuthAction({ user, loading }: { user: AuthUser | null; loading: boolean
   if (!user) return <Link href="/login" className="button-amber whitespace-nowrap">Enter workspace <ArrowRight size={16} aria-hidden="true" /></Link>;
 
   const destination = getWorkspaceDestination(user);
-  const label = user.role === 'ADMIN' ? 'Open Admin Hub' : user.role === 'DISPATCHER' ? 'Open Dispatch' : 'Open My Jobs';
+  const label = user.role === 'ADMIN' || user.role === 'DISPATCHER' ? 'Open Dashboard' : user.role === 'ACCOUNTANT' ? 'Open Books' : 'Open My Jobs';
   return <Link href={destination} className="button-amber whitespace-nowrap">{label} <ArrowRight size={16} aria-hidden="true" /></Link>;
 }
 
 function getWorkspaceDestination(user: AuthUser | null) {
   if (!user) return '/login';
-  return user.role === 'ADMIN' ? '/owner' : user.role === 'DISPATCHER' ? '/dispatch' : '/tech';
+  return getRoleDestination(user.role);
 }
 
 export default function HomePage() {

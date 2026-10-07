@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
-import { appendRingCentralCoverageInterval, buildRingCentralDemandHeatmap, buildRingCentralJobCompletionHeatmap } from '../src/lib/ringcentral-demand.ts';
+import { appendRingCentralCoverageInterval, buildRingCentralDemandHeatmap, buildRingCentralJobCompletionHeatmap, isRingCentralDateCovered } from '../src/lib/ringcentral-demand.ts';
 import { parseTorontoDateOnly, parseTorontoDateTime } from '../src/lib/timezone.ts';
 
 const now = new Date('2026-10-05T16:00:00.000Z'); // Monday in Toronto.
+const todayStart = parseTorontoDateOnly('2026-10-05')!;
+assert.equal(isRingCentralDateCovered('2026-10-05', [{ from: todayStart.toISOString(), to: '2026-10-05T16:05:00.000Z' }], now), true,
+  'Recent partial sync through the current Toronto day counts as available coverage');
+assert.equal(isRingCentralDateCovered('2026-10-05', [{ from: todayStart.toISOString(), to: '2026-10-05T15:00:00.000Z' }], now), false,
+  'A stale sync interval is not presented as current-day coverage');
 const coverageStart = parseTorontoDateOnly('2026-09-07')!;
 const coverageEnd = parseTorontoDateOnly('2026-10-05')!;
 const coverage = [{ from: coverageStart.toISOString(), to: coverageEnd.toISOString() }];

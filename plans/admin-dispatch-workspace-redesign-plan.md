@@ -398,6 +398,8 @@ Each phase is a reviewable slice. Read its source references first; reuse the do
 
 ### Phase 5 — Active-job map and focused calendar
 
+**Status:** Deferred at the user's request on 2026-10-07. Do not implement this phase in the current execution. Keep Live Map and Calendar as existing destinations; do not claim that the full Dashboard preview set or full redesign is complete while their previews remain withheld.
+
 **What to implement**
 
 - Copy D17's map/list interaction and D18's appointment/day-detail pattern with bounded purpose-specific job reads.

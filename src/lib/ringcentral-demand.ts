@@ -92,6 +92,19 @@ function isDateCovered(key: string, intervals: RingCentralCoverageInterval[]) {
   return intervals.some((interval) => Date.parse(interval.from) <= dayStart && Date.parse(interval.to) >= dayEnd);
 }
 
+/** Full past-date coverage, or recent partial coverage for the current Toronto date. */
+export function isRingCentralDateCovered(key: string, intervals: RingCentralCoverageInterval[], now = new Date()) {
+  const merged = mergeCoverageIntervals(intervals);
+  if (isDateCovered(key, merged)) return true;
+  if (key !== dateKey(now)) return false;
+  const localMidnight = parseTorontoDateOnly(key);
+  if (!localMidnight) return false;
+  const freshnessCutoff = now.getTime() - 10 * 60 * 1000;
+  return merged.some((interval) => Date.parse(interval.from) <= localMidnight.getTime()
+    && Date.parse(interval.to) >= freshnessCutoff
+    && Date.parse(interval.to) <= now.getTime() + 5 * 60 * 1000);
+}
+
 export function buildRingCentralDemandHeatmap(
   calls: DemandCall[],
   coverageIntervals: RingCentralCoverageInterval[],

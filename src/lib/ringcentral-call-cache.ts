@@ -192,12 +192,17 @@ function completedInitialSync(state: Awaited<ReturnType<typeof readRingCentralSy
   return (state.rawPayload as { initialSyncMarker?: string }).initialSyncMarker === INITIAL_SYNC_MARKER;
 }
 
-export async function readCachedRingCentralCalls(dateFrom: Date, dateTo: Date) {
+export async function readCachedRingCentralCalls(
+  dateFrom: Date,
+  dateTo: Date,
+  options: { take?: number; order?: 'asc' | 'desc' } = {},
+) {
   return prisma.ringCentralCallLog.findMany({
     where: {
       startTime: { gte: dateFrom, lte: dateTo },
     },
-    orderBy: { startTime: 'asc' },
+    orderBy: { startTime: options.order || 'asc' },
+    ...(options.take ? { take: options.take } : {}),
   });
 }
 

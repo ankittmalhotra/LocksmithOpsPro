@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { clampRingCentralAnalyticsPage, normalizeRingCentralAnalyticsPage, ringCentralAnalyticsViewKey, type RingCentralAnalyticsView } from '@/lib/ringcentral-analytics-client';
 
 type CallAnalytics = {
+  section?: 'overview' | 'activity' | 'demand' | 'linked-jobs';
   configured: boolean;
   connected: boolean;
   authMethod?: 'jwt' | 'oauth' | null;
@@ -14,6 +16,13 @@ type CallAnalytics = {
   range?: 'today' | 'yesterday' | 'last-week';
   rangeLabel?: string;
   summary?: { received: number; converted: number; conversionRate: number; missedOpportunities: number };
+  definitions?: { leadGrain: 'caller-day'; jobsLoggedLabel: 'Jobs logged'; linkedSessionCohort: 'inbound-sessions'; observationCutoff: string };
+  linkedConversion?: { eligibleSessions: number; linkedSessions: number; completedLinkedSessions: number; conversionRate: number | null; completedConversionRate: number | null; unlinkedJobs: number };
+  linkedJobs?: Array<{ jobId: string; jobNumber: string | null; jobStatus: string; callTime: string | null; callerNumber: string; sessionId: string | null }>;
+  durationSummary?: { grain: 'qualifying inbound sessions'; averageSeconds: number | null; knownSessions: number; unknownDurationSessions: number };
+  activityPagination?: { page: number; pageSize: number; total: number; totalPages: number };
+  dataWindow?: { rowLimit: number; truncated: boolean };
+  coverage?: { available: boolean; coveredDays: number; totalDays: number; complete: boolean; lastSyncedAt: string | null; lastError: string | null };
   today?: { date: string; received: number; converted: number; conversionRate: number };
   daily?: Array<{ date: string; label: string; dateLabel: string; received: number; converted: number; conversionRate: number }>;
   demandHeatmap?: {
@@ -63,7 +72,9 @@ type CallAnalytics = {
     voicemailTranscriptionStatus: string | null;
     voicemailReadStatus: string | null;
     voicemailMessageId: string | null;
+    linkedJobs?: Array<{ jobId: string; jobNumber: string | null; jobStatus: string }>;
   }>;
+  activityRows?: CallAnalytics['callDetails'];
   totalCalls?: number;
   totalConvertedCalls?: number;
   conversionRate?: number;
@@ -133,45 +144,85 @@ type AnalyticsRange = (typeof rangeOptions)[number]['value'];
 
 export default function RingCentralCallAnalytics({
   canManageConnection = false,
-  refreshOnLoad = false,
 }: {
   canManageConnection?: boolean;
-  refreshOnLoad?: boolean;
 }) {
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
-  const [selectedRange, setSelectedRange] = useState<AnalyticsRange>('today');
+  const [selectedRange, setSelectedRange] = useState<AnalyticsRange | 'custom'>('today');
+  const [selectedSection, setSelectedSection] = useState<'overview' | 'activity' | 'demand' | 'linked-jobs'>('overview');
+  const [activityPage, setActivityPage] = useState(1);
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activityOutcome, setActivityOutcome] = useState('all');
+  const [receivingNumber, setReceivingNumber] = useState('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  const [detailsView, setDetailsView] = useState<'received' | 'missed' | 'all'>('received');
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [activeDemandCell, setActiveDemandCell] = useState<string | null>(null);
   const [demandMetric, setDemandMetric] = useState<'calls' | 'jobs'>('jobs');
   const [demandView, setDemandView] = useState<'day-hour' | 'day' | 'hour'>('day-hour');
   const [activeDemandBucket, setActiveDemandBucket] = useState<string | null>(null);
+  const analyticsRequestSequence = useRef(0);
+  const analyticsAbortController = useRef<AbortController | null>(null);
+  const analyticsViewRef = useRef<RingCentralAnalyticsView>({ range: selectedRange, section: selectedSection, page: activityPage, search: activitySearch, outcome: activityOutcome, receivingNumber, from: customFrom, to: customTo });
+  analyticsViewRef.current = { range: selectedRange, section: selectedSection, page: activityPage, search: activitySearch, outcome: activityOutcome, receivingNumber, from: customFrom, to: customTo };
 
-  const fetchAnalytics = async (range: AnalyticsRange = selectedRange) => {
+  const fetchAnalytics = async (range: AnalyticsRange | 'custom' = selectedRange, section = selectedSection, page = activityPage) => {
+    const requestId = ++analyticsRequestSequence.current;
+    analyticsAbortController.current?.abort();
+    const controller = new AbortController();
+    analyticsAbortController.current = controller;
     try {
       setLoading(true);
-      const response = await fetch(`/api/ringcentral/call-analytics?range=${range}`, { cache: 'no-store' });
+      const params = new URLSearchParams({ range, section, page: String(page), pageSize: '25', outcome: activityOutcome, search: activitySearch });
+      if (receivingNumber !== 'all') params.set('receivingNumber', receivingNumber);
+      if (range === 'custom' && customFrom && customTo) { params.set('from', customFrom); params.set('to', customTo); }
+      const response = await fetch(`/api/ringcentral/call-analytics?${params}`, { cache: 'no-store', signal: controller.signal });
       const data = await response.json();
-      setAnalytics(data.success ? data : { configured: true, connected: false, error: data.error || 'Unable to load call analytics.' });
+      if (requestId === analyticsRequestSequence.current) {
+        if (data.success) {
+          setAnalytics(data);
+          const serverPage = data.activityPagination?.page;
+          if (Number.isInteger(serverPage)) {
+            const normalizedPage = clampRingCentralAnalyticsPage(serverPage, data.activityPagination.totalPages);
+            if (normalizedPage !== page) {
+              setActivityPage(normalizedPage);
+              const urlParams = new URLSearchParams(window.location.search);
+              urlParams.set('page', String(normalizedPage));
+              window.history.replaceState(null, '', `${window.location.pathname}?${urlParams.toString()}`);
+            }
+          }
+        }
+        else if (analytics) setRefreshError(data.error || 'Unable to load call analytics.');
+        else setAnalytics({ configured: true, connected: false, error: data.error || 'Unable to load call analytics.' });
+      }
       return data;
     } catch (error: any) {
-      setAnalytics({ configured: true, connected: false, error: error.message || 'Unable to load call analytics.' });
+      if (requestId === analyticsRequestSequence.current) {
+        if (analytics) setRefreshError(error.message || 'Unable to load call analytics.');
+        else setAnalytics({ configured: true, connected: false, error: error.message || 'Unable to load call analytics.' });
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === analyticsRequestSequence.current) setLoading(false);
     }
   };
 
   const refreshAnalytics = async () => {
+    const requestedView = { ...analyticsViewRef.current };
+    const requestedViewKey = ringCentralAnalyticsViewKey(requestedView);
+    const isRequestedViewCurrent = () => ringCentralAnalyticsViewKey(analyticsViewRef.current) === requestedViewKey;
     try {
-      setLoading(true);
+      setRefreshing(true);
       setRefreshError(null);
-      const response = await fetch(`/api/ringcentral/call-analytics/refresh?range=${selectedRange}`, { method: 'POST', cache: 'no-store' });
+      const refreshParams = new URLSearchParams({ range: requestedView.range });
+      if (requestedView.range === 'custom' && requestedView.from && requestedView.to) { refreshParams.set('from', requestedView.from); refreshParams.set('to', requestedView.to); }
+      const response = await fetch(`/api/ringcentral/call-analytics/refresh?${refreshParams}`, { method: 'POST', cache: 'no-store' });
       const data = await response.json();
+      if (!isRequestedViewCurrent()) return;
       if (response.ok && data.success) {
-        setAnalytics(data);
+        await fetchAnalytics(requestedView.range as AnalyticsRange | 'custom', requestedView.section as typeof selectedSection, requestedView.page);
       } else if (data.connectRequired) {
         setAnalytics((current) => ({
           ...(current || {}),
@@ -182,42 +233,69 @@ export default function RingCentralCallAnalytics({
           cacheAvailable: current?.cacheAvailable || false,
         }));
       } else {
-        await fetchAnalytics();
+        await fetchAnalytics(requestedView.range as AnalyticsRange | 'custom', requestedView.section as typeof selectedSection, requestedView.page);
         setRefreshError(data.error || 'Unable to refresh calls. Please try again shortly.');
       }
     } catch {
-      await fetchAnalytics();
-      setRefreshError('Unable to refresh calls. Please try again shortly.');
+      if (isRequestedViewCurrent()) {
+        await fetchAnalytics(requestedView.range as AnalyticsRange | 'custom', requestedView.section as typeof selectedSection, requestedView.page);
+        setRefreshError('Unable to refresh calls. Please try again shortly.');
+      }
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    void fetchAnalytics().then((data) => {
-      if (refreshOnLoad && data?.success) void refreshAnalytics();
-    });
-  }, [refreshOnLoad]);
+    const readUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const section = params.get('section');
+      if (section === 'overview' || section === 'activity' || section === 'demand' || section === 'linked-jobs') setSelectedSection(section);
+      const range = params.get('range');
+      if (range === 'today' || range === 'yesterday' || range === 'last-week' || range === 'custom') setSelectedRange(range);
+      setActivitySearch(params.get('search') || '');
+      setActivityOutcome(params.get('outcome') || 'all');
+      setReceivingNumber(params.get('receivingNumber') || 'all');
+      const requestedPage = Number(params.get('page') || 1);
+      setActivityPage(normalizeRingCentralAnalyticsPage(requestedPage));
+      setCustomFrom(params.get('from') || '');
+      setCustomTo(params.get('to') || '');
+    };
+    readUrl();
+    window.addEventListener('popstate', readUrl);
+    return () => window.removeEventListener('popstate', readUrl);
+  }, []);
 
   useEffect(() => {
-    if (!showDetails) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowDetails(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showDetails]);
+    if (selectedRange === 'custom' && (!customFrom || !customTo)) {
+      analyticsRequestSequence.current += 1;
+      analyticsAbortController.current?.abort();
+      setAnalytics(null);
+      setLoading(false);
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    params.set('section', selectedSection);
+    params.set('range', selectedRange);
+    params.set('page', String(activityPage));
+    params.set('search', activitySearch);
+    params.set('outcome', activityOutcome);
+    params.set('receivingNumber', receivingNumber);
+    if (selectedRange === 'custom') { params.set('from', customFrom); params.set('to', customTo); }
+    else { params.delete('from'); params.delete('to'); }
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+    void fetchAnalytics(selectedRange, selectedSection, activityPage);
+  }, [selectedSection, selectedRange, activityPage, activitySearch, activityOutcome, receivingNumber, customFrom, customTo]);
+
+
 
   const daily = analytics?.daily || [];
   const activeRange = analytics?.range || selectedRange;
-  const activeRangeLabel = analytics?.rangeLabel || rangeOptions.find((option) => option.value === activeRange)?.label || 'Today';
-  const periodLabel = activeRange === 'last-week' ? 'last 7 days' : activeRange === 'yesterday' ? 'yesterday' : 'today';
+  const activeRangeLabel = analytics?.rangeLabel || (activeRange === 'custom' ? 'Custom dates' : rangeOptions.find((option) => option.value === activeRange)?.label) || 'Today';
+  const periodLabel = activeRange === 'last-week' ? 'last 7 days' : activeRange === 'yesterday' ? 'yesterday' : activeRange === 'custom' ? 'the selected dates' : 'today';
   const summary = analytics?.summary || { received: 0, converted: 0, conversionRate: 0, missedOpportunities: 0 };
   const maxDailyCalls = useMemo(() => Math.max(1, ...daily.map((day) => Math.max(day.received, day.converted))), [daily]);
-  const allDetails = analytics?.callDetails || [];
-  const receivedDetails = allDetails.filter((call) => call.countsAsReceived);
-  const missedDetails = allDetails.filter((call) => !call.countsAsReceived);
-  const visibleDetails = detailsView === 'received' ? receivedDetails : detailsView === 'missed' ? missedDetails : allDetails;
+  const activityRows = analytics?.activityRows || [];
   const demand = analytics?.demandHeatmap;
   const plot = demandMetric === 'calls' ? demand : analytics?.jobCompletionHeatmap;
   const selectedDemandCell = plot?.cells.find((cell) => `${cell.weekday}:${cell.hour}` === activeDemandCell) || null;
@@ -268,32 +346,39 @@ export default function RingCentralCallAnalytics({
           )}
           <button
             type="button"
-            onClick={() => { setDetailsView('received'); setShowDetails(true); }}
-            disabled={loading || !analytics?.callDetails}
+            onClick={() => { setActivityOutcome('all'); setActivityPage(1); setSelectedSection('activity'); }}
+            disabled={loading}
             className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            More details
+            View call activity
           </button>
           <label className="sr-only" htmlFor="call-analytics-range">Call analytics period</label>
           <select
             id="call-analytics-range"
             value={selectedRange}
             onChange={(event) => {
-              const nextRange = event.target.value as AnalyticsRange;
+              const nextRange = event.target.value as AnalyticsRange | 'custom';
               setSelectedRange(nextRange);
-              setShowDetails(false);
-              fetchAnalytics(nextRange);
+                      setActivityPage(1);
             }}
             disabled={loading}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-wait disabled:opacity-70"
           >
             {rangeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            <option value="custom">Custom dates</option>
           </select>
-          <button onClick={refreshAnalytics} disabled={loading} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-wait disabled:opacity-70">
-            {loading ? 'Syncing…' : 'Refresh calls'}
+          {selectedRange === 'custom' && <><label className="sr-only" htmlFor="calls-from">From date</label><input id="calls-from" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs" /><label className="sr-only" htmlFor="calls-to">To date</label><input id="calls-to" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs" /></>}
+          <button onClick={refreshAnalytics} disabled={refreshing} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-wait disabled:opacity-70">
+            {refreshing ? 'Syncing…' : 'Refresh calls'}
           </button>
         </div>
       </div>
+
+      <nav className="mt-4 flex flex-wrap gap-2 border-b border-slate-100 pb-3" aria-label="Call Analytics sections">
+        {([
+          ['overview', 'Overview'], ['activity', 'Activity'], ['demand', 'Demand Patterns'], ['linked-jobs', 'Linked Jobs'],
+        ] as const).map(([key, label]) => <button key={key} type="button" aria-current={selectedSection === key ? 'page' : undefined} onClick={() => { setSelectedSection(key); setActivityPage(1); }} className={`rounded-lg px-3 py-2 text-xs font-bold ${selectedSection === key ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{label}</button>)}
+      </nav>
 
       {refreshError && <div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{refreshError}</div>}
 
@@ -321,40 +406,49 @@ export default function RingCentralCallAnalytics({
             </div>
           )}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-            <span>{analytics.cacheAvailable ? `Showing cached data${analytics.lastSyncedAt ? ` · last synced ${new Date(analytics.lastSyncedAt).toLocaleString()}` : ''}` : 'No successful sync yet.'}</span>
+            <span>{analytics.coverage?.available ? `Cache coverage ${analytics.coverage.coveredDays}/${analytics.coverage.totalDays} selected Toronto dates${analytics.coverage.complete ? ' · complete' : ' · partial'}` : 'No verified sync coverage for the selected dates.'}{analytics.lastSyncedAt ? ` · last synced ${new Date(analytics.lastSyncedAt).toLocaleString()}` : ''}</span>
             {analytics.voicemailPermissionDenied ? (
               <span className="font-bold text-amber-700">Voicemail sync needs the Read Messages permission.</span>
             ) : analytics.syncError ? (
               <span className="font-bold text-rose-600">Last refresh failed: {analytics.syncError}</span>
             ) : null}
           </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {analytics.dataWindow?.truncated && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">This report reached its {analytics.dataWindow.rowLimit.toLocaleString()}-row safety limit. Counts and investigation results cover the bounded sample only.</p>}
+          {selectedSection === 'overview' && <>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Calls received · {activeRangeLabel}</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-blue-700">{summary.received}</div>
               <p className="mt-auto pt-1 text-[11px] text-slate-500">30+ sec answered calls and missed calls successfully called back; repeat callers counted once per day</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Converted · {activeRangeLabel}</div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Jobs logged · {activeRangeLabel}</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-emerald-700">{summary.converted}</div>
-              <p className="mt-auto pt-1 text-[11px] text-slate-500">All jobs logged, matched or unmatched</p>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">All jobs entered in this date range, whether call-linked or not</p>
             </div>
             <div className="flex min-h-[132px] flex-col rounded-xl border border-slate-100 bg-slate-50/70 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Conversion rate</div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Jobs logged / qualifying leads</div>
               <div className="mt-2 text-4xl font-black tracking-tight text-amber-700">{summary.conversionRate.toFixed(1)}%</div>
-              <p className="mt-auto pt-1 text-[11px] text-slate-500">{summary.received} received {periodLabel === 'today' || periodLabel === 'yesterday' ? periodLabel : `in ${periodLabel}`}</p>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">Jobs logged ÷ qualifying caller-day leads. Operational comparison, not call conversion.</p>
+            </div>
+            <div className="flex min-h-[132px] flex-col rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Confirmed linked-session conversion</div>
+              <div className="mt-2 text-4xl font-black tracking-tight text-blue-800">{analytics.linkedConversion?.conversionRate == null ? 'Unavailable' : `${analytics.linkedConversion.conversionRate.toFixed(1)}%`}</div>
+              <p className="mt-auto pt-1 text-[11px] text-slate-500">{analytics.linkedConversion?.linkedSessions ?? 0} confirmed originating links / {analytics.linkedConversion?.eligibleSessions ?? 0} eligible inbound sessions. <button type="button" onClick={() => setSelectedSection('linked-jobs')} className="font-bold text-blue-700 underline">View cohort</button></p>
             </div>
           </div>
+
+          <p className="mt-2 text-[11px] text-slate-500">Average qualifying inbound session duration: {analytics.durationSummary?.averageSeconds === null || analytics.durationSummary?.averageSeconds === undefined ? 'unavailable' : formatDuration(analytics.durationSummary.averageSeconds)} across {analytics.durationSummary?.knownSessions || 0} sessions with a known duration; {analytics.durationSummary?.unknownDurationSessions || 0} qualifying sessions with unknown duration are excluded.</p>
 
           <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-4">
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h3 className="text-sm font-black text-slate-900">Received vs converted</h3>
-                <p className="text-[11px] text-slate-500">All jobs logged count; phone matching is not required</p>
+                <h3 className="text-sm font-black text-slate-900">Qualifying leads vs jobs logged</h3>
+                <p className="text-[11px] text-slate-500">Jobs logged are an operational comparison and may exceed qualifying leads; no call match is implied.</p>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-bold text-slate-600 sm:justify-end">
                 <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-500" />Received</span>
-                <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Converted / jobs logged</span>
+                <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500" />Jobs logged</span>
                 <span className="text-slate-400">{summary.received} total leads</span>
               </div>
             </div>
@@ -368,7 +462,7 @@ export default function RingCentralCallAnalytics({
                   const receivedHeight = day.received ? Math.max(8, (day.received / maxDailyCalls) * 100) : 2;
                   const convertedHeight = day.converted ? Math.max(8, (day.converted / maxDailyCalls) * 100) : 2;
                   return (
-                    <div key={day.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end" title={`${day.dateLabel}: ${day.received} received, ${day.converted} converted`}>
+                    <div key={day.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end" title={`${day.dateLabel}: ${day.received} qualifying leads, ${day.converted} jobs logged`}>
                       <div className="flex h-36 w-full max-w-14 items-end justify-center gap-1">
                         <div className="flex h-full w-1/2 flex-col items-center justify-end">
                           <span className="mb-1 text-[10px] font-black text-blue-700">{day.received}</span>
@@ -376,7 +470,7 @@ export default function RingCentralCallAnalytics({
                         </div>
                         <div className="flex h-full w-1/2 flex-col items-center justify-end">
                           <span className="mb-1 text-[10px] font-black text-emerald-700">{day.converted}</span>
-                          <div className="w-full rounded-t-md bg-emerald-500 transition-all hover:bg-emerald-600" style={{ height: `${Math.max(6, convertedHeight * 0.82)}%` }} role="img" aria-label={`${day.dateLabel}: ${day.converted} calls converted`} />
+                          <div className="w-full rounded-t-md bg-emerald-500 transition-all hover:bg-emerald-600" style={{ height: `${Math.max(6, convertedHeight * 0.82)}%` }} role="img" aria-label={`${day.dateLabel}: ${day.converted} jobs logged`} />
                         </div>
                       </div>
                       <span className="mt-2 text-[10px] font-bold text-slate-600">{day.label}</span>
@@ -394,7 +488,9 @@ export default function RingCentralCallAnalytics({
             )}
           </div>
 
-          <section className="mt-4 rounded-xl border border-slate-100 bg-white p-4" aria-labelledby="demand-heatmap-title">
+          </>}
+
+          {selectedSection === 'demand' && <section className="mt-4 rounded-xl border border-slate-100 bg-white p-4" aria-labelledby="demand-heatmap-title">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 id="demand-heatmap-title" className="text-sm font-black text-slate-900">What happens on each day and hour?</h3>
@@ -475,122 +571,27 @@ export default function RingCentralCallAnalytics({
                 <p className="mt-2 text-[10px] text-slate-500">★ Recurring means activity in at least 3 of 4 weeks and a pooled count of at least {plot.minRecurringLeads}. This is a four-week operational pattern, not seasonality.</p>
               </>
             )}
-          </section>
+          </section>}
+          {selectedSection === 'activity' && <section className="mt-4 rounded-xl border border-slate-100 bg-white p-4" aria-labelledby="call-activity-title">
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><h3 id="call-activity-title" className="text-sm font-black">Call activity · {activeRangeLabel}</h3><p className="mt-1 text-[11px] text-slate-500">Exact Toronto call times. Known callers count once per day in lead totals; activity rows are paginated call records.</p></div>
+              <div className="flex flex-wrap gap-2"><label className="sr-only" htmlFor="call-search">Search caller or transcript</label><input id="call-search" value={activitySearch} onChange={(event) => { setActivitySearch(event.target.value); setActivityPage(1); }} placeholder="Search caller or transcript" className="w-52 rounded-lg border border-slate-200 px-3 py-2 text-xs" />
+                <label className="sr-only" htmlFor="call-outcome">Filter outcome</label><select id="call-outcome" value={activityOutcome} onChange={(event) => { setActivityOutcome(event.target.value); setActivityPage(1); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="all">All outcomes</option><option value="answered">Answered</option><option value="missed">Missed</option><option value="voicemail">Voicemail</option><option value="short">Brief calls</option><option value="callback-recovered">Callback recovered</option><option value="unresolved">Unresolved opportunities</option></select>
+                <label className="sr-only" htmlFor="call-number-filter">Receiving number</label><select id="call-number-filter" value={receivingNumber} onChange={(event) => { setReceivingNumber(event.target.value); setActivityPage(1); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="all">All tracked numbers</option>{(analytics.targetPhoneNumbers || []).map((number) => <option key={number} value={number}>{formatPhoneNumber(number)}</option>)}</select></div></div>
+            {analytics.coverage?.lastError && <p className="mt-3 rounded bg-amber-50 p-2 text-[11px] text-amber-900">Last sync issue: {analytics.coverage.lastError}. Cached activity remains available.</p>}
+            <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[900px] w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th className="px-3 py-2">Call time</th><th className="px-3 py-2">Caller</th><th className="px-3 py-2">Receiving number</th><th className="px-3 py-2">Outcome / callback</th><th className="px-3 py-2">Duration</th><th className="px-3 py-2">Available voicemail</th><th className="px-3 py-2">Linked job</th></tr></thead><tbody className="divide-y divide-slate-100">{activityRows.map((call, index) => <tr key={`${call.id || call.sessionId || call.time}-${index}`} className={call.missedOpportunity ? 'bg-rose-50/70' : ''}><td className="whitespace-nowrap px-3 py-3 font-semibold">{formatCallTime(call.time, true)}</td><td className="px-3 py-3"><div className="font-bold">{formatPhoneNumber(call.callerNumber)}</div><div className="text-[10px] text-slate-500">{displayValue(call.callerName)}</div></td><td className="px-3 py-3">{formatPhoneNumber(call.destinationNumber)}</td><td className="px-3 py-3"><span className={`font-bold ${call.missedOpportunity ? 'text-rose-700' : call.callbackTime ? 'text-emerald-700' : 'text-slate-700'}`}>{call.missedOpportunity ? 'Unresolved opportunity' : call.callbackTime ? `Callback ${formatCallTime(call.callbackTime)}` : call.activityKind}</span><div className="text-[10px] text-slate-500">{displayValue(call.result || call.reason)}</div></td><td className="whitespace-nowrap px-3 py-3">{formatDuration(call.durationSeconds)}</td><td className="max-w-64 px-3 py-3 text-slate-600">{call.voicemailTranscript || (call.voicemailTranscriptionStatus ? `Transcript ${call.voicemailTranscriptionStatus.toLowerCase()}` : call.activityKind === 'voicemail' ? 'No transcript available' : '—')}</td><td className="px-3 py-3">{call.linkedJobs?.length ? call.linkedJobs.map((job) => <a key={job.jobId} href={`/dispatch/jobs/${encodeURIComponent(job.jobId)}`} className="block font-bold text-blue-700 hover:underline">#{job.jobNumber || job.jobId} · {job.jobStatus.toLowerCase()}</a>) : '—'}</td></tr>)}</tbody></table>{activityRows.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No activity matches these filters.</p>}</div>
+            <div className="mt-3 flex items-center justify-between text-xs text-slate-600"><span>{analytics.activityPagination?.total || 0} matches · page {analytics.activityPagination?.page || 1} of {analytics.activityPagination?.totalPages || 1}</span><div className="flex gap-2"><button type="button" disabled={(analytics.activityPagination?.page || 1) <= 1 || loading} onClick={() => setActivityPage((page) => Math.max(1, page - 1))} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Previous</button><button type="button" disabled={(analytics.activityPagination?.page || 1) >= (analytics.activityPagination?.totalPages || 1) || loading} onClick={() => setActivityPage((page) => page + 1)} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Next</button></div></div>
+          </section>}
+          {selectedSection === 'linked-jobs' && <section className="mt-4 rounded-xl border border-slate-100 bg-white p-4" aria-labelledby="linked-jobs-title">
+            <h3 id="linked-jobs-title" className="text-sm font-black">Confirmed originating call links · {activeRangeLabel}</h3><p className="mt-1 text-[11px] text-slate-600">Conversion uses confirmed originating inbound sessions only. Follow-up calls are not additional originating conversions. Historical review can change these observed results; as of {analytics.definitions?.observationCutoff ? formatCallTime(analytics.definitions.observationCutoff, true) : 'the latest report'}.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-4">{[['Eligible inbound sessions', String(analytics.linkedConversion?.eligibleSessions ?? 0)], ['Sessions with a confirmed job', analytics.linkedConversion?.conversionRate == null ? 'Unavailable' : `${analytics.linkedConversion.linkedSessions} · ${analytics.linkedConversion.conversionRate.toFixed(1)}%`], ['Completed linked sessions', analytics.linkedConversion?.completedConversionRate == null ? 'Unavailable' : `${analytics.linkedConversion.completedLinkedSessions} · ${analytics.linkedConversion.completedConversionRate.toFixed(1)}%`], ['Jobs without confirmed originating link', String(analytics.linkedConversion?.unlinkedJobs ?? 0)]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><div className="text-[10px] font-bold uppercase text-slate-500">{label}</div><div className="mt-1 text-lg font-black">{value}</div></div>)}</div>
+            <label className="mt-3 block text-[11px] font-bold text-slate-600">Search confirmed links <input value={activitySearch} onChange={(event) => { setActivitySearch(event.target.value); setActivityPage(1); }} className="ml-2 rounded-lg border border-slate-200 px-3 py-2 font-normal" placeholder="Job or caller" /></label>
+            <div className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-200">{(analytics.linkedJobs || []).map((job) => <div key={`${job.sessionId}:${job.jobId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-3 text-xs"><span>{formatCallTime(job.callTime || '', true)} · {formatPhoneNumber(job.callerNumber)}</span><a href={`/dispatch/jobs/${encodeURIComponent(job.jobId)}`} className="font-bold text-blue-700 hover:underline">Job #{job.jobNumber || job.jobId} · {job.jobStatus.toLowerCase()}</a></div>)}{!analytics.linkedJobs?.length && <p className="p-5 text-sm text-slate-500">No confirmed originating links in this range.</p>}</div>
+            <div className="mt-3 flex items-center justify-between text-xs text-slate-600"><span>{analytics.activityPagination?.total || 0} confirmed links · page {analytics.activityPagination?.page || 1} of {analytics.activityPagination?.totalPages || 1}</span><div className="flex gap-2"><button type="button" disabled={(analytics.activityPagination?.page || 1) <= 1 || loading} onClick={() => setActivityPage((page) => Math.max(1, page - 1))} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Previous</button><button type="button" disabled={(analytics.activityPagination?.page || 1) >= (analytics.activityPagination?.totalPages || 1) || loading} onClick={() => setActivityPage((page) => page + 1)} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Next</button></div></div>
+          </section>}
         </>
       )}
 
-      {showDetails && analytics && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 p-3 backdrop-blur-xs sm:p-6"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowDetails(false);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="call-details-title"
-            className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
-              <div>
-                <h2 id="call-details-title" className="text-base font-black text-slate-900">Call details · {activeRangeLabel}</h2>
-                <p className="mt-1 text-xs text-slate-500">{receivedDetails.length} calls received · {missedDetails.length} other call activities · Toronto time</p>
-              </div>
-              <button type="button" onClick={() => setShowDetails(false)} className="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close call details">×</button>
-            </div>
 
-            <div className="overflow-auto p-4 sm:p-6">
-              <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Call detail category">
-                {([
-                  { value: 'received', label: 'Received calls', count: receivedDetails.length },
-                  { value: 'missed', label: 'Missed / voicemail / short', count: missedDetails.length },
-                  { value: 'all', label: 'All activity', count: allDetails.length },
-                ] as const).map((view) => (
-                  <button
-                    key={view.value}
-                    type="button"
-                    aria-pressed={detailsView === view.value}
-                    onClick={() => setDetailsView(view.value)}
-                    className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${detailsView === view.value ? 'border-blue-200 bg-blue-50 text-blue-700' : view.value === 'missed' && summary.missedOpportunities > 0 ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    {view.label} ({view.count})
-                  </button>
-                ))}
-              </div>
-              <p className="mb-4 text-[11px] text-slate-500">Received calls match the card and graph. Missed calls that were successfully called back are included; uncalled missed calls, voicemail and calls under 30 seconds are shown separately. Known callers count once per Toronto day; unknown numbers count by call session.</p>
-              {visibleDetails.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">{detailsView === 'received' ? 'No qualifying calls received for this period.' : detailsView === 'missed' ? 'No missed calls, voicemail or short calls for this period.' : 'No inbound call activity for this period.'}</div>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="min-w-[1000px] w-full border-collapse text-left text-xs">
-                    <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500">
-                      <tr>
-                        <th className="whitespace-nowrap px-4 py-3">Date &amp; time</th>
-                        <th className="whitespace-nowrap px-4 py-3">Caller</th>
-                        <th className="whitespace-nowrap px-4 py-3">Received by</th>
-                        <th className="whitespace-nowrap px-4 py-3">Duration</th>
-                        <th className="whitespace-nowrap px-4 py-3">Lead status</th>
-                        <th className="whitespace-nowrap px-4 py-3">Result</th>
-                        <th className="whitespace-nowrap px-4 py-3">Voicemail transcript</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {visibleDetails.map((call, index) => (
-                        <tr data-call-detail-row="true" key={`${call.date}:${call.id || call.telephonySessionId || call.sessionId || `${call.time}-${call.callerNumber}-${index}`}`} className={`align-top transition ${call.missedOpportunity ? 'bg-rose-50/80 hover:bg-rose-100/80' : 'hover:bg-blue-50/40'}`}>
-                          <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{formatCallTime(call.time, true)}</td>
-                          <td className="px-4 py-3">
-                            <div className="font-bold text-slate-900">{formatPhoneNumber(call.callerNumber)}</div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">{displayValue(call.callerName)}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-slate-800">{formatPhoneNumber(call.destinationNumber)}</div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">{displayValue(call.destinationName)}</div>
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{formatDuration(call.durationSeconds)}</td>
-                          <td className="px-4 py-3">
-                            {call.missedOpportunity ? (
-                              <span className="inline-flex rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700">Missed opportunity</span>
-                            ) : call.callbackTime ? (
-                              <span className="inline-flex rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Called back</span>
-                            ) : call.activityKind === 'answered' ? (
-                              <span className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700">Answered</span>
-                            ) : call.activityKind === 'short' ? (
-                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">Brief call (not a valid lead)</span>
-                            ) : (
-                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">{call.activityKind}</span>
-                            )}
-                            {call.callbackTime && <div className="mt-1 text-[11px] text-slate-500">Callback: {formatCallTime(call.callbackTime)}</div>}
-                            <div className="mt-1 text-[10px] text-slate-500">{call.countsAsReceived ? 'Included in received total' : 'Not included in received total'}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-slate-800">{displayValue(call.result)}</div>
-                            {call.action && <div className="mt-0.5 text-[11px] text-slate-500">Action: {call.action}</div>}
-                            {call.reason && <div className="mt-0.5 text-[11px] text-slate-500">Reason: {call.reason}</div>}
-                          </td>
-                          <td className="max-w-sm px-4 py-3">
-                            {call.voicemailTranscript ? (
-                              <div>
-                                <div className="whitespace-pre-wrap leading-5 text-slate-800">{call.voicemailTranscript}</div>
-                                <div className="mt-1 text-[10px] font-semibold text-slate-400">RingCentral transcription</div>
-                              </div>
-                            ) : call.activityKind === 'voicemail' ? (
-                              <span className="text-slate-400">Transcription {call.voicemailTranscriptionStatus?.toLowerCase() || 'not available'}</span>
-                            ) : (
-                              <span className="text-slate-400">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

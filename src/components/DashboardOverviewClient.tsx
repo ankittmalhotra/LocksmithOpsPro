@@ -69,6 +69,14 @@ type AdsSummary = {
   status: string;
 };
 
+type CallActivitySummary = {
+  success: boolean;
+  rangeLabel?: string;
+  summary?: { received: number; missedOpportunities: number };
+  coverage?: { available: boolean; coveredDays: number; totalDays: number; complete: boolean; lastSyncedAt: string | null; lastError: string | null };
+  dataWindow?: { rowLimit: number; truncated: boolean };
+};
+
 const ADS_RANGES = [
   ['today', 'Today'], ['yesterday', 'Yesterday'], ['last-week', 'Last week'],
   ['current-biweekly', 'This biweekly period'], ['previous-biweekly', 'Previous biweekly period'], ['all-time', 'All time'],
@@ -118,6 +126,9 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
   const [comparisons, setComparisons] = useState<PeriodComparisons | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(true);
   const [comparisonError, setComparisonError] = useState('');
+  const [callActivity, setCallActivity] = useState<CallActivitySummary | null>(null);
+  const [callActivityLoading, setCallActivityLoading] = useState(true);
+  const [callActivityError, setCallActivityError] = useState('');
 
   useEffect(() => { setPeriod(initialPeriod); }, [initialPeriod]);
 
@@ -148,6 +159,21 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
       .catch((error) => { if (active) setComparisonError(error.message || 'Unable to load period comparisons'); })
       .finally(() => { if (active) setComparisonLoading(false); });
     return () => { active = false; };
+  }, [refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCallActivityLoading(true);
+    setCallActivityError('');
+    fetch('/api/ringcentral/call-analytics?range=today&section=overview&summaryOnly=1', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load Call Activity');
+        if (!controller.signal.aborted) setCallActivity(data as CallActivitySummary);
+      })
+      .catch((error) => { if (!controller.signal.aborted) setCallActivityError(error instanceof Error ? error.message : 'Unable to load Call Activity'); })
+      .finally(() => { if (!controller.signal.aborted) setCallActivityLoading(false); });
+    return () => controller.abort();
   }, [refresh]);
 
   const loadAds = useCallback(async (range: string, signal?: AbortSignal) => {
@@ -256,6 +282,12 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
     </section>}
 
     <PeriodComparisonWidget mode={comparisonMode} onModeChange={setComparisonMode} comparison={comparisons?.[comparisonMode] || null} loading={comparisonLoading} error={comparisonError} />
+
+    <section aria-labelledby="dashboard-call-activity" className="my-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 id="dashboard-call-activity" className="text-base font-black text-slate-900">Call Activity</h2><p className="text-xs text-slate-500">Today · Toronto date · qualifying caller-day leads</p></div><Link href="/dispatch/call-analytics?range=today&section=activity&outcome=unresolved" className="text-xs font-bold text-blue-700 hover:underline">Investigate missed inbound sessions ↗</Link></div>
+      {callActivityError ? <p role="status" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Call Activity is unavailable: {callActivityError} The rest of the Dashboard is available.</p>
+        : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><div className="rounded-xl bg-blue-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wide text-blue-800">Qualifying leads</div><div className="mt-1 text-2xl font-black text-blue-950">{callActivityLoading ? '…' : callActivity?.coverage?.available && !callActivity.dataWindow?.truncated ? callActivity.summary?.received ?? 0 : 'Unavailable'}</div></div><div className="rounded-xl bg-rose-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wide text-rose-800">Unresolved missed inbound sessions</div><div className="mt-1 text-2xl font-black text-rose-950">{callActivityLoading ? '…' : callActivity?.coverage?.available && !callActivity.dataWindow?.truncated ? callActivity.summary?.missedOpportunities ?? 0 : 'Unavailable'}</div></div><div className="col-span-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 sm:col-span-1">{callActivityLoading ? 'Checking cache coverage…' : callActivity?.dataWindow?.truncated ? `Source data reached the ${callActivity.dataWindow.rowLimit.toLocaleString()}-row safety limit; counts are unavailable.` : callActivity?.coverage?.available ? `Cache coverage ${callActivity.coverage.coveredDays}/${callActivity.coverage.totalDays} dates · last successful sync ${when(callActivity.coverage.lastSyncedAt)}` : 'No verified RingCentral coverage for today yet. This is unavailable, not zero demand.'}{callActivity?.coverage?.lastError ? ` · Latest sync issue: ${callActivity.coverage.lastError}` : ''}</div></div>}
+    </section>
 
     <section aria-labelledby="recent-activity-heading" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

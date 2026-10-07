@@ -23,9 +23,9 @@ export default function CallAnalyticsPage() {
     <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6">
       <div className="mb-4">
         <h1 className="text-2xl font-black tracking-tight text-slate-950">Call Analytics</h1>
-        <p className="mt-1 text-sm text-slate-600">See when calls arrive and compare call demand with completed jobs.</p>
+        <p className="mt-1 text-sm text-slate-600">Investigate call outcomes, coverage, demand patterns, and confirmed call-to-job links.</p>
       </div>
-      {ready ? <RingCentralCallAnalytics canManageConnection={isAdmin} refreshOnLoad /> : <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">Loading call analytics…</div>}
+      {ready ? <RingCentralCallAnalytics canManageConnection={isAdmin} /> : <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">Loading call analytics…</div>}
     </main>
   );
 }

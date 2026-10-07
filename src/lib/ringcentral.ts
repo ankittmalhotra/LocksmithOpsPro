@@ -53,7 +53,7 @@ export type RingCentralCallRecord = {
   [key: string]: unknown;
 };
 
-export type RingCentralAnalyticsRange = 'today' | 'yesterday' | 'last-week';
+export type RingCentralAnalyticsRange = 'today' | 'yesterday' | 'last-week' | 'custom';
 
 type RingCentralConfig = {
   clientId: string;

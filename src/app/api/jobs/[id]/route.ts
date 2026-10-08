@@ -16,6 +16,7 @@ import {
 } from '@/lib/job-workflow';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
 import { getJobReceiptState } from '@/lib/job-receipt';
 
 const DISPATCHER_STATUSES = [
@@ -589,6 +590,9 @@ async function handleDELETE(
         },
       });
       await tx.job.delete({ where: { id: job.id } });
+      if (invoice?.paymentStatus === 'PAID') {
+        await refreshUnissuedPartnerBillingSnapshots(tx, currentUser.id, 'JOB_DELETED');
+      }
       return { status: 200, jobNumber: job.jobNumber };
     });
 

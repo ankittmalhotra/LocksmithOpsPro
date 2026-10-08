@@ -4,9 +4,6 @@ import { getCurrentUser } from '@/lib/auth';
 import {
   calculateJobSettlementPosition,
   calculateManualInvoice,
-  calculateDualPriceManualCardQuote,
-  DEFAULT_CARD_PRICE_DIFFERENCE_RATE,
-  MAX_CARD_PRICE_DIFFERENCE_RATE,
   isCardPaymentMethod,
   type SupportedPaymentMethod,
 } from '@/lib/calculations';
@@ -16,7 +13,9 @@ import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { formatTorontoDateInput, torontoDateToMidnightIso } from '@/lib/timezone';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { ManualJobInputError, parseManualAmount, parseManualPercentage } from '@/lib/manual-amount';
+import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
+import { buildPayUrl, CARD_TOTAL_PRICING_MODEL, generatePayToken, getAppBaseUrl } from '@/lib/card-pay-link';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
 
 const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
 type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
@@ -108,28 +107,13 @@ async function handlePOST(request: Request) {
     const payment = paymentMethod as SupportedPaymentMethod;
     const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
     const pendingCardPayment = paymentStatus === 'PENDING' && isCardPaymentMethod(payment);
-    const cardPriceDifferenceRate = pendingCardPayment
-      ? parseManualPercentage(
-          body.cardPriceDifferenceRate === undefined ? DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100 : body.cardPriceDifferenceRate,
-          'Card price difference',
-          MAX_CARD_PRICE_DIFFERENCE_RATE * 100,
-        )
-      : 0;
-    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE) {
-      return NextResponse.json({ success: false, error: `Card-price difference cannot exceed ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.` }, { status: 400 });
-    }
-    if (pendingCardPayment && (body.customerAcceptedCardPrice !== true
-      || !['VERBAL', 'WRITTEN'].includes(body.quoteAcceptanceMethod)
-      || typeof body.quoteAcceptanceEvidence !== 'string'
-      || !body.quoteAcceptanceEvidence.trim()
-      || body.quoteAcceptanceEvidence.trim().length > 500)) {
-      return NextResponse.json({ success: false, error: 'Record that the customer accepted the displayed card price, select verbal or written acceptance, and add an acceptance note before saving.' }, { status: 400 });
-    }
-    const dualPriceQuote = pendingCardPayment
-      ? calculateDualPriceManualCardQuote({ nonCardPrice: totalAmountCollected, cardPriceDifferenceRate })
-      : null;
-    const manualCalculation = dualPriceQuote?.calculation
-      || calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected: body.taxCollected });
+    // A card link charges exactly the entered total. It always includes HST
+    // (and any card-price difference), so HST is extracted from the total.
+    const manualCalculation = calculateManualInvoice({
+      amountCollected: totalAmountCollected,
+      taxCollected: pendingCardPayment ? true : body.taxCollected,
+    });
+    const payToken = pendingCardPayment ? generatePayToken() : null;
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
       grandTotal: manualCalculation.grandTotal,
@@ -176,18 +160,10 @@ async function handlePOST(request: Request) {
               taxAmount: manualCalculation.taxAmount,
               cardSurchargeRate: manualCalculation.cardSurchargeRate,
               cardSurchargeAmount: manualCalculation.cardSurchargeAmount,
-              pricingModel: pendingCardPayment ? 'DUAL_PRICE_V1' : null,
-              nonCardPrice: dualPriceQuote?.nonCardPrice ?? null,
-              cardPrice: dualPriceQuote?.cardPrice ?? null,
-              cardPriceDifferenceRate: dualPriceQuote?.cardPriceDifferenceRate ?? null,
-              acceptedPriceOption: pendingCardPayment ? 'CARD' : null,
-              quoteAcceptanceMethod: pendingCardPayment ? body.quoteAcceptanceMethod : null,
-              quoteAcceptedAt: pendingCardPayment ? new Date() : null,
-              quoteAcceptedById: pendingCardPayment ? currentUser.id : null,
-              quoteAcceptanceEvidence: pendingCardPayment ? body.quoteAcceptanceEvidence.trim() : null,
+              pricingModel: pendingCardPayment ? CARD_TOTAL_PRICING_MODEL : null,
+              payToken,
               grandTotal: manualCalculation.grandTotal,
               totalAmountCollected,
-              // Stripe Tax is always on for pending card invoices.
               taxCollected: pendingCardPayment ? true : body.taxCollected,
               cogsAmount,
               paymentStatus,
@@ -204,6 +180,7 @@ async function handlePOST(request: Request) {
           invoice: true,
         },
       });
+      if (paymentStatus === 'PAID') await refreshUnissuedPartnerBillingSnapshots(tx, currentUser.id, 'MANUAL_JOB_CREATED');
       return created;
     });
 
@@ -212,6 +189,8 @@ async function handlePOST(request: Request) {
       success: true,
       job,
       message: `Manual Job #${job.jobNumber} recorded successfully.`,
+      payUrl: payToken ? buildPayUrl(getAppBaseUrl(request), payToken) : null,
+      payLinkCreated: Boolean(payToken),
       revenueEmail: { success: revenueEmail.success, error: revenueEmail.error },
     }, { status: 201 });
   } catch (err: any) {

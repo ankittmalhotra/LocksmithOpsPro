@@ -63,6 +63,11 @@ const intakeDestinations = [
   { label: 'Completed job', href: '/dispatch?addJob=1' },
 ];
 
+/** Customer pay pages never show staff navigation, even to a signed-in dispatcher. */
+function isCustomerPayPath(pathname: string) {
+  return pathname.startsWith('/pay/');
+}
+
 function isActiveLink(item: NavigationItem, pathname: string) {
   if (item.href === '/dashboard') return pathname === '/dashboard' || pathname.startsWith('/dashboard/');
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -94,7 +99,7 @@ export default function NavigationHeader() {
 
   useEffect(() => { void checkAuth(); }, [checkAuth, pathname]);
   useEffect(() => {
-    document.body.classList.toggle('portal-shell', Boolean(user) && !publicMarketingPaths.has(pathname));
+    document.body.classList.toggle('portal-shell', Boolean(user) && !publicMarketingPaths.has(pathname) && !isCustomerPayPath(pathname));
     return () => document.body.classList.remove('portal-shell');
   }, [user, pathname]);
   useEffect(() => {
@@ -133,7 +138,7 @@ export default function NavigationHeader() {
     }
   };
 
-  if (publicMarketingPaths.has(pathname) || loading || !user) return null;
+  if (publicMarketingPaths.has(pathname) || isCustomerPayPath(pathname) || loading || !user) return null;
 
   const isAdmin = user.role === 'ADMIN';
   const isOperationsProfile = user.role === 'ADMIN' || user.role === 'DISPATCHER';

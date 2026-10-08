@@ -17,7 +17,7 @@ export default function SiteFooter() {
     '/locksmith-job-costing',
   ]);
 
-  if (publicMarketingPaths.has(pathname)) return null;
+  if (publicMarketingPaths.has(pathname) || pathname.startsWith('/pay/')) return null;
 
   return (
     <footer className="border-t border-slate-200 bg-white py-3 text-center text-xs text-slate-500">

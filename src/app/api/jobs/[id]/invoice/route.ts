@@ -19,6 +19,7 @@ import {
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
 
 function parseCloseoutNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -316,6 +317,8 @@ async function handlePOST(
           items: true,
         },
       });
+
+      await refreshUnissuedPartnerBillingSnapshots(tx, currentUser.id, 'JOB_CLOSEOUT');
 
       return { invoice, updatedJob };
     });

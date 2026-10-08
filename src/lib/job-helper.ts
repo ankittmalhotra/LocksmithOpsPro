@@ -95,13 +95,13 @@ type JobReadArgs = {
  * compatibility column is missing. The fallback aliases createdAt as
  * updatedAt so older records remain readable while migrations are applied.
  */
-export async function findJobsWithDetails(args: JobReadArgs = {}) {
+export async function findJobsWithDetails(args: JobReadArgs = {}, client: Pick<typeof prisma, 'job'> = prisma) {
   try {
-    return await prisma.job.findMany({ ...args, include: jobDetailsInclude });
+    return await client.job.findMany({ ...args, include: jobDetailsInclude });
   } catch (error) {
     if (!isMissingJobCompatibilityColumnError(error)) throw error;
 
-    const legacyJobs = await prisma.job.findMany({ ...args, select: legacyJobSelect });
+    const legacyJobs = await client.job.findMany({ ...args, select: legacyJobSelect });
     return legacyJobs.map(normalizeLegacyJob);
   }
 }

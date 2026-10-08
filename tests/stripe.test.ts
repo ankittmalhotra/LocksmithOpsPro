@@ -290,3 +290,24 @@ test('verifies Stripe raw webhook signatures and rejects stale or altered payloa
   assert.throws(() => verifyStripeWebhookSignature(`${payload} `, signature, secret, 300, timestamp));
   assert.throws(() => verifyStripeWebhookSignature(payload, signature, secret, 300, timestamp + 301));
 });
+
+test('card-total link sends the service and HST lines only, with no Stripe Tax or fee line', async () => {
+  process.env.STRIPE_SECRET_KEY = 'sk_test_backend_unit';
+  let sent = new URLSearchParams();
+  globalThis.fetch = async (_input, init) => {
+    sent = new URLSearchParams(String(init?.body || ''));
+    return new Response(JSON.stringify({ id: 'cs_card_total', url: 'https://checkout.stripe.com/c/pay/cs_card_total', status: 'open' }), { status: 200 });
+  };
+  await createStripePaymentLink({
+    invoiceId: 'invoice-card-total', customerId: 'customer-1', jobId: 'job-1', jobNumber: '42',
+    customerName: 'Pat Example', customerPhone: '+14165550100', customerAddress: '1 Main Street, Toronto, ON',
+    stripeCustomerId: 'cus_existing', grandTotal: 117.52, subtotal: 104, taxAmount: 13.52, cardSurchargeAmount: 0,
+    pricingModel: 'CARD_TOTAL_V1', automaticTax: false, returnUrl: 'https://portal.example.test/pay/token',
+  });
+  assert.equal(sent.get('automatic_tax[enabled]'), null);
+  assert.equal(sent.get('line_items[0][price_data][unit_amount]'), '10400');
+  assert.equal(sent.get('line_items[1][price_data][unit_amount]'), '1352');
+  assert.equal(sent.get('line_items[1][price_data][product_data][name]'), 'Ontario HST (13%)');
+  assert.equal(sent.get('line_items[2][price_data][unit_amount]'), null, 'no separate card fee line');
+  assert.equal(sent.get('metadata[pricingModel]'), 'CARD_TOTAL_V1');
+});

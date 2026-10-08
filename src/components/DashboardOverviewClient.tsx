@@ -82,6 +82,7 @@ const ADS_RANGES = [
   ['current-biweekly', 'This biweekly period'], ['previous-biweekly', 'Previous biweekly period'], ['all-time', 'All time'],
 ] as const;
 
+type AwaitingPayment = { count: number; cardLinkCount: number; totalCents: number; oldestDays: number | null };
 type BooksAttention = { available: boolean; missingReceipts?: number; needsDetailsCount?: number; toRepayCents?: number };
 
 function currency(value: number | null | undefined, code = 'CAD') {
@@ -133,6 +134,8 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
   const [callActivityError, setCallActivityError] = useState('');
   const [booksAttention, setBooksAttention] = useState<BooksAttention | null>(null);
   const [booksAttentionError, setBooksAttentionError] = useState('');
+  const [awaitingPayment, setAwaitingPayment] = useState<AwaitingPayment | null>(null);
+  const [awaitingPaymentError, setAwaitingPaymentError] = useState('');
 
   useEffect(() => { setPeriod(initialPeriod); }, [initialPeriod]);
 
@@ -190,6 +193,19 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
         if (!controller.signal.aborted) setBooksAttention(data as BooksAttention);
       })
       .catch((error) => { if (!controller.signal.aborted) setBooksAttentionError(error instanceof Error ? error.message : 'Unable to load Books attention'); });
+    return () => controller.abort();
+  }, [refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setAwaitingPaymentError('');
+    fetch('/api/dashboard/awaiting-payment', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load awaiting payments');
+        if (!controller.signal.aborted) setAwaitingPayment(data as AwaitingPayment);
+      })
+      .catch((error) => { if (!controller.signal.aborted) setAwaitingPaymentError(error instanceof Error ? error.message : 'Unable to load awaiting payments'); });
     return () => controller.abort();
   }, [refresh]);
 
@@ -305,6 +321,15 @@ export default function DashboardOverviewClient({ isAdmin, initialPeriod }: { is
       {callActivityError ? <p role="status" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Call Activity is unavailable: {callActivityError} The rest of the Dashboard is available.</p>
         : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><div className="rounded-xl bg-blue-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wide text-blue-800">Qualifying leads</div><div className="mt-1 text-2xl font-black text-blue-950">{callActivityLoading ? '…' : callActivity?.coverage?.available && !callActivity.dataWindow?.truncated ? callActivity.summary?.received ?? 0 : 'Unavailable'}</div></div><div className="rounded-xl bg-rose-50 p-3"><div className="text-[10px] font-bold uppercase tracking-wide text-rose-800">Unresolved missed inbound sessions</div><div className="mt-1 text-2xl font-black text-rose-950">{callActivityLoading ? '…' : callActivity?.coverage?.available && !callActivity.dataWindow?.truncated ? callActivity.summary?.missedOpportunities ?? 0 : 'Unavailable'}</div></div><div className="col-span-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 sm:col-span-1">{callActivityLoading ? 'Checking cache coverage…' : callActivity?.dataWindow?.truncated ? `Source data reached the ${callActivity.dataWindow.rowLimit.toLocaleString()}-row safety limit; counts are unavailable.` : callActivity?.coverage?.available ? `Cache coverage ${callActivity.coverage.coveredDays}/${callActivity.coverage.totalDays} dates · last successful sync ${when(callActivity.coverage.lastSyncedAt)}` : 'No verified RingCentral coverage for today yet. This is unavailable, not zero demand.'}{callActivity?.coverage?.lastError ? ` · Latest sync issue: ${callActivity.coverage.lastError}` : ''}</div></div>}
     </section>
+
+    {awaitingPaymentError ? <p role="status" className="my-6 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Awaiting payments are unavailable right now. The rest of the Dashboard is available.</p>
+      : awaitingPayment && awaitingPayment.count > 0 && <section aria-labelledby="dashboard-awaiting-payment" className="my-6 rounded-2xl border border-rose-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="mb-2 flex items-center justify-between gap-2"><h2 id="dashboard-awaiting-payment" className="text-base font-black text-slate-900">Awaiting payment</h2><Link href="/dispatch#payment-follow-up" className="text-xs font-bold text-blue-700 hover:underline">Follow up ↗</Link></div>
+        <Link href="/dispatch#payment-follow-up" className="flex flex-wrap items-baseline justify-between gap-2 text-sm font-semibold text-slate-800 hover:text-blue-700">
+          <span>{awaitingPayment.count} completed job{awaitingPayment.count === 1 ? '' : 's'} not paid yet · {currency(awaitingPayment.totalCents / 100)}</span>
+          <span className="text-xs font-bold text-slate-500">{awaitingPayment.cardLinkCount > 0 ? `${awaitingPayment.cardLinkCount} by card link · ` : ''}oldest {awaitingPayment.oldestDays === 0 ? 'today' : `${awaitingPayment.oldestDays} day${awaitingPayment.oldestDays === 1 ? '' : 's'}`}</span>
+        </Link>
+      </section>}
 
     {booksAttentionError ? <p role="status" className="my-6 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Books attention is unavailable right now. The rest of the Dashboard is available.</p>
       : booksAttention?.available && (() => {

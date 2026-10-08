@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import type { SmsDraft } from '@/lib/sms-draft';
 import { buildSmsDraft } from '@/lib/sms-draft';
+import { buildPayLinkSmsBody } from '@/lib/card-pay-link';
 
 type PaymentMethod = 'CASH' | 'INTERAC' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'STRIPE_CARD';
 
@@ -72,6 +73,8 @@ interface Job {
     paymentUrl?: string | null;
     paymentLink?: string | null;
     paymentLinkExpiresAt?: string | null;
+    pricingModel?: string | null;
+    payToken?: string | null;
   } | null;
 }
 
@@ -113,6 +116,15 @@ function isCardPaymentMethod(paymentMethod: PaymentMethod | null | undefined) {
 function getPersistedPaymentLink(job: Job): { url: string | null; expiresAt: string | null; sessionStatus: string | null } {
   const invoice = job.invoice;
   if (!invoice) return { url: null, expiresAt: null, sessionStatus: null };
+  // Card-total jobs text a stable portal pay page; it never expires.
+  if (invoice.pricingModel === 'CARD_TOTAL_V1') {
+    const base = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+    return {
+      url: invoice.payToken && base ? new URL(`/pay/${encodeURIComponent(invoice.payToken)}`, base).toString() : null,
+      expiresAt: null,
+      sessionStatus: null,
+    };
+  }
   const url = [invoice.stripePaymentUrl, invoice.paymentUrl, invoice.paymentLink]
     .find((candidate): candidate is string => typeof candidate === 'string' && /^https?:\/\//i.test(candidate)) || null;
   return {
@@ -349,7 +361,9 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
     try {
       const body = smsBody
         ? (smsBody.includes(paymentUrl) ? smsBody : `${smsBody}\nPayment link: ${paymentUrl}`)
-        : `Payment link for Job #${job.jobNumber}: ${paymentUrl}`;
+        : job.invoice?.pricingModel === 'CARD_TOTAL_V1'
+          ? buildPayLinkSmsBody({ customerName: job.customer.name, jobNumber: String(job.jobNumber), total: Number(job.invoice.grandTotal), payUrl: paymentUrl })
+          : `Payment link for Job #${job.jobNumber}: ${paymentUrl}`;
       const draft = buildSmsDraft({
         to: job.customer.phone,
         body,
@@ -368,7 +382,7 @@ export default function DispatcherJobPage({ params }: { params: Promise<{ id: st
     if (!job) return;
     const persisted = getPersistedPaymentLink(job);
     const paymentUrl = paymentLinkUrlOverride || persisted.url;
-    if (!paymentUrl || !isActivePaymentLink(persisted.expiresAt, persisted.sessionStatus)) {
+    if (!paymentUrl || (!paymentLinkUrlOverride && !isActivePaymentLink(persisted.expiresAt, persisted.sessionStatus))) {
       setPaymentLinkError('No active payment link is available. Generate a new link and retry.');
       return;
     }

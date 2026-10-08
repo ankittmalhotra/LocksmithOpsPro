@@ -12,6 +12,7 @@ import {
 import { sendRevenueChangeEmail } from '@/lib/revenue-email';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
 
 async function handlePOST(
   request: Request,
@@ -180,6 +181,8 @@ async function handlePOST(
           invoice: true,
         },
       });
+
+      if (isPaid) await refreshUnissuedPartnerBillingSnapshots(tx, currentUser.id, 'JOB_CLOSEOUT');
 
       return { invoice, updatedJob };
     });

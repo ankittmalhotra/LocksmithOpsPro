@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma';
 import { verifyStripeWebhookSignature } from '@/lib/stripe';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
+import { CARD_TOTAL_PRICING_MODEL } from '@/lib/card-pay-link';
 
 export const runtime = 'nodejs';
 
@@ -192,7 +194,15 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
   const stripeTotal = confirmedPayment
     ? amountFromCents(checkoutEvent ? object.amount_total : object.amount_paid)
     : null;
-  const stripeTaxAmount = confirmedPayment ? taxAmountFromStripeObject(object) : null;
+  // Card-total links send HST as its own line item, so Stripe reports no tax.
+  // The portal's extracted HST stays authoritative, and the payment must equal
+  // the saved card total exactly.
+  const cardTotalLink = invoice.pricingModel === CARD_TOTAL_PRICING_MODEL;
+  const stripeTaxAmount = confirmedPayment && !cardTotalLink ? taxAmountFromStripeObject(object) : null;
+  if (confirmedPayment && cardTotalLink && !settled
+    && stripeTotal !== null && Math.round(stripeTotal * 100) !== Math.round(invoice.grandTotal * 100)) {
+    throw new Error('Stripe payment does not match the saved card total; settlement was not recorded. Reconcile this payment manually.');
+  }
   if (confirmedPayment) {
     if (object.currency !== 'cad' || stripeTotal === null || stripeTotal <= 0
       || object.paid_out_of_band === true
@@ -292,6 +302,10 @@ async function applyStripeEvent(tx: Prisma.TransactionClient, event: StripeEvent
 
   if (Object.keys(invoiceData).length === 0) return;
   await tx.invoice.update({ where: { id: invoice.id }, data: invoiceData });
+  const sourceRevenueFields = ['grandTotal', 'totalAmountCollected', 'taxAmount', 'taxCollected', 'cogsAmount', 'paymentStatus', 'paymentMethod', 'paidAt'];
+  if (sourceRevenueFields.some((field) => Object.prototype.hasOwnProperty.call(invoiceData, field))) {
+    await refreshUnissuedPartnerBillingSnapshots(tx, invoice.job.dispatcherId, 'STRIPE_PAYMENT_STATUS_CHANGED');
+  }
 }
 
 async function handlePOST(request: Request) {

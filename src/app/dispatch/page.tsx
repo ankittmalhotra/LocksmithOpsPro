@@ -1,10 +1,10 @@
 'use client';
 
-import { Suspense, useCallback, useState, useEffect } from 'react';
+import { Suspense, useCallback, useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MANUAL_JOB_RECEIVED_TIME_SLOTS, MANUAL_SERVICE_TYPES } from '@/lib/manual-job';
-import { calculateDualPriceManualCardQuote, DEFAULT_CARD_PRICE_DIFFERENCE_RATE, MAX_CARD_PRICE_DIFFERENCE_RATE } from '@/lib/calculations';
+import { buildPayLinkSmsBody } from '@/lib/card-pay-link';
 import SmsComposerModal from '@/components/SmsComposerModal';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import RingCentralRefreshOnLoad from '@/components/RingCentralRefreshOnLoad';
@@ -23,7 +23,7 @@ function phoneDigitCount(value: string) {
 }
 
 function validateManualForm(form: Record<string, string>) {
-  const pendingCardPayment = form.paymentStatus === 'PENDING'
+  const cardLink = form.paymentStatus === 'PENDING'
     && (form.paymentMethod === 'CREDIT_CARD' || form.paymentMethod === 'DEBIT_CARD');
   if (!parseTorontoDateOnly(form.jobDate)) {
     return 'Job date must be a valid date.';
@@ -41,8 +41,8 @@ function validateManualForm(form: Record<string, string>) {
     return 'Enter the other job type.';
   }
   if (!Number.isFinite(Number(form.totalAmountCollected)) || Number(form.totalAmountCollected) <= 0) {
-    return pendingCardPayment
-      ? 'Non-card price before tax must be greater than 0.'
+    return cardLink
+      ? 'Card total (HST and card fee included) must be greater than 0.'
       : 'Total amount collected must be greater than 0.';
   }
   if (!Number.isFinite(Number(form.cogsAmount)) || Number(form.cogsAmount) < 0) {
@@ -50,21 +50,6 @@ function validateManualForm(form: Record<string, string>) {
   }
   if (!Number.isFinite(Number(form.technicianCommission)) || Number(form.technicianCommission) < 0) {
     return 'Technician commission must be a valid non-negative amount.';
-  }
-  if (pendingCardPayment) {
-    const priceDifferencePercent = Number(form.cardPriceDifferenceRate);
-    if (!Number.isFinite(priceDifferencePercent) || priceDifferencePercent < 0 || priceDifferencePercent > MAX_CARD_PRICE_DIFFERENCE_RATE * 100) {
-      return `Card-price difference must be between 0% and ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.`;
-    }
-    if (form.customerAcceptedCardPrice !== 'yes') {
-      return 'Confirm that the customer explicitly accepted the card price shown above.';
-    }
-    if (!['VERBAL', 'WRITTEN'].includes(form.quoteAcceptanceMethod)) {
-      return 'Select whether the customer accepted verbally or in writing.';
-    }
-    if (!form.quoteAcceptanceEvidence?.trim()) {
-      return 'Add a note recording how the customer accepted the card price.';
-    }
   }
   if (!form.technicianId) {
     return 'Select a technician or choose Other.';
@@ -141,7 +126,6 @@ interface Job {
   };
 }
 
-type ManualPaymentStatus = 'PAID' | 'PENDING';
 type JobEntryMode = 'NEW' | 'ASSIGNED' | 'COMPLETED';
 type JobsView = 'BOARD' | 'TABLE';
 
@@ -291,16 +275,28 @@ export default function DispatchPage() {
   const [showAddJob, setShowAddJob] = useState(false);
   const [jobEntryMode, setJobEntryMode] = useState<JobEntryMode>('COMPLETED');
   const openIntakeFromLink = useCallback((stage: JobEntryMode) => {
+    // A sidebar "New job" link must never reopen a previous edit.
+    setEditingManualId(null);
+    if (stage === 'COMPLETED') resetManualJobRef.current();
+    setErrorMsg('');
+    setSuccessMsg('');
     setJobEntryMode(stage);
     setShowAddJob(true);
   }, []);
   const [editingManualId, setEditingManualId] = useState<string | null>(null);
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [paymentLinkPrompt, setPaymentLinkPrompt] = useState<PaymentLinkPrompt | null>(null);
-  const [paymentLinkGenerating, setPaymentLinkGenerating] = useState(false);
   const [paymentLinkUrl, setPaymentLinkUrl] = useState<string | null>(null);
   const [paymentLinkError, setPaymentLinkError] = useState('');
   const [paymentLinkCopyState, setPaymentLinkCopyState] = useState('');
+  const [resendingJobId, setResendingJobId] = useState<string | null>(null);
+  const [paidAnotherWay, setPaidAnotherWay] = useState<{
+    job: Job;
+    method: 'CASH' | 'INTERAC' | 'CREDIT_CARD';
+    amount: string;
+    error: string;
+    saving: boolean;
+  } | null>(null);
   const [deletingManualId, setDeletingManualId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [manualForm, setManualForm] = useState<Record<string, string>>({
@@ -316,10 +312,6 @@ export default function DispatchPage() {
     description: '',
     paymentMethod: 'CASH',
     paymentStatus: 'PAID',
-    cardPriceDifferenceRate: String(DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100),
-    customerAcceptedCardPrice: 'no',
-    quoteAcceptanceMethod: 'VERBAL',
-    quoteAcceptanceEvidence: '',
     cogsAmount: '0.00',
     totalAmountCollected: '',
     taxCollected: 'yes',
@@ -331,6 +323,12 @@ export default function DispatchPage() {
   useEffect(() => {
     fetchAuthAndJobs();
   }, []);
+
+  // The Dashboard links to #payment-follow-up, which renders after jobs load.
+  useEffect(() => {
+    if (loading || window.location.hash !== '#payment-follow-up') return;
+    document.getElementById('payment-follow-up')?.scrollIntoView({ block: 'start' });
+  }, [loading]);
 
   useEffect(() => {
     if (!showAddJob || jobEntryMode === 'COMPLETED') return;
@@ -623,14 +621,7 @@ export default function DispatchPage() {
   };
 
   const updateManualField = (field: string, value: string) => {
-    const changesQuote = ['totalAmountCollected', 'cardPriceDifferenceRate', 'paymentMethod', 'paymentStatus'].includes(field);
-    setManualForm((current) => ({
-      ...current,
-      [field]: value,
-      ...(changesQuote && current[field] !== value
-        ? { customerAcceptedCardPrice: 'no', quoteAcceptanceEvidence: '' }
-        : {}),
-    }));
+    setManualForm((current) => ({ ...current, [field]: value }));
   };
 
   const resetManualJob = () => {
@@ -638,14 +629,18 @@ export default function DispatchPage() {
       jobNumber: '', jobDate: formatTorontoDateInput(), customerName: '', customerPhone: '', customerExtension: '', serviceAddress: '',
       serviceType: MANUAL_SERVICE_TYPES[0], jobReceivedTimeSlot: '', otherServiceType: '', description: '', paymentMethod: 'CASH',
       paymentStatus: 'PAID',
-      cardPriceDifferenceRate: String(DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100),
-      customerAcceptedCardPrice: 'no',
-      quoteAcceptanceMethod: 'VERBAL',
-      quoteAcceptanceEvidence: '',
       cogsAmount: '0.00', totalAmountCollected: '', taxCollected: 'yes', technicianId: technicians[0]?.id || '',
       otherTechnicianName: '',
       technicianCommission: '0.00',
     });
+  };
+
+  const resetManualJobRef = useRef(resetManualJob);
+  resetManualJobRef.current = resetManualJob;
+
+  const closeAddJob = () => {
+    setShowAddJob(false);
+    setEditingManualId(null);
   };
 
   const openAddJob = () => {
@@ -679,15 +674,11 @@ export default function DispatchPage() {
       description: job.problemDescription,
       paymentMethod: job.invoice?.paymentMethod || 'CASH',
       paymentStatus: job.invoice?.paymentStatus === 'PENDING' ? 'PENDING' : 'PAID',
-      cardPriceDifferenceRate: (job.invoice?.paymentStatus === 'PENDING'
-        && isCardPaymentMethod(job.invoice?.paymentMethod || '')
-        ? Number(job.invoice?.cardPriceDifferenceRate ?? DEFAULT_CARD_PRICE_DIFFERENCE_RATE) * 100
-        : DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100).toFixed(2),
-      customerAcceptedCardPrice: job.invoice?.acceptedPriceOption === 'CARD' ? 'yes' : 'no',
-      quoteAcceptanceMethod: job.invoice?.quoteAcceptanceMethod || 'VERBAL',
-      quoteAcceptanceEvidence: job.invoice?.quoteAcceptanceEvidence || '',
       cogsAmount: Number(job.invoice?.cogsAmount || 0).toFixed(2),
-      totalAmountCollected: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
+      // Older dual-price quotes stored the pre-tax non-card price; re-enter the card total for those.
+      totalAmountCollected: job.invoice?.pricingModel === 'DUAL_PRICE_V1'
+        ? ''
+        : Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
       taxCollected: job.invoice?.taxCollected === false ? 'no' : 'yes',
       technicianId: job.technician?.id || (job.technicianName ? 'OTHER' : ''),
       otherTechnicianName: job.technicianName || '',
@@ -713,7 +704,6 @@ export default function DispatchPage() {
     setErrorMsg('');
     setSuccessMsg('');
     try {
-      const shouldOfferPaymentLink = manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod);
       const res = await fetch(editingManualId ? `/api/jobs/manual/${editingManualId}` : '/api/jobs/manual', {
         method: editingManualId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -731,16 +721,13 @@ export default function DispatchPage() {
       setEditingManualId(null);
       resetManualJob();
       fetchAuthAndJobs();
-      const paymentLinkJobId = data.job?.id || editingManualId;
-      if (shouldOfferPaymentLink && paymentLinkJobId) {
-        setPaymentLinkUrl(null);
-        setPaymentLinkError('');
-        setPaymentLinkCopyState('');
-        setPaymentLinkPrompt({
-          jobId: paymentLinkJobId,
-          jobNumber: String(data.job.jobNumber || manualForm.jobNumber),
-          customerName: manualForm.customerName,
-          customerPhone: manualForm.customerPhone,
+      if (data.payLinkCreated && typeof data.payUrl === 'string' && data.job) {
+        openPayLinkSms({
+          jobNumber: String(data.job.jobNumber),
+          customerName: data.job.customer?.name || manualForm.customerName,
+          customerPhone: data.job.customer?.phone || manualForm.customerPhone,
+          total: Number(data.job.invoice?.grandTotal || manualForm.totalAmountCollected),
+          payUrl: data.payUrl,
         });
       }
     } catch (err: any) {
@@ -760,39 +747,89 @@ export default function DispatchPage() {
     }
   };
 
-  const generatePaymentLinkAndSend = async () => {
-    if (!paymentLinkPrompt) return;
-    setPaymentLinkGenerating(true);
-    setPaymentLinkError('');
-    setPaymentLinkCopyState('');
+  /** Opens the device SMS draft for a card pay link, or shows the link to copy. */
+  const openPayLinkSms = (params: { jobNumber: string; customerName: string; customerPhone: string; total: number; payUrl: string; smsBody?: string | null }) => {
+    const body = params.smsBody || buildPayLinkSmsBody({
+      customerName: params.customerName,
+      jobNumber: params.jobNumber,
+      total: params.total,
+      payUrl: params.payUrl,
+    });
     try {
-      const res = await fetch(`/api/jobs/${paymentLinkPrompt.jobId}/payment-link`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to generate payment link');
-
-      const paymentUrl = getPaymentLinkUrl(data);
-      if (!paymentUrl) throw new Error('Payment link was generated without a usable URL. Retry from the job details page.');
-      setPaymentLinkUrl(paymentUrl);
-
-      const responseBody = getPaymentLinkSmsBody(data);
-      const body = responseBody
-        ? (responseBody.includes(paymentUrl) ? responseBody : `${responseBody}\nPayment link: ${paymentUrl}`)
-        : `Payment link for Job #${paymentLinkPrompt.jobNumber}: ${paymentUrl}`;
-      let draft: SmsDraft;
-      try {
-        draft = buildSmsDraft({ to: paymentLinkPrompt.customerPhone, body });
-      } catch {
-        throw new Error('Payment link generated, but the customer phone number cannot open an SMS draft. Copy the link below and send it manually.');
-      }
+      const draft = buildSmsDraft({ to: params.customerPhone, body });
       setSmsDraft(draft);
       setSmsWarnings([]);
       setSmsAutoOpen(true);
-      setPaymentLinkPrompt(null);
-      setSuccessMsg(`✅ Payment link generated for Job #${paymentLinkPrompt.jobNumber}. Review the SMS draft and tap Send in Messages.`);
-    } catch (error: any) {
-      setPaymentLinkError(error.message || 'Unable to generate payment link');
+      setSuccessMsg(`✅ Payment link ready for Job #${params.jobNumber}. Tap Send in Messages.`);
+    } catch {
+      setPaymentLinkUrl(params.payUrl);
+      setPaymentLinkCopyState('');
+      setPaymentLinkError('The customer phone number cannot open an SMS draft. Copy the link and send it another way.');
+      setPaymentLinkPrompt({ jobId: '', jobNumber: params.jobNumber, customerName: params.customerName, customerPhone: params.customerPhone });
+    }
+  };
+
+  /** Re-sends the same stable pay link (Payment follow-up and job list). */
+  const resendPayLink = async (job: Job) => {
+    setResendingJobId(job.id);
+    setErrorMsg('');
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/payment-link`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to prepare the payment link');
+      const payUrl = getPaymentLinkUrl(data);
+      if (!payUrl) throw new Error('The payment link could not be prepared. Open the job and try again.');
+      openPayLinkSms({
+        jobNumber: String(job.jobNumber),
+        customerName: job.customer.name,
+        customerPhone: job.customer.phone,
+        total: Number(job.invoice?.grandTotal || 0),
+        payUrl,
+        smsBody: getPaymentLinkSmsBody(data),
+      });
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Unable to prepare the payment link');
     } finally {
-      setPaymentLinkGenerating(false);
+      setResendingJobId(null);
+    }
+  };
+
+  const openPaidAnotherWay = (job: Job) => {
+    setPaidAnotherWay({
+      job,
+      method: 'CASH',
+      amount: Number(job.invoice?.totalAmountCollected || job.invoice?.grandTotal || 0).toFixed(2),
+      error: '',
+      saving: false,
+    });
+  };
+
+  const savePaidAnotherWay = async () => {
+    if (!paidAnotherWay) return;
+    const amount = Number(paidAnotherWay.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setPaidAnotherWay({ ...paidAnotherWay, error: 'Enter the amount received.' });
+      return;
+    }
+    setPaidAnotherWay({ ...paidAnotherWay, saving: true, error: '' });
+    try {
+      const res = await fetch(`/api/jobs/manual/${paidAnotherWay.job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paymentStatus: 'PAID',
+          paymentMethod: paidAnotherWay.method,
+          totalAmountCollected: amount.toFixed(2),
+          taxCollected: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Unable to record the payment');
+      setPaidAnotherWay(null);
+      setSuccessMsg(`✅ Job #${paidAnotherWay.job.jobNumber} marked paid. Its card link no longer works.`);
+      fetchAuthAndJobs();
+    } catch (err: any) {
+      setPaidAnotherWay((current) => current && { ...current, saving: false, error: err.message || 'Unable to record the payment' });
     }
   };
 
@@ -936,13 +973,22 @@ export default function DispatchPage() {
           </section>
   );
 
-  const pendingCardQuote = manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod);
-  const enteredNonCardPrice = Number(manualForm.totalAmountCollected);
-  const enteredCardDifference = Number(manualForm.cardPriceDifferenceRate) / 100;
-  const manualDualPriceQuote = pendingCardQuote && Number.isFinite(enteredNonCardPrice) && enteredNonCardPrice > 0
-    && Number.isFinite(enteredCardDifference) && enteredCardDifference >= 0 && enteredCardDifference <= MAX_CARD_PRICE_DIFFERENCE_RATE
-    ? calculateDualPriceManualCardQuote({ nonCardPrice: enteredNonCardPrice, cardPriceDifferenceRate: enteredCardDifference })
-    : null;
+  const cardLinkSelected = manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod);
+  const paymentChoice = `${manualForm.paymentMethod}|${manualForm.paymentStatus}`;
+  const paymentChoices: Array<{ value: string; label: string }> = [
+    { value: 'CASH|PAID', label: 'Cash — received' },
+    { value: 'INTERAC|PAID', label: 'Interac — received' },
+    { value: 'CREDIT_CARD|PAID', label: 'Card — already paid' },
+    { value: 'CREDIT_CARD|PENDING', label: 'Card — text customer a payment link' },
+    { value: 'CASH|PENDING', label: 'Not paid yet — cash or Interac later' },
+  ];
+  // Keep older combinations (for example Debit card) selectable when editing.
+  if (!paymentChoices.some((choice) => choice.value === paymentChoice)) {
+    paymentChoices.push({
+      value: paymentChoice,
+      label: `${manualForm.paymentMethod.replace(/_/g, ' ').toLowerCase()} — ${manualForm.paymentStatus === 'PAID' ? 'received' : 'not paid yet'}`,
+    });
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 w-full">
@@ -1000,6 +1046,38 @@ export default function DispatchPage() {
               <p className="mt-0.5 text-[11px] text-slate-500">{card.detail}</p>
             </div>
           ))}
+        </section>
+      )}
+
+      {canManageManualJobs && paymentAttentionJobs.length > 0 && (
+        <section id="payment-follow-up" aria-label="Payment follow-up" className="mb-6 rounded-2xl border border-rose-200 bg-white p-4 shadow-sm scroll-mt-24">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-black text-slate-900">Payment follow-up</h2>
+            <p className="text-[11px] text-slate-500">Completed jobs still waiting for payment, oldest first. Card links mark themselves paid when the customer pays.</p>
+          </div>
+          <ul className="mt-3 divide-y divide-slate-100">
+            {[...paymentAttentionJobs]
+              .sort((a, b) => new Date(a.completedAt || a.createdAt).getTime() - new Date(b.completedAt || b.createdAt).getTime())
+              .map((job) => {
+                const cardLink = job.invoice?.pricingModel === 'CARD_TOTAL_V1' && isCardPaymentMethod(job.invoice?.paymentMethod);
+                const ageDays = Math.max(0, Math.floor((Date.now() - new Date(job.completedAt || job.createdAt).getTime()) / 86_400_000));
+                return (
+                  <li key={job.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <div className="min-w-0 text-xs">
+                      <Link href={`/dispatch/jobs/${job.id}`} className="font-black text-blue-700 hover:underline">#{job.jobNumber}</Link>
+                      <span className="ml-2 font-bold text-slate-900">{job.customer.name}</span>
+                      <span className="ml-2 text-slate-500">${Number(job.invoice?.grandTotal || 0).toFixed(2)} · {cardLink ? 'card link' : (job.invoice?.paymentMethod || '').replace(/_/g, ' ').toLowerCase()} · {ageDays === 0 ? 'today' : `${ageDays} day${ageDays === 1 ? '' : 's'}`}</span>
+                    </div>
+                    {job.isManual && (
+                      <div className="flex gap-1.5">
+                        {cardLink && <button type="button" disabled={resendingJobId === job.id} onClick={() => resendPayLink(job)} className="rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-50">{resendingJobId === job.id ? 'Preparing…' : 'Resend link'}</button>}
+                        <button type="button" onClick={() => openPaidAnotherWay(job)} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">{cardLink ? 'Paid another way' : 'Mark paid'}</button>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+          </ul>
         </section>
       )}
 
@@ -1185,7 +1263,7 @@ export default function DispatchPage() {
               <h2 id="add-job-title" className="text-lg font-black text-slate-900">Add Job</h2>
               <p className="text-xs text-slate-500 mt-1">Choose where this job is in the workflow, then enter its details.</p>
             </div>
-            <button type="button" onClick={() => setShowAddJob(false)} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800" aria-label="Close Add Job">×</button>
+            <button type="button" onClick={closeAddJob} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800" aria-label="Close Add Job">×</button>
           </div>
           {pastePrefillPanel}
           <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
@@ -1727,7 +1805,7 @@ export default function DispatchPage() {
                 <h2 id="manual-job-title" className="text-xl font-black text-slate-900">{editingManualId ? 'Edit Completed Job' : 'Add Job · Completed'}</h2>
                 <p className="text-xs text-slate-500 mt-1">{editingManualId ? 'Update this completed job entry.' : 'Record job details, payment, parts cost, and technician closeout.'}</p>
               </div>
-              <button type="button" onClick={() => setShowAddJob(false)} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
+              <button type="button" onClick={closeAddJob} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close">×</button>
             </div>
             {pastePrefillPanel}
             {!editingManualId && <div className="grid grid-cols-3 gap-2 mb-4" role="group" aria-label="Job stage">
@@ -1795,31 +1873,32 @@ export default function DispatchPage() {
                 <label className="field-label">Description of job *</label>
                 <textarea aria-label="Description of job" required rows={3} value={manualForm.description} onChange={(e) => updateManualField('description', e.target.value)} className="field-input" />
               </div>
-              <div>
-                <label className="field-label">Mode of payment *</label>
-                <select aria-label="Mode of payment" value={manualForm.paymentMethod} onChange={(e) => updateManualField('paymentMethod', e.target.value)} className="field-input bg-white">
-                  <option value="CASH">Cash</option><option value="INTERAC">Interac</option><option value="DEBIT_CARD">Debit Card</option><option value="CREDIT_CARD">Credit Card</option>
+              <div className="sm:col-span-2">
+                <label className="field-label">How was it paid? *</label>
+                <select
+                  aria-label="How was it paid"
+                  value={paymentChoice}
+                  onChange={(e) => {
+                    const [method, status] = e.target.value.split('|');
+                    setManualForm((current) => ({ ...current, paymentMethod: method, paymentStatus: status }));
+                  }}
+                  className="field-input bg-white"
+                >
+                  {paymentChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
                 </select>
-              </div>
-              <div>
-                <label className="field-label">Payment status *</label>
-                <select aria-label="Payment status" value={manualForm.paymentStatus} onChange={(e) => updateManualField('paymentStatus', e.target.value as ManualPaymentStatus)} className="field-input bg-white">
-                  <option value="PAID">Received</option>
-                  <option value="PENDING">Pending</option>
-                </select>
-                {pendingCardQuote && (
-                  <p className="mt-1 text-[10px] text-blue-700">After saving, you can generate a payment link and prepare an SMS for the customer. The link uses the card price the customer accepted.</p>
+                {cardLinkSelected && (
+                  <p className="mt-1 text-[10px] text-blue-700">After saving, a text message with a secure card payment link opens on this device. The link keeps working until the customer pays.</p>
                 )}
               </div>
               <div>
                 <label className="field-label">
-                  {pendingCardQuote
-                    ? 'Non-card price before tax *'
-                    : 'Total amount collected *'}
+                  {cardLinkSelected
+                    ? 'Card total to charge (HST and card fee included) *'
+                    : 'Total amount collected (HST included) *'}
                 </label>
                 <input
-                  aria-label={pendingCardQuote
-                    ? 'Non-card price before tax'
+                  aria-label={cardLinkSelected
+                    ? 'Card total to charge'
                     : 'Total amount collected'}
                   required
                   type="number"
@@ -1829,55 +1908,15 @@ export default function DispatchPage() {
                   onChange={(e) => updateManualField('totalAmountCollected', e.target.value)}
                   className="field-input"
                 />
-                {pendingCardQuote && (
-                  <p className="mt-1 text-[10px] text-blue-700">Enter the lower non-card price before HST. Both options and estimated Ontario HST totals are shown below before recording acceptance.</p>
+                {cardLinkSelected && (
+                  <p className="mt-1 text-[10px] text-blue-700">The customer is charged exactly this amount. HST is shown on their bill; the card fee is not shown separately.</p>
                 )}
               </div>
-              {pendingCardQuote && (
-                <div>
-                  <label className="field-label">Card-price difference (%) *</label>
-                  <input aria-label="Card-price difference percentage" required type="number" min="0" max={MAX_CARD_PRICE_DIFFERENCE_RATE * 100} step="0.01" value={manualForm.cardPriceDifferenceRate} onChange={(e) => updateManualField('cardPriceDifferenceRate', e.target.value)} className="field-input" />
-                  <p className="mt-1 text-[10px] text-slate-500">This sets the separately quoted card price. It is not added as a card surcharge, processing fee, or admin fee line.</p>
-                </div>
-              )}
-              {pendingCardQuote && manualDualPriceQuote && (
-                <section className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50 p-3" aria-live="polite" aria-label="Customer price options">
-                  <h3 className="text-xs font-black text-slate-900">Show both prices and estimated tax before the customer approves</h3>
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <div className="rounded-lg border border-slate-200 bg-white p-3">
-                      <p className="text-[11px] font-bold text-slate-600">Non-card price</p>
-                      <p className="text-base font-black text-slate-900">${manualDualPriceQuote.nonCardPrice.toFixed(2)} + ${manualDualPriceQuote.nonCardTaxEstimate.toFixed(2)} estimated HST</p>
-                      <p className="text-xs font-bold text-slate-700">Estimated total: ${manualDualPriceQuote.nonCardTotalEstimate.toFixed(2)}</p>
-                    </div>
-                    <div className="rounded-lg border border-blue-300 bg-white p-3">
-                      <p className="text-[11px] font-bold text-blue-800">Card price · {Number(manualForm.cardPriceDifferenceRate || 0).toFixed(2)}% price difference</p>
-                      <p className="text-base font-black text-slate-900">${manualDualPriceQuote.cardPrice.toFixed(2)} + ${manualDualPriceQuote.cardTaxEstimate.toFixed(2)} estimated HST</p>
-                      <p className="text-xs font-bold text-slate-700">Estimated total: ${manualDualPriceQuote.cardTotalEstimate.toFixed(2)}</p>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-[10px] text-slate-700">For an Ontario taxable service, these totals estimate 13% HST. Stripe calculates final tax using the customer’s billing location. The customer must see and accept the selected price before approval; this portal form records the dispatcher’s acceptance record and does not itself send the quote.</p>
-                  <label className="mt-3 flex items-start gap-2 text-[11px] font-bold text-slate-800">
-                    <input type="checkbox" className="mt-0.5" checked={manualForm.customerAcceptedCardPrice === 'yes'} onChange={(e) => updateManualField('customerAcceptedCardPrice', e.target.checked ? 'yes' : 'no')} />
-                    Customer explicitly accepted the displayed card price and was shown both options and the estimated tax-inclusive totals.
-                  </label>
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <label className="text-[10px] font-bold text-slate-700">Acceptance method
-                      <select aria-label="Quote acceptance method" className="field-input mt-1 bg-white" value={manualForm.quoteAcceptanceMethod} onChange={(e) => updateManualField('quoteAcceptanceMethod', e.target.value)}>
-                        <option value="VERBAL">Verbal</option><option value="WRITTEN">Written</option>
-                      </select>
-                    </label>
-                    <label className="text-[10px] font-bold text-slate-700">Acceptance note *
-                      <input aria-label="Quote acceptance note" required maxLength={500} className="field-input mt-1" value={manualForm.quoteAcceptanceEvidence} onChange={(e) => updateManualField('quoteAcceptanceEvidence', e.target.value)} placeholder="When/how the customer accepted" />
-                    </label>
-                  </div>
-                  <p className="mt-2 text-[10px] text-amber-800">Use this dual-price presentation only after Locksmith’s processor and accountant confirm the pricing and HST treatment.</p>
-                </section>
-              )}
               <div>
                 <label className="field-label">COGS (Parts, etc.) amount *</label>
                 <input aria-label="COGS (Parts, etc.) amount" required type="number" min="0" step="0.01" value={manualForm.cogsAmount} onChange={(e) => updateManualField('cogsAmount', e.target.value)} className="field-input" />
               </div>
-              {!(manualForm.paymentStatus === 'PENDING' && isCardPaymentMethod(manualForm.paymentMethod)) && <div>
+              {!cardLinkSelected && <div>
                 <label className="field-label">Tax collected *</label>
                 <select aria-label="Tax collected status" value={manualForm.taxCollected} onChange={(e) => updateManualField('taxCollected', e.target.value)} className="field-input bg-white">
                   <option value="yes">Yes — on books</option><option value="no">No — off books transaction</option>
@@ -1904,36 +1943,58 @@ export default function DispatchPage() {
                 <input aria-label="Technician commission" required type="number" min="0" step="0.01" value={manualForm.technicianCommission} onChange={(e) => updateManualField('technicianCommission', e.target.value)} className="field-input" />
               </div>
               <div className="sm:col-span-2 flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button type="button" onClick={() => setShowAddJob(false)} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold">Cancel</button>
-                <button type="submit" disabled={manualSubmitting} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{manualSubmitting ? 'Saving...' : editingManualId ? 'Save Changes' : 'Save Completed Job'}</button>
+                <button type="button" onClick={closeAddJob} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold">Cancel</button>
+                <button type="submit" disabled={manualSubmitting} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{manualSubmitting ? 'Saving...' : editingManualId ? 'Save Changes' : cardLinkSelected ? 'Save & text payment link' : 'Save Completed Job'}</button>
               </div>
             </form>
           </div>
         </div>
       )}
-      {paymentLinkPrompt && (
+      {paymentLinkPrompt && paymentLinkUrl && (
         <div className="fixed inset-0 z-[55] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
-          <div role="dialog" aria-modal="true" aria-labelledby="payment-link-prompt-title" className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+          <div role="dialog" aria-modal="true" aria-labelledby="payment-link-copy-title" className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex items-start justify-between gap-4 mb-3">
               <div>
-                <h2 id="payment-link-prompt-title" className="text-lg font-black text-slate-900">Generate payment link?</h2>
-                <p className="text-xs text-slate-600 mt-1">Job #{paymentLinkPrompt.jobNumber} is pending by card. Generate a link and prepare an SMS for {paymentLinkPrompt.customerName}?</p>
+                <h2 id="payment-link-copy-title" className="text-lg font-black text-slate-900">Payment link for Job #{paymentLinkPrompt.jobNumber}</h2>
+                <p className="text-xs text-slate-600 mt-1">Send this link to {paymentLinkPrompt.customerName}. It keeps working until the job is paid.</p>
               </div>
-              <button type="button" disabled={paymentLinkGenerating} onClick={() => setPaymentLinkPrompt(null)} className="text-slate-400 hover:text-slate-900 text-xl disabled:opacity-50" aria-label="Close payment link prompt">×</button>
+              <button type="button" onClick={() => { setPaymentLinkPrompt(null); setPaymentLinkUrl(null); setPaymentLinkError(''); }} className="text-slate-400 hover:text-slate-900 text-xl" aria-label="Close payment link">×</button>
             </div>
-            {paymentLinkError && (
-              <div role="alert" className="mb-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
-                <div>{paymentLinkError}</div>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <button type="button" disabled={paymentLinkGenerating} onClick={generatePaymentLinkAndSend} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold disabled:opacity-50">{paymentLinkGenerating ? 'Retrying…' : 'Retry'}</button>
-                  {paymentLinkUrl && <button type="button" onClick={copyPaymentLink} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-800 font-bold">Copy Payment Link</button>}
-                </div>
-                {paymentLinkCopyState && <div className="mt-2 text-[11px] font-semibold">{paymentLinkCopyState}</div>}
-              </div>
-            )}
+            {paymentLinkError && <p role="alert" className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">{paymentLinkError}</p>}
+            <input readOnly value={paymentLinkUrl} onFocus={(e) => e.currentTarget.select()} className="field-input text-xs" aria-label="Payment link" />
             <div className="flex flex-wrap justify-end gap-2 pt-3">
-              <button type="button" disabled={paymentLinkGenerating} onClick={() => { setPaymentLinkPrompt(null); setPaymentLinkError(''); setPaymentLinkUrl(null); setSuccessMsg(`✅ Job #${paymentLinkPrompt.jobNumber} remains pending.`); }} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold disabled:opacity-50">No, leave pending</button>
-              <button type="button" disabled={paymentLinkGenerating} onClick={generatePaymentLinkAndSend} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50">{paymentLinkGenerating ? 'Generating…' : 'Yes, generate and text link'}</button>
+              <button type="button" onClick={copyPaymentLink} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold">Copy link</button>
+            </div>
+            {paymentLinkCopyState && <p className="mt-2 text-[11px] font-semibold text-emerald-700">{paymentLinkCopyState}</p>}
+          </div>
+        </div>
+      )}
+      {paidAnotherWay && (
+        <div className="fixed inset-0 z-[55] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="paid-another-way-title" className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h2 id="paid-another-way-title" className="text-lg font-black text-slate-900">Job #{paidAnotherWay.job.jobNumber} paid another way</h2>
+                <p className="text-xs text-slate-600 mt-1">Records the payment as received today and turns off the card link.</p>
+              </div>
+              <button type="button" disabled={paidAnotherWay.saving} onClick={() => setPaidAnotherWay(null)} className="text-slate-400 hover:text-slate-900 text-xl disabled:opacity-50" aria-label="Close">×</button>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <label className="field-label">How was it paid?
+                <select className="field-input bg-white" value={paidAnotherWay.method} onChange={(e) => setPaidAnotherWay({ ...paidAnotherWay, method: e.target.value as 'CASH' | 'INTERAC' | 'CREDIT_CARD' })}>
+                  <option value="CASH">Cash</option>
+                  <option value="INTERAC">Interac</option>
+                  <option value="CREDIT_CARD">Card (paid another way)</option>
+                </select>
+              </label>
+              <label className="field-label">Total received (HST included)
+                <input className="field-input" type="number" min="0.01" step="0.01" value={paidAnotherWay.amount} onChange={(e) => setPaidAnotherWay({ ...paidAnotherWay, amount: e.target.value })} />
+              </label>
+            </div>
+            {paidAnotherWay.error && <p role="alert" className="mt-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">{paidAnotherWay.error}</p>}
+            <div className="flex justify-end gap-2 pt-4">
+              <button type="button" disabled={paidAnotherWay.saving} onClick={() => setPaidAnotherWay(null)} className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-sm font-bold disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={paidAnotherWay.saving} onClick={savePaidAnotherWay} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-50">{paidAnotherWay.saving ? 'Saving…' : 'Mark paid'}</button>
             </div>
           </div>
         </div>

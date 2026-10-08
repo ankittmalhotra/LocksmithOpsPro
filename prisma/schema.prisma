@@ -353,6 +353,9 @@ model Invoice {
   stripeInvoiceId            String?   @unique(map: "invoice_stripe_invoice_id_key")
   stripePaymentIntentId      String?
   stripeChargeId             String?
+  // Stable customer pay-page token (/pay/<token>). The page creates a fresh
+  // Stripe Checkout session on demand, so the texted link does not expire.
+  payToken                   String?   @unique(map: "invoice_pay_token_key")
   customerEmailCollectedAt   DateTime?
   invoiceSentAt              DateTime?
   paymentFailedAt            DateTime?

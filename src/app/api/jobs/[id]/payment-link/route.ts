@@ -9,6 +9,13 @@ import {
 import { getApiErrorMessage } from '@/lib/api-error';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { findJobByIdOrNumber } from '@/lib/job-helper';
+import {
+  buildPayLinkSmsBody,
+  buildPayUrl,
+  CARD_TOTAL_PRICING_MODEL,
+  generatePayToken,
+  getAppBaseUrl,
+} from '@/lib/card-pay-link';
 
 const CARD_PAYMENT_METHODS = ['CREDIT_CARD', 'DEBIT_CARD'] as const;
 
@@ -72,6 +79,32 @@ async function handlePOST(
       );
     }
 
+    // Card-total jobs use the stable customer pay page. Stripe Checkout is
+    // created only when the customer opens it, so nothing can fail here.
+    if (invoice.pricingModel === CARD_TOTAL_PRICING_MODEL) {
+      let payToken = invoice.payToken;
+      if (!payToken) {
+        payToken = generatePayToken();
+        const updated = await prisma.invoice.updateMany({
+          where: { id: invoice.id, payToken: null, paymentStatus: 'PENDING' },
+          data: { payToken },
+        });
+        if (updated.count !== 1) throw new PaymentLinkStateChangedError();
+      }
+      const paymentUrl = buildPayUrl(getAppBaseUrl(request), payToken);
+      return NextResponse.json({
+        success: true,
+        reused: Boolean(invoice.payToken),
+        paymentUrl,
+        smsBody: buildPayLinkSmsBody({
+          customerName: job.customer.name,
+          jobNumber: String(job.jobNumber),
+          total: Number(invoice.grandTotal),
+          payUrl: paymentUrl,
+        }),
+      });
+    }
+
     if (invoice.pricingModel !== 'DUAL_PRICE_V1'
       || invoice.acceptedPriceOption !== 'CARD'
       || !invoice.quoteAcceptedAt
@@ -79,7 +112,7 @@ async function handlePOST(
       || !invoice.quoteAcceptanceMethod
       || !invoice.quoteAcceptanceEvidence) {
       return NextResponse.json(
-        { success: false, error: 'A recorded customer acceptance of the disclosed card price is required. Review the two-price quote and update this job before creating a payment link.' },
+        { success: false, error: 'This job was saved before card links used a single total. Edit the job, confirm the card total (HST included), and save to get a payment link.' },
         { status: 409 },
       );
     }

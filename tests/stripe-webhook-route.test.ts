@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import test from 'node:test';
 
-const fixture = { invoice: {} as Record<string, any>, ledger: new Set<string>(), updates: 0, locks: 0 };
+const fixture = { invoice: {} as Record<string, any>, ledger: new Set<string>(), updates: 0, locks: 0, refreshes: 0 };
 Object.assign(globalThis, { __stripeWebhookFixture: fixture });
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (['next/server', '@/lib/prisma', '@/lib/stripe', '@/lib/api-error', '@/lib/request-logger'].includes(specifier)) {
+    if (['next/server', '@/lib/prisma', '@/lib/stripe', '@/lib/api-error', '@/lib/request-logger', '@/lib/partner-billing-snapshot-refresh'].includes(specifier)) {
       return { url: `webhook-test:${specifier}`, shortCircuit: true };
     }
+    if (specifier === '@/lib/card-pay-link') return { url: new URL('../src/lib/card-pay-link.ts', import.meta.url).href, shortCircuit: true };
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
@@ -17,6 +18,7 @@ const hooks = registerHooks({
       'webhook-test:@/lib/stripe': `export function verifyStripeWebhookSignature() {}`,
       'webhook-test:@/lib/api-error': `export function getApiErrorMessage(e) { return e.message; }`,
       'webhook-test:@/lib/request-logger': `export function withRequestLogging(path, fn) { return fn; } export function logCaughtRequestError() {}`,
+      'webhook-test:@/lib/partner-billing-snapshot-refresh': `export async function refreshUnissuedPartnerBillingSnapshots() { globalThis.__stripeWebhookFixture.refreshes++; }`,
       'webhook-test:@/lib/prisma': `
         const f = globalThis.__stripeWebhookFixture;
         const tx = {
@@ -43,13 +45,13 @@ hooks.deregister();
 process.env.STRIPE_WEBHOOK_SECRET = 'test-secret';
 function reset(overrides: Record<string, unknown> = {}) {
   fixture.invoice = {
-    id: 'invoice-1', jobId: 'job-1', job: { customerId: 'customer-1' },
+    id: 'invoice-1', jobId: 'job-1', job: { customerId: 'customer-1', dispatcherId: 'dispatcher-1' },
     paymentMethod: 'CREDIT_CARD', paymentProvider: 'STRIPE', paymentStatus: 'PENDING',
     grandTotal: 988, taxAmount: 0, taxCollected: true, totalAmountCollected: 0,
     stripeSessionId: 'cs-1', stripeSessionStatus: 'open', stripeInvoiceId: 'in-1',
     paidAt: null, paymentFailedAt: null, pricingModel: null, ...overrides,
   };
-  fixture.ledger = new Set(); fixture.updates = 0; fixture.locks = 0;
+  fixture.ledger = new Set(); fixture.updates = 0; fixture.locks = 0; fixture.refreshes = 0;
 }
 async function deliver(type: string, object: Record<string, unknown>, id = 'evt-1') {
   return POST(new Request('https://portal.test/api/webhooks/stripe', {
@@ -67,9 +69,10 @@ test('paid Checkout records actual collection and Stripe HST, then ignores same-
   reset(); assert.equal((await deliver('checkout.session.completed', session())).status, 200);
   assert.equal(fixture.invoice.grandTotal, 987.17); assert.equal(fixture.invoice.taxAmount, 113.57);
   assert.equal(fixture.invoice.totalAmountCollected, 987.17); assert.equal(fixture.invoice.paymentStatus, 'PAID');
+  assert.equal(fixture.refreshes, 1, 'paid financial changes refresh unissued partner periods');
   const before = structuredClone(fixture.invoice);
   assert.equal((await deliver('checkout.session.expired', session({ status: 'expired', payment_status: 'unpaid', amount_total: 98800, total_details: { amount_tax: 0 } }), 'evt-expired')).status, 200);
-  assert.deepEqual(fixture.invoice, before); assert.equal(fixture.locks, 2);
+  assert.deepEqual(fixture.invoice, before); assert.equal(fixture.locks, 2); assert.equal(fixture.refreshes, 1);
 });
 test('all unpaid lifecycle events preserve settled money, provider identifiers and payment state', async () => {
   for (const type of ['checkout.session.async_payment_failed', 'checkout.session.completed', 'invoice.finalized', 'invoice.sent', 'invoice.payment_failed']) {
@@ -146,6 +149,19 @@ test('accepted dual price quote must match Stripe pre-tax subtotal and metadata'
   assert.equal((await deliver('invoice.paid', paidInvoice({ subtotal: 87360, metadata: { pricingModel: 'DUAL_PRICE_V1', acceptedPriceOption: 'CARD', cardPriceCents: '87360' } }))).status, 200);
 });
 
+test('card-total link keeps the portal HST and must match the saved total exactly', async () => {
+  // HST is sent as its own Checkout line, so Stripe reports zero tax.
+  reset({ pricingModel: 'CARD_TOTAL_V1', grandTotal: 987.17, subtotal: 873.6, taxAmount: 113.57 });
+  assert.equal((await deliver('checkout.session.completed', session({ total_details: { amount_tax: 0 } }))).status, 200);
+  assert.equal(fixture.invoice.paymentStatus, 'PAID');
+  assert.equal(fixture.invoice.totalAmountCollected, 987.17);
+  assert.equal(fixture.invoice.taxAmount, 113.57, 'portal HST is not overwritten by Stripe zero tax');
+  assert.equal(fixture.invoice.taxCollected, true);
+
+  reset({ pricingModel: 'CARD_TOTAL_V1', grandTotal: 990, subtotal: 876.11, taxAmount: 113.89 });
+  assert.equal((await deliver('checkout.session.completed', session({ total_details: { amount_tax: 0 } }))).status, 500);
+  assert.equal(fixture.invoice.paymentStatus, 'PENDING', 'a different amount needs manual reconciliation');
+});
 test('Checkout validates integer cents, tax and existing paid provider identity', async () => {
   for (const extra of [{ amount_total: -1 }, { amount_total: 98717.2 }, { amount_total: null }, { total_details: { amount_tax: -1 } }, { total_details: { amount_tax: '11357' } }, { invoice: 'in-other' }]) {
     reset(); assert.equal((await deliver('checkout.session.completed', session(extra))).status, 500);

@@ -35,7 +35,7 @@ Replacing legacy WhatsApp dispatching with a fast call-intake workflow: prepare 
 - **Multi-Payment Settlement**:
   - 💵 **Cash**: Record physical cash received and automatically update the contractor's cash ledger.
   - 🏦 **Interac e-Transfer**: Record the payment method and automatically update the contractor's cash ledger.
-  - 💳 **Credit/Debit Card (Stripe)**: Pending jobs can receive a hosted Stripe Checkout link by SMS; the customer enters their email during Checkout and receives a paid invoice after payment.
+  - 💳 **Card payment link (Stripe)**: On a completed job choose *Card — text customer a payment link* and enter the final card total (HST and card fee included). *Save & text payment link* opens an SMS draft with a stable `/pay/<token>` link that does not expire; the customer pays by card and the job is marked paid by the Stripe webhook. Unpaid jobs appear in the Dashboard **Awaiting payment** card and the Jobs desk **Payment follow-up** list (Resend link / Paid another way).
 
 ### 3. Customer Tracking and Online Payments
 - Stripe online payments use hosted Checkout Sessions and webhook-confirmed invoice status. Customer email is collected by Stripe during payment because dispatchers do not need to know it upfront.
@@ -128,6 +128,8 @@ This application runs **100% free of charge** on Vercel and Supabase free tiers:
    `prisma/manual-job-received-time-migration.sql`. These add `Job.updatedAt` for
    edit concurrency and `Job.jobReceivedTimeSlot` for manual-job intake windows.
    Verify both columns exist before serving the new application build.
+   For customer card payment links, also apply `prisma/card-pay-link-migration.sql`
+   (adds `Invoice.payToken`) and make sure `NEXT_PUBLIC_APP_URL` is the public portal URL.
 
 7. Before opening **Books & accounting** on an existing production database,
    apply `prisma/books-accounting-migration.sql` once in the production SQL

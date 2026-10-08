@@ -313,6 +313,9 @@ export async function createStripePaymentLink(
     body.set('invoice_creation[invoice_data][metadata][pricingModel]', 'DUAL_PRICE_V1');
     body.set('invoice_creation[invoice_data][metadata][acceptedPriceOption]', 'CARD');
     body.set('invoice_creation[invoice_data][metadata][cardPriceCents]', acceptedCardPriceCents);
+  } else if (params.pricingModel) {
+    body.set('metadata[pricingModel]', params.pricingModel);
+    body.set('invoice_creation[invoice_data][metadata][pricingModel]', params.pricingModel);
   }
 
   if (automaticTax) {

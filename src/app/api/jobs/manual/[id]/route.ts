@@ -5,9 +5,6 @@ import { findJobByIdOrNumber } from '@/lib/job-helper';
 import {
   calculateJobSettlementPosition,
   calculateManualInvoice,
-  calculateDualPriceManualCardQuote,
-  DEFAULT_CARD_PRICE_DIFFERENCE_RATE,
-  MAX_CARD_PRICE_DIFFERENCE_RATE,
   isCardPaymentMethod,
   type SupportedPaymentMethod,
 } from '@/lib/calculations';
@@ -18,7 +15,9 @@ import { torontoDateToMidnightIso } from '@/lib/timezone';
 import { logCaughtRequestError, withRequestLogging } from '@/lib/request-logger';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { expireStripeCheckoutSession } from '@/lib/stripe';
-import { ManualJobInputError, parseManualAmount, parseManualPercentage } from '@/lib/manual-amount';
+import { ManualJobInputError, parseManualAmount } from '@/lib/manual-amount';
+import { buildPayUrl, CARD_TOTAL_PRICING_MODEL, generatePayToken, getAppBaseUrl } from '@/lib/card-pay-link';
+import { refreshUnissuedPartnerBillingSnapshots } from '@/lib/partner-billing-snapshot-refresh';
 
 const MANUAL_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const;
 type ManualPaymentStatus = (typeof MANUAL_PAYMENT_STATUSES)[number];
@@ -170,37 +169,43 @@ async function handlePATCH(
     const payment = paymentMethod as SupportedPaymentMethod;
     const paymentStatus = requestedPaymentStatus as ManualPaymentStatus;
     const pendingCardPayment = paymentStatus === 'PENDING' && isCardPaymentMethod(payment);
-    const cardPriceDifferenceRate = pendingCardPayment
-      ? parseManualPercentage(
-          body.cardPriceDifferenceRate === undefined
-            ? (invoice.pricingModel === 'DUAL_PRICE_V1'
-              ? Number(invoice.cardPriceDifferenceRate ?? DEFAULT_CARD_PRICE_DIFFERENCE_RATE) * 100
-              : DEFAULT_CARD_PRICE_DIFFERENCE_RATE * 100)
-            : body.cardPriceDifferenceRate,
-          'Card price difference',
-          MAX_CARD_PRICE_DIFFERENCE_RATE * 100,
-        )
-      : 0;
-    if (pendingCardPayment && cardPriceDifferenceRate > MAX_CARD_PRICE_DIFFERENCE_RATE) {
-      return NextResponse.json({ success: false, error: `Card-price difference cannot exceed ${MAX_CARD_PRICE_DIFFERENCE_RATE * 100}%.` }, { status: 400 });
-    }
-    if (pendingCardPayment && (body.customerAcceptedCardPrice !== true
-      || !['VERBAL', 'WRITTEN'].includes(body.quoteAcceptanceMethod)
-      || typeof body.quoteAcceptanceEvidence !== 'string'
-      || !body.quoteAcceptanceEvidence.trim()
-      || body.quoteAcceptanceEvidence.trim().length > 500)) {
-      return NextResponse.json({ success: false, error: 'Record that the customer accepted the displayed card price, select verbal or written acceptance, and add an acceptance note before saving.' }, { status: 400 });
-    }
-    const dualPriceQuote = pendingCardPayment
-      ? calculateDualPriceManualCardQuote({ nonCardPrice: totalAmountCollected, cardPriceDifferenceRate })
+    // A card link charges exactly the entered total, which always includes HST.
+    const manualCalculation = calculateManualInvoice({
+      amountCollected: totalAmountCollected,
+      taxCollected: pendingCardPayment ? true : taxCollected,
+    });
+    const nextPricingModel = pendingCardPayment ? CARD_TOTAL_PRICING_MODEL : null;
+    // Keep the texted URL stable across edits; issue one when the job becomes a card link.
+    const payToken = pendingCardPayment
+      ? (invoice.pricingModel === CARD_TOTAL_PRICING_MODEL && invoice.payToken ? invoice.payToken : generatePayToken())
       : null;
-    const manualCalculation = dualPriceQuote?.calculation
-      || calculateManualInvoice({ amountCollected: totalAmountCollected, taxCollected });
+    const payLinkCreated = Boolean(payToken && payToken !== invoice.payToken);
     const settlement = calculateJobSettlementPosition({
       paymentMethod: payment,
       grandTotal: manualCalculation.grandTotal,
       workerCommission: technicianCommission,
     });
+    const previousRevenue = {
+      grandTotal: Number(invoice.grandTotal || 0),
+      totalAmountCollected: Number(invoice.totalAmountCollected || invoice.grandTotal || 0),
+      cogsAmount: Number(invoice.cogsAmount || 0),
+      taxCollected: invoice.taxCollected !== false,
+      paymentMethod: invoice.paymentMethod,
+      paymentStatus: invoice.paymentStatus,
+      paidAt: invoice.paidAt?.getTime() ?? null,
+      technicianCommission: Number(job.workerCommission || 0),
+    };
+    const nextPaidAt = paymentStatus === 'PAID'
+      ? (manualTimestamp || invoice.paidAt || new Date())
+      : null;
+    const revenueChanged = previousRevenue.grandTotal !== manualCalculation.grandTotal
+      || previousRevenue.totalAmountCollected !== totalAmountCollected
+      || previousRevenue.cogsAmount !== cogsAmount
+      || previousRevenue.taxCollected !== taxCollected
+      || previousRevenue.paymentMethod !== payment
+      || previousRevenue.paymentStatus !== paymentStatus
+      || previousRevenue.paidAt !== (nextPaidAt?.getTime() ?? null)
+      || previousRevenue.technicianCommission !== technicianCommission;
 
     const shouldInvalidatePaymentLink = Boolean(invoice.stripeSessionId || invoice.stripePaymentUrl)
       && (
@@ -208,8 +213,7 @@ async function handlePATCH(
         || invoice.paymentMethod !== payment
         || invoice.paymentStatus !== paymentStatus
         || Number(invoice.totalAmountCollected || invoice.grandTotal || 0) !== totalAmountCollected
-        || Number(invoice.cardPriceDifferenceRate || 0) !== cardPriceDifferenceRate
-        || invoice.acceptedPriceOption !== (pendingCardPayment ? 'CARD' : null)
+        || invoice.pricingModel !== nextPricingModel
         || customerName !== job.customer.name
         || customerPhone !== job.customer.phone
         || serviceAddress !== job.serviceAddress
@@ -234,8 +238,7 @@ async function handlePATCH(
           || fresh.invoice.paymentMethod !== payment
           || fresh.invoice.paymentStatus !== paymentStatus
           || Number(fresh.invoice.totalAmountCollected || fresh.invoice.grandTotal || 0) !== totalAmountCollected
-          || Number(fresh.invoice.cardPriceDifferenceRate || 0) !== cardPriceDifferenceRate
-          || fresh.invoice.acceptedPriceOption !== (pendingCardPayment ? 'CARD' : null)
+          || fresh.invoice.pricingModel !== nextPricingModel
           || customerName !== job.customer.name
           || customerPhone !== job.customer.phone
           || serviceAddress !== job.serviceAddress
@@ -289,15 +292,17 @@ async function handlePATCH(
           taxAmount: manualCalculation.taxAmount,
           cardSurchargeRate: manualCalculation.cardSurchargeRate,
           cardSurchargeAmount: manualCalculation.cardSurchargeAmount,
-          pricingModel: pendingCardPayment ? 'DUAL_PRICE_V1' : null,
-          nonCardPrice: dualPriceQuote?.nonCardPrice ?? null,
-          cardPrice: dualPriceQuote?.cardPrice ?? null,
-          cardPriceDifferenceRate: dualPriceQuote?.cardPriceDifferenceRate ?? null,
-          acceptedPriceOption: pendingCardPayment ? 'CARD' : null,
-          quoteAcceptanceMethod: pendingCardPayment ? body.quoteAcceptanceMethod : null,
-          quoteAcceptedAt: pendingCardPayment ? new Date() : null,
-          quoteAcceptedById: pendingCardPayment ? currentUser.id : null,
-          quoteAcceptanceEvidence: pendingCardPayment ? body.quoteAcceptanceEvidence.trim() : null,
+          pricingModel: nextPricingModel,
+          payToken,
+          // Clear the retired dual-price quote fields; card links use one total.
+          nonCardPrice: null,
+          cardPrice: null,
+          cardPriceDifferenceRate: null,
+          acceptedPriceOption: null,
+          quoteAcceptanceMethod: null,
+          quoteAcceptedAt: null,
+          quoteAcceptedById: null,
+          quoteAcceptanceEvidence: null,
           grandTotal: manualCalculation.grandTotal,
           totalAmountCollected,
           taxCollected: pendingCardPayment ? true : taxCollected,
@@ -323,7 +328,7 @@ async function handlePATCH(
         },
       });
 
-      return tx.job.update({
+      const updated = await tx.job.update({
         where: { id: job.id },
         data: {
           jobNumber,
@@ -341,20 +346,10 @@ async function handlePATCH(
         },
         include: safeJobInclude(),
       });
+      if (revenueChanged) await refreshUnissuedPartnerBillingSnapshots(tx, currentUser.id, 'MANUAL_JOB_UPDATED');
+      return updated;
     });
 
-    const previousRevenue = {
-      totalAmountCollected: Number(invoice.totalAmountCollected || invoice.grandTotal || 0),
-      cogsAmount: Number(invoice.cogsAmount || 0),
-      taxCollected: invoice.taxCollected !== false,
-      paymentMethod: invoice.paymentMethod,
-      technicianCommission: Number(job.workerCommission || 0),
-    };
-    const revenueChanged = previousRevenue.totalAmountCollected !== totalAmountCollected
-      || previousRevenue.cogsAmount !== cogsAmount
-      || previousRevenue.taxCollected !== taxCollected
-      || previousRevenue.paymentMethod !== payment
-      || previousRevenue.technicianCommission !== technicianCommission;
     let revenueEmail: { success: boolean; error?: string } | null = null;
     if (revenueChanged) {
       const result = await sendRevenueChangeEmail(updatedJob, 'UPDATED');
@@ -365,6 +360,8 @@ async function handlePATCH(
       success: true,
       job: updatedJob,
       message: `Manual Job #${updatedJob.jobNumber} updated successfully.`,
+      payUrl: payToken ? buildPayUrl(getAppBaseUrl(request), payToken) : null,
+      payLinkCreated,
       revenueEmail,
     });
   } catch (err: any) {
@@ -449,6 +446,9 @@ async function handleDELETE(
         },
       });
       await tx.job.delete({ where: { id: freshJob.id } });
+      if (freshJob.invoice?.paymentStatus === 'PAID') {
+        await refreshUnissuedPartnerBillingSnapshots(tx, currentUser.id, 'MANUAL_JOB_DELETED');
+      }
     });
     return NextResponse.json({
       success: true,
